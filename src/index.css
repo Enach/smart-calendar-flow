@@ -94,76 +94,143 @@
   }
 }
 
-/* FullCalendar overrides to fit our design system */
+/* FullCalendar overrides — refined to match the rest of the design system */
 @layer components {
   .fc {
     @apply text-sm;
-    --fc-border-color: hsl(var(--border));
+    --fc-border-color: hsl(var(--border) / 0.6);
     --fc-page-bg-color: hsl(var(--card));
-    --fc-neutral-bg-color: hsl(var(--muted));
-    --fc-today-bg-color: hsl(var(--primary-muted));
+    --fc-neutral-bg-color: hsl(var(--muted) / 0.5);
+    --fc-today-bg-color: hsl(var(--primary) / 0.04);
     --fc-event-border-color: transparent;
+    --fc-now-indicator-color: hsl(var(--destructive));
   }
+
   .fc .fc-toolbar-title {
-    @apply text-base font-semibold;
+    @apply text-base font-semibold text-foreground;
   }
-  .fc .fc-col-header-cell-cushion,
+
+  /* Column headers */
+  .fc .fc-col-header {
+    background-color: hsl(var(--muted) / 0.4);
+    border-bottom: 1px solid hsl(var(--border));
+  }
+  .fc .fc-col-header-cell {
+    border-color: hsl(var(--border) / 0.5);
+  }
+  .fc .fc-col-header-cell-cushion {
+    @apply px-2 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+
+  /* Time / axis labels */
   .fc .fc-timegrid-axis-cushion,
   .fc .fc-timegrid-slot-label-cushion {
-    @apply text-xs text-muted-foreground font-medium;
+    @apply px-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground;
   }
-  .fc .fc-event {
-    @apply rounded-md px-1.5 py-0.5 text-xs font-medium border-0 shadow-sm cursor-pointer;
-  }
-  .fc .fc-event:hover {
-    @apply opacity-90;
-  }
-  .fc .fc-button {
-    @apply bg-secondary text-secondary-foreground border-0 rounded-md text-xs font-medium px-3 py-1.5 capitalize shadow-none;
-  }
-  .fc .fc-button:hover {
-    @apply bg-muted;
-  }
-  .fc .fc-button-primary:not(:disabled).fc-button-active,
-  .fc .fc-button-primary:not(:disabled):active {
-    @apply bg-primary text-primary-foreground;
-  }
+
+  /* Slot grid */
   .fc-theme-standard td,
   .fc-theme-standard th,
   .fc-theme-standard .fc-scrollgrid {
-    border-color: hsl(var(--border));
+    border-color: hsl(var(--border) / 0.55);
   }
+  .fc .fc-timegrid-slot {
+    height: 2.25rem;
+    border-color: hsl(var(--border) / 0.5);
+  }
+  .fc .fc-timegrid-slot-minor {
+    border-top-style: dashed;
+    border-color: hsl(var(--border) / 0.35);
+  }
+
+  /* Today highlight */
+  .fc .fc-day-today {
+    background-color: hsl(var(--primary) / 0.04) !important;
+  }
+  .fc .fc-col-header-cell.fc-day-today .fc-col-header-cell-cushion {
+    @apply text-primary;
+  }
+
+  /* Time-grid events: filled chip with subtle accent bar */
+  .fc .fc-event {
+    @apply rounded-lg border-0 shadow-sm cursor-pointer transition-all;
+  }
+  .fc .fc-timegrid-event {
+    box-shadow: 0 1px 2px hsl(var(--foreground) / 0.06);
+    border-left: 3px solid currentColor !important;
+  }
+  .fc .fc-timegrid-event .fc-event-main {
+    @apply px-2 py-1;
+  }
+  .fc .fc-event-title {
+    @apply text-[12px] font-semibold leading-tight;
+  }
+  .fc .fc-event-time {
+    @apply text-[10px] font-medium opacity-80;
+  }
+  .fc .fc-event:hover {
+    @apply shadow-md;
+    transform: translateY(-1px);
+  }
+
+  /* Now indicator */
   .fc .fc-timegrid-now-indicator-line {
     border-color: hsl(var(--destructive));
+    border-width: 2px 0 0 0;
   }
   .fc .fc-timegrid-now-indicator-arrow {
     border-color: hsl(var(--destructive));
     color: hsl(var(--destructive));
   }
+
   /* Month view: dim weekends */
   .fc .fc-daygrid-day.fc-day-sat,
   .fc .fc-daygrid-day.fc-day-sun,
   .fc .fc-col-header-cell.fc-day-sat,
   .fc .fc-col-header-cell.fc-day-sun {
-    opacity: 0.7;
+    background-color: hsl(var(--muted) / 0.35);
   }
-  /* Month view: event chip styling — colored left border + truncated title */
+  .fc .fc-daygrid-day-number {
+    @apply px-2 py-1 text-xs font-medium text-muted-foreground;
+  }
+  .fc .fc-day-today .fc-daygrid-day-number {
+    @apply text-primary font-semibold;
+  }
+
+  /* Month view event chips */
   .fc .fc-daygrid-event {
-    @apply rounded-sm px-1.5 py-0.5 text-xs font-medium shadow-none;
+    @apply rounded-md px-1.5 py-0.5 text-xs font-medium shadow-none border-0;
     background-color: hsl(var(--card));
     color: hsl(var(--foreground));
-    border: 0;
     border-left: 3px solid currentColor;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .fc .fc-daygrid-event:hover {
+    background-color: hsl(var(--muted) / 0.6);
   }
   .fc .fc-daygrid-event .fc-event-title {
     @apply text-foreground;
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .fc .fc-daygrid-event .fc-event-time {
+    @apply text-muted-foreground;
+    margin-right: 0.25rem;
+  }
   .fc .fc-daygrid-more-link {
-    @apply text-xs font-medium text-muted-foreground hover:text-foreground;
+    @apply text-[11px] font-medium text-muted-foreground hover:text-foreground;
+    padding: 0 0.25rem;
+  }
+
+  /* Scrollbars */
+  .fc ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .fc ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--border));
+    border-radius: 4px;
   }
 }

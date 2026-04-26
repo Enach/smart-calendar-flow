@@ -6,22 +6,16 @@ import type { CalendarEvent } from "@/api/types";
 
 interface EventDrawerProps {
   event: CalendarEvent;
-  events?: CalendarEvent[];
-  workStart?: string;
-  workEnd?: string;
+  events: CalendarEvent[];
+  workStart: string;
+  workEnd: string;
   onClose: () => void;
 }
 
-export function EventDrawer({
-  event,
-  events = [],
-  workStart = "09:00",
-  workEnd = "18:00",
-  onClose,
-}: EventDrawerProps) {
+export function EventDrawer({ event, events, workStart, workEnd, onClose }: EventDrawerProps) {
   const [mode, setMode] = useState<"detail" | "edit">("detail");
 
-  // Reset to detail view whenever a different event is opened
+  // Always reset to detail when a different event is opened
   useEffect(() => {
     setMode("detail");
   }, [event.id]);
@@ -42,11 +36,7 @@ export function EventDrawer({
             onClose={onClose}
           />
         ) : (
-          <EventEditForm
-            event={event}
-            onBack={() => setMode("detail")}
-            onClose={onClose}
-          />
+          <EventEditForm event={event} onBack={() => setMode("detail")} onClose={onClose} />
         )}
       </SheetContent>
     </Sheet>

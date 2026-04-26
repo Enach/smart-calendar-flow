@@ -133,28 +133,27 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
 
   return (
     <>
-      <div className="flex items-center gap-2 border-b border-border bg-card/50 p-5">
+      <div className="flex items-center gap-2 border-b border-border bg-card/50 px-5 py-4">
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          title="Back to details"
+          aria-label="Back to details"
         >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          Back
+          <ArrowLeft className="h-4 w-4" />
         </button>
         <div>
-          <h2 className="text-base font-semibold">
+          <h2 className="text-sm font-semibold text-foreground">
             {isFocus ? "🎯 Focus block" : "Edit event"}
           </h2>
-          <p className="text-xs text-muted-foreground">
-            {isFocus
-              ? "Focus blocks are managed automatically — clear them from Quick Actions."
-              : "Update the details below and save your changes."}
+          <p className="text-[11px] text-muted-foreground">
+            {isFocus ? "Focus blocks are managed automatically." : "Update the details and save your changes."}
           </p>
         </div>
       </div>
 
-      <div className="flex-1 space-y-5 p-5">
+      <div className="flex-1 space-y-5 overflow-y-auto p-5">
         <div>
           <label className="mb-1 block text-xs font-medium text-foreground">Title</label>
           <input
@@ -232,11 +231,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
 
         <div>
           <label className="mb-1 block text-xs font-medium text-foreground">Meeting link</label>
-          <MeetingLinkRow
-            eventId={event.id}
-            conference={conference}
-            onChange={setConference}
-          />
+          <MeetingLinkRow eventId={event.id} conference={conference} onChange={setConference} />
         </div>
 
         <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">

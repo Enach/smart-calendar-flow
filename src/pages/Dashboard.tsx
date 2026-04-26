@@ -167,15 +167,18 @@ export default function Dashboard() {
           : isPersonal
             ? `🏠 ${e.title.replace(/^🏠\s*/, "")}`
             : e.title;
+        // Soften the fill so the colored accent bar pops while keeping the chip readable
+        const bg = `${color}26`; // ~15% alpha
         return {
           id: e.id,
           title: displayTitle,
           start: e.start,
           end: e.end,
-          backgroundColor: color,
+          backgroundColor: bg,
           borderColor: color,
+          textColor: color,
           editable: !isFocus && !isPersonal,
-          extendedProps: { raw: e, isFocus, isPersonal },
+          extendedProps: { raw: e, isFocus, isPersonal, accent: color },
         };
       }),
     [events, settings],
@@ -206,9 +209,10 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
           {/* Calendar */}
-          <section className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
-            {/* View toggle */}
-            <div className="mb-3 flex justify-end">
+          <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+            {/* Calendar toolbar */}
+            <div className="flex items-center justify-between gap-3 border-b border-border bg-card/60 px-4 py-3">
+              <p className="text-sm font-semibold text-foreground">{titleLabel || "Calendar"}</p>
               <div
                 role="group"
                 aria-label="Calendar view"
@@ -241,6 +245,7 @@ export default function Dashboard() {
               </div>
             </div>
 
+            <div className="p-3 sm:p-4">
             <FullCalendar
               ref={calRef}
               plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
@@ -298,6 +303,7 @@ export default function Dashboard() {
                 }
               }}
             />
+            </div>
           </section>
 
           {/* Sidebar */}
