@@ -2,11 +2,15 @@ import type {
   AuditEntry,
   AuthStatus,
   CalendarEvent,
+  CalendarProvider,
   CompressionResult,
   FocusBlock,
   FocusRunResult,
+  LLMTestResult,
   MoveProposal,
   ParseResult,
+  PersonalCalendar,
+  PersonalCalendarType,
   Settings,
   SuggestedSlot,
 } from "./types";
@@ -50,6 +54,7 @@ const DEFAULT_SETTINGS: Settings = {
   focus_min_block_minutes: 60,
   focus_max_block_minutes: 180,
   focus_daily_target_minutes: 180,
+  focus_max_per_week: 15,
   focus_label: "Focus Time",
   focus_color: "#7C3AED",
   lunch_start: "12:30",
@@ -65,17 +70,26 @@ const DEFAULT_SETTINGS: Settings = {
   llm_api_key: "",
   llm_base_url: "",
   calendar_id: "primary",
+  calendar_provider: "google",
+  webcal_url: "",
+  aws_region: "us-east-1",
+  aws_profile: "",
+  azure_endpoint: "",
+  azure_deployment: "",
+  azure_api_version: "2024-02-01",
 };
 
 const mockState = {
   settings: { ...DEFAULT_SETTINGS },
-  auth: { connected: true, email: "you@example.com" } as AuthStatus,
+  auth: { connected: true, email: "you@example.com", provider: "google" as CalendarProvider } as AuthStatus,
   events: [] as CalendarEvent[],
   focusBlocks: [] as FocusBlock[],
   audit: [] as AuditEntry[],
+  personalCalendars: [] as PersonalCalendar[],
   nextEventId: 1000,
   nextFocusId: 1,
   nextAuditId: 1,
+  nextPersonalId: 1,
 };
 
 function pad(n: number) {
@@ -163,6 +177,26 @@ function seedMocks() {
   });
 
   logAudit("seed", "Initialised mock workspace");
+
+  // Seed two personal calendars
+  mockState.personalCalendars.push(
+    {
+      id: String(mockState.nextPersonalId++),
+      label: "Personal",
+      type: "google",
+      email: "me.personal@gmail.com",
+      enabled: true,
+      last_synced_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    },
+    {
+      id: String(mockState.nextPersonalId++),
+      label: "Family (iCloud)",
+      type: "webcal",
+      url: "webcal://example.com/family.ics",
+      enabled: false,
+      last_synced_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+  );
 }
 seedMocks();
 
@@ -256,12 +290,18 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
 // ---------- Public API ----------
 
 export const api = {
-  // Health
-  health: () =>
-    withFallback(
-      () => realFetch<{ status: string; version: string }>("GET", "/health"),
-      () => ({ status: "ok", version: "mock-1.0.0" }),
-    ),
+  // Health — used by the polling probe. We don't go through withFallback
+  // because we want to control the mock-mode flag directly here.
+  health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
+    try {
+      const r = await realFetch<{ status: string; version: string }>("GET", "/health");
+      if (usingMocks) setMockMode(false);
+      return { ...r, reachable: true };
+    } catch {
+      if (!usingMocks) setMockMode(true);
+      return { status: "ok", version: "mock-1.0.0", reachable: false };
+    }
+  },
 
   // Auth
   authStatus: () =>
@@ -269,13 +309,14 @@ export const api = {
       () => realFetch<AuthStatus>("GET", "/auth/status"),
       () => ({ ...mockState.auth }),
     ),
-  authConnectUrl: () => `${API_BASE}/auth/google`,
+  authConnectUrl: (provider: CalendarProvider = "google") =>
+    `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
   authDisconnect: () =>
     withFallback(
-      () => realFetch<void>("DELETE", "/auth/disconnect"),
+      () => realFetch<void>("POST", "/auth/logout"),
       () => {
-        mockState.auth = { connected: false, email: "" };
-        logAudit("auth.disconnect", "Disconnected Google Calendar (mock)");
+        mockState.auth = { connected: false, email: "", provider: undefined };
+        logAudit("auth.disconnect", "Disconnected calendar (mock)");
       },
     ),
 
@@ -520,6 +561,92 @@ export const api = {
     withFallback(
       () => realFetch<AuditEntry[]>("GET", "/audit"),
       () => [...mockState.audit],
+    ),
+
+  // Personal calendars
+  listPersonalCalendars: () =>
+    withFallback(
+      () => realFetch<PersonalCalendar[]>("GET", "/personal-calendars"),
+      () => [...mockState.personalCalendars],
+    ),
+  addPersonalCalendar: (body: { type: PersonalCalendarType; label: string; url?: string }) =>
+    withFallback(
+      () =>
+        realFetch<PersonalCalendar & { auth_url?: string }>(
+          "POST",
+          "/personal-calendars",
+          body,
+        ),
+      () => {
+        const id = String(mockState.nextPersonalId++);
+        const cal: PersonalCalendar = {
+          id,
+          label: body.label || "Personal",
+          type: body.type,
+          enabled: true,
+          last_synced_at: new Date().toISOString(),
+          ...(body.type === "webcal"
+            ? { url: body.url }
+            : { email: `you.${body.type}@example.com` }),
+        };
+        mockState.personalCalendars.push(cal);
+        logAudit("personal.add", `Added personal calendar "${cal.label}" (mock)`);
+        // No auth_url in mocks — we just pretend it succeeded.
+        return cal;
+      },
+    ),
+  updatePersonalCalendar: (id: string, patch: Partial<Pick<PersonalCalendar, "enabled" | "label">>) =>
+    withFallback(
+      () => realFetch<PersonalCalendar>("PATCH", `/personal-calendars/${id}`, patch),
+      () => {
+        const cal = mockState.personalCalendars.find((c) => c.id === id);
+        if (!cal) throw new Error("Not found");
+        Object.assign(cal, patch);
+        logAudit("personal.update", `Updated "${cal.label}" (mock)`);
+        return { ...cal };
+      },
+    ),
+  deletePersonalCalendar: (id: string) =>
+    withFallback(
+      () => realFetch<void>("DELETE", `/personal-calendars/${id}`),
+      () => {
+        mockState.personalCalendars = mockState.personalCalendars.filter((c) => c.id !== id);
+        logAudit("personal.delete", `Removed personal calendar (mock)`);
+      },
+    ),
+  syncPersonalCalendar: (id: string) =>
+    withFallback(
+      () => realFetch<PersonalCalendar>("POST", `/personal-calendars/${id}/sync`),
+      () => {
+        const cal = mockState.personalCalendars.find((c) => c.id === id);
+        if (!cal) throw new Error("Not found");
+        cal.last_synced_at = new Date().toISOString();
+        logAudit("personal.sync", `Synced "${cal.label}" (mock)`);
+        return { ...cal };
+      },
+    ),
+
+  // LLM
+  llmTest: (s: Settings) =>
+    withFallback(
+      () => realFetch<LLMTestResult>("POST", "/llm/test", s),
+      () => {
+        const provider = s.llm_provider;
+        const need = (...keys: Array<keyof Settings>) =>
+          keys.find((k) => !s[k] || String(s[k]).trim() === "");
+        let missing: keyof Settings | undefined;
+        if (provider === "bedrock") missing = need("aws_region");
+        else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
+        else if (provider === "ollama") missing = need("llm_base_url");
+        if (missing) {
+          return { ok: false, message: `Missing required field: ${String(missing)}` };
+        }
+        return {
+          ok: true,
+          message: `Reached ${provider} (${s.llm_model || "default model"}) — mock response`,
+          latency_ms: 120 + Math.floor(Math.random() * 80),
+        };
+      },
     ),
 };
 

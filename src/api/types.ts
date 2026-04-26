@@ -1,3 +1,12 @@
+export type CalendarProvider = "google" | "outlook" | "webcal";
+export type PersonalCalendarType = "google" | "outlook" | "webcal";
+export type LLMProvider =
+  | "openai"
+  | "anthropic"
+  | "ollama"
+  | "bedrock"
+  | "azure_openai";
+
 export interface Settings {
   work_start: string;
   work_end: string;
@@ -5,6 +14,7 @@ export interface Settings {
   focus_min_block_minutes: number;
   focus_max_block_minutes: number;
   focus_daily_target_minutes: number;
+  focus_max_per_week?: number;
   focus_label: string;
   focus_color: string;
   lunch_start: string;
@@ -15,11 +25,37 @@ export interface Settings {
   compression_enabled: boolean;
   auto_schedule_enabled: boolean;
   auto_schedule_cron: string;
-  llm_provider: string;
+  llm_provider: LLMProvider | string;
   llm_model: string;
   llm_api_key?: string;
   llm_base_url?: string;
   calendar_id?: string;
+  // Work calendar provider
+  calendar_provider?: CalendarProvider;
+  webcal_url?: string;
+  // LLM: AWS Bedrock
+  aws_region?: string;
+  aws_profile?: string;
+  // LLM: Azure OpenAI
+  azure_endpoint?: string;
+  azure_deployment?: string;
+  azure_api_version?: string;
+}
+
+export interface PersonalCalendar {
+  id: string;
+  label: string;
+  type: PersonalCalendarType;
+  email?: string;
+  url?: string;
+  enabled: boolean;
+  last_synced_at?: string;
+}
+
+export interface LLMTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms?: number;
 }
 
 export interface CalendarEvent {
@@ -94,6 +130,7 @@ export interface AuditEntry {
 export interface AuthStatus {
   connected: boolean;
   email: string;
+  provider?: CalendarProvider;
 }
 
 export interface FreeBusyEntry {
