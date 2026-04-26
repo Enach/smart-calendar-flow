@@ -6,6 +6,8 @@ import SettingsPage from "./pages/Settings";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import AuthCallback from "./pages/AuthCallback";
+import LinksPage from "./pages/Links";
+import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";
 import { ToastViewport } from "./components/Toast";
 import { AuthProvider } from "./contexts/AuthContext";
@@ -35,6 +37,14 @@ const App = () => (
             }
           />
           <Route
+            path="/app/links"
+            element={
+              <RequireAuth>
+                <LinksPage />
+              </RequireAuth>
+            }
+          />
+          <Route
             path="/settings"
             element={
               <RequireAuth>
@@ -42,6 +52,7 @@ const App = () => (
               </RequireAuth>
             }
           />
+          <Route path="/book/:slug" element={<PublicBooking />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
         <ToastViewport />
