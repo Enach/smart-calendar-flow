@@ -14,6 +14,7 @@ import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
+import { QuickCreatePopover } from "@/components/QuickCreatePopover";
 import { LoadingOverlay } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
@@ -85,6 +86,12 @@ export default function Dashboard() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [popoverEvent, setPopoverEvent] = useState<CalendarEvent | null>(null);
+  const [quickCreate, setQuickCreate] = useState<{
+    anchor: { x: number; y: number };
+    start: Date;
+    end: Date;
+  } | null>(null);
+  const [quickCreateSaving, setQuickCreateSaving] = useState(false);
 
   // Persist view selection
   useEffect(() => {
