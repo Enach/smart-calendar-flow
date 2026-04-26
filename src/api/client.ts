@@ -2,11 +2,15 @@ import type {
   AuditEntry,
   AuthStatus,
   CalendarEvent,
+  CalendarProvider,
   CompressionResult,
   FocusBlock,
   FocusRunResult,
+  LLMTestResult,
   MoveProposal,
   ParseResult,
+  PersonalCalendar,
+  PersonalCalendarType,
   Settings,
   SuggestedSlot,
 } from "./types";
@@ -50,6 +54,7 @@ const DEFAULT_SETTINGS: Settings = {
   focus_min_block_minutes: 60,
   focus_max_block_minutes: 180,
   focus_daily_target_minutes: 180,
+  focus_max_per_week: 15,
   focus_label: "Focus Time",
   focus_color: "#7C3AED",
   lunch_start: "12:30",
@@ -65,17 +70,26 @@ const DEFAULT_SETTINGS: Settings = {
   llm_api_key: "",
   llm_base_url: "",
   calendar_id: "primary",
+  calendar_provider: "google",
+  webcal_url: "",
+  aws_region: "us-east-1",
+  aws_profile: "",
+  azure_endpoint: "",
+  azure_deployment: "",
+  azure_api_version: "2024-02-01",
 };
 
 const mockState = {
   settings: { ...DEFAULT_SETTINGS },
-  auth: { connected: true, email: "you@example.com" } as AuthStatus,
+  auth: { connected: true, email: "you@example.com", provider: "google" as CalendarProvider } as AuthStatus,
   events: [] as CalendarEvent[],
   focusBlocks: [] as FocusBlock[],
   audit: [] as AuditEntry[],
+  personalCalendars: [] as PersonalCalendar[],
   nextEventId: 1000,
   nextFocusId: 1,
   nextAuditId: 1,
+  nextPersonalId: 1,
 };
 
 function pad(n: number) {
