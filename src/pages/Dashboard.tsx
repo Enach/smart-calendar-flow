@@ -279,6 +279,12 @@ export default function Dashboard() {
   const goNext = () => calRef.current?.getApi().next();
   const goToday = () => calRef.current?.getApi().today();
 
+  // True only when "today" falls inside the currently visible range.
+  const todayInRange = useMemo(() => {
+    const now = new Date();
+    return now >= rangeStart && now < rangeEnd;
+  }, [rangeStart, rangeEnd]);
+
   return (
     <div className="min-h-screen bg-muted/30">
       <MockBanner />
