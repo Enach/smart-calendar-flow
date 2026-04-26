@@ -19,6 +19,7 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
+import { startRequest } from "@/components/GlobalProgressBar";
 
 // ---------- Mock state ----------
 // Used as a fallback when the Go backend at /api is not reachable
