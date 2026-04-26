@@ -169,6 +169,8 @@ export default function SettingsPage() {
           </button>
         </div>
 
+        <ProfileSection />
+
         <Section title="Working Hours" description="When you're available for meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label="Start">
