@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogIn, LogOut } from "lucide-react";
 import { api, mockZoomConnect } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import type { ConferenceProvider, Settings } from "@/api/types";
+import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
