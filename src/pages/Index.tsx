@@ -29,33 +29,79 @@ const Eyebrow = ({ children }: { children: React.ReactNode }) => (
 
 /* ---------- nav ---------- */
 
-const Nav = () => (
-  <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur">
-    <Container className="flex h-16 items-center justify-between">
-      <Link to="/" className="flex items-center gap-2.5">
-        <PacedayMark />
-        <span className="font-serif text-xl text-foreground">Paceday</span>
-      </Link>
-      <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
-        <a href="#problem" className="transition-colors hover:text-foreground">The problem</a>
-        <a href="#solution" className="transition-colors hover:text-foreground">How it works</a>
-        <a href="#preview" className="transition-colors hover:text-foreground">Product</a>
-        <a href="#benefits" className="transition-colors hover:text-foreground">Benefits</a>
-      </nav>
-      <div className="flex items-center gap-2">
-        <Link
-          to="/signin"
-          className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
-        >
-          Sign in
+const Nav = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => {
+  const { user, isDemo, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const goApp = () => navigate("/app");
+  const onExitDemo = async () => {
+    await logout();
+    navigate("/");
+  };
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur">
+      <Container className="flex h-16 items-center justify-between">
+        <Link to="/" className="flex items-center gap-2.5">
+          <PacedayMark />
+          <span className="font-serif text-xl text-foreground">Paceday</span>
         </Link>
-        <Button asChild size="sm" className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90">
-          <Link to="/signup">Get your time back</Link>
-        </Button>
-      </div>
-    </Container>
-  </header>
-);
+        <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
+          <a href="#problem" className="transition-colors hover:text-foreground">The problem</a>
+          <a href="#solution" className="transition-colors hover:text-foreground">How it works</a>
+          <a href="#preview" className="transition-colors hover:text-foreground">Product</a>
+          <a href="#benefits" className="transition-colors hover:text-foreground">Benefits</a>
+        </nav>
+        <div className="flex items-center gap-2">
+          {isDemo ? (
+            <>
+              <button
+                type="button"
+                onClick={goApp}
+                className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              >
+                Open app
+              </button>
+              <Button
+                onClick={onExitDemo}
+                size="sm"
+                variant="outline"
+                className="rounded-full border-border bg-card px-4 text-sm text-foreground hover:bg-muted"
+              >
+                Exit demo
+              </Button>
+            </>
+          ) : user ? (
+            <Button
+              onClick={goApp}
+              size="sm"
+              className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+            >
+              Open app
+            </Button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => onOpenAuth("signin")}
+                className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              >
+                Sign in
+              </button>
+              <Button
+                onClick={() => onOpenAuth("signup")}
+                size="sm"
+                className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+              >
+                Get your time back
+              </Button>
+            </>
+          )}
+        </div>
+      </Container>
+    </header>
+  );
+};
 
 /* ---------- minimal "blocks" mark (no Tetris vibes) ---------- */
 
