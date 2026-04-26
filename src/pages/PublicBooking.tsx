@@ -329,6 +329,23 @@ export default function PublicBooking() {
                   <span>All hosts must be available</span>
                 </div>
               )}
+              {!!link.min_notice_minutes && link.min_notice_minutes > 0 && (
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  <span>
+                    {link.min_notice_minutes < 60
+                      ? `${link.min_notice_minutes} min notice required`
+                      : link.min_notice_minutes < 1440
+                        ? `${Math.round(link.min_notice_minutes / 60)} hour${Math.round(link.min_notice_minutes / 60) === 1 ? "" : "s"} notice required`
+                        : `${Math.round(link.min_notice_minutes / 1440)} day${Math.round(link.min_notice_minutes / 1440) === 1 ? "" : "s"} notice required`}
+                  </span>
+                </div>
+              )}
+              {link.usage_type === "single_use" && (
+                <div className="rounded-md border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-3 py-2 text-xs text-[#5C3DA1]">
+                  This is a one-time link — only one booking is allowed.
+                </div>
+              )}
             </div>
           </aside>
 
