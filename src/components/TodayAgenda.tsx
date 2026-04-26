@@ -47,6 +47,7 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
           retrying={retrying}
         />
       ) : loading && events.length === 0 ? (
+        showSkeleton ? (
         <ul className="space-y-2" aria-busy="true" aria-live="polite">
           {[0, 1, 2].map((i) => (
             <li key={i} className="flex items-start gap-3 p-2">
