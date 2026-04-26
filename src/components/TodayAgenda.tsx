@@ -1,6 +1,7 @@
 import type { CalendarEvent } from "@/api/types";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
