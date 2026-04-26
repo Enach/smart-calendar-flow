@@ -479,30 +479,23 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             {error && <p className="text-xs text-destructive">{error}</p>}
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
-                {coHosts.map((email) => {
-                  const wasAlreadyHere = initialEmails.includes(email);
-                  return (
-                    <li
-                      key={email}
-                      className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs"
+                {coHosts.map((email) => (
+                  <li
+                    key={email}
+                    className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs"
+                  >
+                    <span className="font-medium text-foreground">{email}</span>
+                    <CoverageBadge state={chipStateFor(email)} />
+                    <button
+                      type="button"
+                      onClick={() => removeCoHost(email)}
+                      className="rounded-full p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                      aria-label={`Remove ${email}`}
                     >
-                      <span className="font-medium text-foreground">{email}</span>
-                      {!wasAlreadyHere && (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Invite pending
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeCoHost(email)}
-                        className="rounded-full p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                        aria-label={`Remove ${email}`}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </li>
-                  );
-                })}
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
             <p className="pt-1 text-[11px] text-muted-foreground">{coHosts.length}/5 co-hosts</p>
