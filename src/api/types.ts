@@ -93,6 +93,8 @@ export interface CalendarEvent {
   location?: string;
   room_resource_email?: string;
   conference?: ConferenceLink;
+  /** Set when the event was created with free/busy verification (T-39). */
+  coverage?: CoverageSummary;
 }
 
 export interface Room {
