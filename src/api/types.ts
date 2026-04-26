@@ -185,3 +185,72 @@ export interface FreeBusyEntry {
 }
 
 export type FreeBusyMap = Record<string, FreeBusyEntry[]>;
+
+// ---------- Scheduling links (T-28) ----------
+
+export type CoHostStatus = "accepted" | "pending" | "declined";
+
+export interface SchedulingHost {
+  user_id?: string;
+  email: string;
+  name?: string;
+  avatar_url?: string;
+  is_owner: boolean;
+  status: CoHostStatus;
+}
+
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+export interface SchedulingLink {
+  id: string;
+  owner_id: string;
+  title: string;
+  slug: string;
+  durations: number[];           // minutes, e.g. [15, 30, 60]
+  days: Weekday[];               // available weekdays
+  window_start: string;          // "HH:MM"
+  window_end: string;            // "HH:MM"
+  buffer_before: number;         // minutes
+  buffer_after: number;          // minutes
+  active: boolean;
+  hosts: SchedulingHost[];       // owner first, then co-hosts
+  created_at: string;
+  /** True when the current user is the owner. */
+  is_owner: boolean;
+  /** Status of the current user vs this link (for "Shared with me"). */
+  my_status?: CoHostStatus;
+}
+
+export interface CoHostInvite {
+  link_id: string;
+  link_title: string;
+  owner_name: string;
+  owner_email: string;
+  invited_at: string;
+}
+
+export interface BookingSlot {
+  start: string;          // ISO
+  end: string;            // ISO
+}
+
+export interface PublicLinkInfo {
+  slug: string;
+  title: string;
+  durations: number[];
+  hosts: Array<Pick<SchedulingHost, "email" | "name" | "avatar_url">>;
+  timezone_hint?: string;
+}
+
+export interface BookingConfirmation {
+  id: string;
+  link_slug: string;
+  title: string;
+  start: string;
+  end: string;
+  duration_minutes: number;
+  hosts: Array<Pick<SchedulingHost, "email" | "name" | "avatar_url">>;
+  booker_name: string;
+  booker_email: string;
+  notes?: string;
+}
