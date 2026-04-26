@@ -23,6 +23,7 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusStatsProps) {
   const { data, isLoading, isError, isFetching, refetch } = useFocusBlocks(weekISO);
   const blocks = Array.isArray(data) ? data : [];
+  const showSkeleton = useDebouncedFlag(isLoading && blocks.length === 0 && !isError);
 
   const weeklyTarget = dailyTargetMinutes * 5;
   const totalMin = blocks.reduce(
