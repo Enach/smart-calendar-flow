@@ -12,7 +12,7 @@ import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { TodayAgenda } from "@/components/TodayAgenda";
 import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
-import { EventPopover } from "@/components/EventPopover";
+import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
 
 import { useSettings } from "@/hooks/useSettings";
@@ -238,7 +238,7 @@ export default function Dashboard() {
         />
       )}
       {popoverEvent && (
-        <EventPopover event={popoverEvent} onClose={() => setPopoverEvent(null)} />
+        <EventDrawer event={popoverEvent} onClose={() => setPopoverEvent(null)} />
       )}
     </div>
   );

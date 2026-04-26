@@ -7,6 +7,8 @@ export type LLMProvider =
   | "bedrock"
   | "azure_openai";
 
+export type ConferenceProvider = "google_meet" | "zoom" | "teams" | "custom";
+
 export interface Settings {
   work_start: string;
   work_end: string;
@@ -40,6 +42,9 @@ export interface Settings {
   azure_endpoint?: string;
   azure_deployment?: string;
   azure_api_version?: string;
+  // Conferencing
+  default_conference_provider?: ConferenceProvider;
+  teams_enabled?: boolean;
 }
 
 export interface PersonalCalendar {
@@ -58,6 +63,22 @@ export interface LLMTestResult {
   latency_ms?: number;
 }
 
+export type RsvpStatus = "accepted" | "declined" | "tentative" | "pending";
+
+export interface Attendee {
+  email: string;
+  name?: string;
+  avatar_url?: string;
+  rsvp?: RsvpStatus;
+  organizer?: boolean;
+}
+
+export interface ConferenceLink {
+  provider: ConferenceProvider;
+  url: string;
+  label?: string;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -65,7 +86,32 @@ export interface CalendarEvent {
   end: string;
   color?: string;
   attendees?: string[];
+  attendee_details?: Attendee[];
   is_focus_block?: boolean;
+  is_personal_block?: boolean;
+  description?: string;
+  location?: string;
+  room_resource_email?: string;
+  conference?: ConferenceLink;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  email: string;
+  building?: string;
+  floor?: string;
+  capacity?: number;
+  available?: boolean;
+}
+
+export interface ConferenceProviderStatus {
+  provider: ConferenceProvider;
+  connected: boolean;
+  email?: string;
+  enabled?: boolean;
+  // For Google Meet (auto with google calendar) / Teams (auto with outlook)
+  auto_with?: CalendarProvider;
 }
 
 export interface FocusBlock {
