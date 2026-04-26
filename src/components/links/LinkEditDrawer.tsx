@@ -321,7 +321,75 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             </div>
           </div>
 
-          {/* Slug */}
+          {/* Minimum notice */}
+          <div className="space-y-2">
+            <Label htmlFor="min-notice">Minimum notice before a meeting</Label>
+            <select
+              id="min-notice"
+              value={minNotice}
+              onChange={(e) => setMinNotice(parseInt(e.target.value, 10))}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {NOTICE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Bookings can't start sooner than this. Useful to give yourself prep time.
+            </p>
+          </div>
+
+          {/* Usage type */}
+          <div className="space-y-2">
+            <Label>Link type</Label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {USAGE_OPTIONS.map((opt) => {
+                const on = usageType === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setUsageType(opt.value)}
+                    className={`rounded-lg border p-3 text-left transition ${
+                      on
+                        ? "border-primary bg-primary-muted"
+                        : "border-border bg-background hover:border-primary/40"
+                    }`}
+                  >
+                    <p className={`text-sm font-semibold ${on ? "text-primary" : "text-foreground"}`}>
+                      {opt.label}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{opt.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+            {usageType === "recurring" && (
+              <div className="flex items-center gap-2 pt-1">
+                <Label htmlFor="max-uses" className="text-xs text-muted-foreground">
+                  Allow up to
+                </Label>
+                <Input
+                  id="max-uses"
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(Math.max(1, parseInt(e.target.value || "1", 10)))}
+                  className="h-9 w-24"
+                />
+                <span className="text-xs text-muted-foreground">bookings, then auto-disable.</span>
+              </div>
+            )}
+            {isEdit && link && (link.uses_count ?? 0) > 0 && (
+              <p className="pt-1 text-[11px] text-muted-foreground">
+                Already booked {link.uses_count}
+                {usageType === "recurring" && link.max_uses ? ` / ${link.max_uses}` : ""} time
+                {link.uses_count === 1 ? "" : "s"}.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="link-slug">Slug</Label>
             <Input
