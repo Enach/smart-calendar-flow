@@ -18,7 +18,8 @@ function fmtHM(min: number) {
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusStatsProps) {
-  const { data: blocks = [] } = useFocusBlocks(weekISO);
+  const { data } = useFocusBlocks(weekISO);
+  const blocks = Array.isArray(data) ? data : [];
 
   const weeklyTarget = dailyTargetMinutes * 5;
   const totalMin = blocks.reduce(
