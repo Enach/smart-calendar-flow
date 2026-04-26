@@ -681,7 +681,167 @@ export const api = {
         };
       },
     ),
+
+  // ----- Events: edit / delete -----
+  updateEvent: (
+    id: string,
+    patch: Partial<Pick<CalendarEvent, "title" | "start" | "end" | "description" | "location" | "room_resource_email" | "attendees" | "attendee_details">>,
+    sendUpdates: "all" | "none" = "none",
+  ) =>
+    withFallback(
+      () =>
+        realFetch<CalendarEvent>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
+      () => {
+        const ev = mockState.events.find((e) => e.id === id);
+        if (!ev) throw new Error("Not found");
+        Object.assign(ev, patch);
+        // keep attendees array in sync with attendee_details if details given
+        if (patch.attendee_details) {
+          ev.attendees = patch.attendee_details.map((a) => a.email);
+        }
+        logAudit("event.update", `Edited "${ev.title}" (mock)`);
+        return { ...ev };
+      },
+    ),
+
+  deleteEvent: (id: string, sendUpdates: "all" | "none" = "none") =>
+    withFallback(
+      () => realFetch<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates }),
+      () => {
+        const ev = mockState.events.find((e) => e.id === id);
+        mockState.events = mockState.events.filter((e) => e.id !== id);
+        logAudit("event.delete", `Deleted "${ev?.title ?? id}" (mock)`);
+      },
+    ),
+
+  // ----- Rooms -----
+  searchRooms: (q: string, start?: string, end?: string) =>
+    withFallback(
+      () => realFetch<Room[]>("GET", "/rooms", undefined, { q, start, end }),
+      () => {
+        const ql = q.trim().toLowerCase();
+        const matches = ql
+          ? MOCK_ROOMS.filter(
+              (r) =>
+                r.name.toLowerCase().includes(ql) ||
+                r.building?.toLowerCase().includes(ql) ||
+                r.email.toLowerCase().includes(ql),
+            )
+          : MOCK_ROOMS.slice();
+        const s = start ? new Date(start).getTime() : 0;
+        const e = end ? new Date(end).getTime() : 0;
+        return matches.map((r) => {
+          let available = true;
+          if (s && e) {
+            available = !mockState.events.some(
+              (ev) =>
+                ev.room_resource_email === r.email &&
+                new Date(ev.start).getTime() < e &&
+                new Date(ev.end).getTime() > s,
+            );
+            // pretend a couple are busy for demo flair
+            if (r.id === "r3" || r.id === "r6") available = false;
+          }
+          return { ...r, available };
+        });
+      },
+    ),
+
+  // ----- Attendees -----
+  suggestAttendees: (q: string) =>
+    withFallback(
+      () => realFetch<Attendee[]>("GET", "/attendees/suggest", undefined, { q }),
+      () => {
+        const ql = q.trim().toLowerCase();
+        if (!ql) return MOCK_DIRECTORY.slice(0, 5);
+        return MOCK_DIRECTORY.filter(
+          (a) =>
+            a.email.toLowerCase().includes(ql) ||
+            (a.name?.toLowerCase().includes(ql) ?? false),
+        ).slice(0, 8);
+      },
+    ),
+
+  // ----- Conferencing -----
+  addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
+    withFallback(
+      () => realFetch<ConferenceLink>("POST", `/events/${eventId}/conference`, body),
+      () => {
+        const ev = mockState.events.find((e) => e.id === eventId);
+        if (!ev) throw new Error("Not found");
+        const link = mockGenerateConferenceLink(body.provider, body.url);
+        ev.conference = link;
+        logAudit("conference.add", `Added ${body.provider} link to "${ev.title}" (mock)`);
+        return { ...link };
+      },
+    ),
+  removeConference: (eventId: string) =>
+    withFallback(
+      () => realFetch<void>("DELETE", `/events/${eventId}/conference`),
+      () => {
+        const ev = mockState.events.find((e) => e.id === eventId);
+        if (!ev) return;
+        delete ev.conference;
+        logAudit("conference.remove", `Removed conference from "${ev.title}" (mock)`);
+      },
+    ),
+  conferenceProviders: () =>
+    withFallback(
+      () => realFetch<ConferenceProviderStatus[]>("GET", "/conference/providers"),
+      () => {
+        const calProvider = mockState.settings.calendar_provider ?? "google";
+        return [
+          {
+            provider: "google_meet",
+            connected: calProvider === "google",
+            auto_with: "google",
+          },
+          {
+            provider: "zoom",
+            connected: mockState.conference.zoom.connected,
+            email: mockState.conference.zoom.email,
+          },
+          {
+            provider: "teams",
+            connected: calProvider === "outlook",
+            enabled: !!mockState.settings.teams_enabled,
+            auto_with: "outlook",
+          },
+        ] as ConferenceProviderStatus[];
+      },
+    ),
+  zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
+  zoomDisconnect: () =>
+    withFallback(
+      () => realFetch<void>("POST", "/conference/zoom/disconnect"),
+      () => {
+        mockState.conference.zoom = { connected: false, email: undefined };
+        logAudit("conference.zoom.disconnect", "Disconnected Zoom (mock)");
+      },
+    ),
 };
+
+// Mock-only conferencing link generator
+function mockGenerateConferenceLink(provider: ConferenceProvider, custom?: string): ConferenceLink {
+  if (provider === "custom") {
+    return { provider, url: custom?.trim() || "https://meet.example.com/your-room" };
+  }
+  const id = Math.random().toString(36).slice(2, 11);
+  switch (provider) {
+    case "google_meet":
+      return { provider, url: `https://meet.google.com/${id.slice(0, 3)}-${id.slice(3, 7)}-${id.slice(7, 10)}` };
+    case "zoom":
+      return { provider, url: `https://zoom.us/j/${Math.floor(1e10 + Math.random() * 9e10)}` };
+    case "teams":
+      return { provider, url: `https://teams.microsoft.com/l/meetup-join/${id}` };
+  }
+}
+
+// Pretend toggle for Zoom (used by Settings UI without a real OAuth flow)
+export function mockZoomConnect(email = "you@zoom.us") {
+  mockState.conference.zoom = { connected: true, email };
+  mockListeners.forEach(() => {});
+}
 
 // keep helper for components that want to nudge state
 export const _mockHelpers = {
