@@ -74,6 +74,10 @@ export default function Dashboard() {
     refetch: refetchEvents,
   } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
   const events = Array.isArray(eventsRaw) ? eventsRaw : [];
+  // Debounce the calendar overlay so very fast responses don't cause flicker.
+  const showEventsOverlay = useDebouncedFlag(
+    (eventsLoading || (eventsFetching && events.length === 0)) && !eventsError,
+  );
 
   const [nlpInitial, setNlpInitial] = useState<string>("");
   const [nlpLoading, setNlpLoading] = useState(false);
