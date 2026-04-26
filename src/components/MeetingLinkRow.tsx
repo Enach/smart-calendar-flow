@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Trash2, Video, ExternalLink, Settings as SettingsIcon } from "lucide-react";
+import { AlertCircle, Loader2, Plus, RotateCcw, Trash2, Video, ExternalLink, Settings as SettingsIcon, X } from "lucide-react";
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceLink, ConferenceProvider } from "@/api/types";
@@ -33,6 +33,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   const [busy, setBusy] = useState<ConferenceProvider | null>(null);
   const [customMode, setCustomMode] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
+  const [linkError, setLinkError] = useState<{ message: string; retry: () => void } | null>(null);
 
   const isConnected = (p: ConferenceProvider) =>
     p === "custom" ||
@@ -52,10 +53,13 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   };
 
   const add = async (provider: ConferenceProvider, url?: string) => {
+    // Concurrent-toggle guard
+    if (busy !== null) return;
     if (!isConnected(provider)) {
-      toast.error("Provider not connected — open Settings → Conferencing");
+      toast.error(`${PROVIDER_META[provider].label} isn't connected — open Settings → Conferencing to link it.`);
       return;
     }
+    setLinkError(null);
     const previous = conference;
     const optimistic = buildOptimisticLink(provider, url);
     // Show the new link immediately
@@ -73,13 +77,20 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     } catch {
       // Rollback
       onChange(previous);
-      toast.error("Failed to generate meeting link");
+      const message = previous
+        ? `Couldn't switch to ${PROVIDER_META[provider].label} — the previous link has been restored.`
+        : `Couldn't add a ${PROVIDER_META[provider].label} link — no link was attached.`;
+      toast.error(message);
+      setLinkError({ message, retry: () => add(provider, url) });
     } finally {
       setBusy(null);
     }
   };
 
   const remove = async () => {
+    // Concurrent-toggle guard
+    if (busy !== null) return;
+    setLinkError(null);
     const previous = conference;
     // Clear immediately
     onChange(undefined);
@@ -90,7 +101,9 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       toast.success("Meeting link removed");
     } catch {
       onChange(previous);
-      toast.error("Failed to remove link");
+      const message = "Couldn't remove the meeting link — it's still attached to the event.";
+      toast.error(message);
+      setLinkError({ message, retry: remove });
     } finally {
       setBusy(null);
     }
