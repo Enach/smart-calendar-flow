@@ -21,6 +21,9 @@ import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent, ParseResult } from "@/api/types";
 
+type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
+const VIEW_STORAGE_KEY = "calendar.view";
+
 function startOfWeek(d: Date) {
   const x = new Date(d);
   const day = x.getDay();
@@ -35,33 +38,34 @@ function pad(n: number) {
 function dateOnly(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
-function fmtRange(weekStart: Date) {
-  const end = new Date(weekStart);
-  end.setDate(end.getDate() + 6);
-  const sameMonth = end.getMonth() === weekStart.getMonth();
-  const fmt = (d: Date, withMonth: boolean) =>
-    d.toLocaleDateString(undefined, withMonth ? { month: "short", day: "numeric" } : { day: "numeric" });
-  return sameMonth
-    ? `${fmt(weekStart, true)} – ${fmt(end, false)}, ${end.getFullYear()}`
-    : `${fmt(weekStart, true)} – ${fmt(end, true)}, ${end.getFullYear()}`;
+
+function loadInitialView(): CalView {
+  if (typeof window === "undefined") return "timeGridWeek";
+  const v = window.localStorage.getItem(VIEW_STORAGE_KEY);
+  if (v === "timeGridDay" || v === "timeGridWeek" || v === "dayGridMonth") return v;
+  return "timeGridWeek";
 }
 
 export default function Dashboard() {
   const calRef = useRef<FullCalendar | null>(null);
   const qc = useQueryClient();
 
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
-  const weekISO = useMemo(() => dateOnly(weekStart), [weekStart]);
-  const weekEnd = useMemo(() => {
-    const d = new Date(weekStart);
+  const [view, setView] = useState<CalView>(() => loadInitialView());
+  const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
+  const [titleLabel, setTitleLabel] = useState<string>("");
+  const [rangeStart, setRangeStart] = useState<Date>(() => startOfWeek(new Date()));
+  const [rangeEnd, setRangeEnd] = useState<Date>(() => {
+    const d = startOfWeek(new Date());
     d.setDate(d.getDate() + 7);
     return d;
-  }, [weekStart]);
+  });
+
+  const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
   const { data: settings } = useSettings();
-  const { data: eventsRaw, refetch: refetchEvents } = useCalendarEvents(
-    weekStart.toISOString(),
-    weekEnd.toISOString(),
+  const { data: eventsRaw } = useCalendarEvents(
+    rangeStart.toISOString(),
+    rangeEnd.toISOString(),
   );
   const events = Array.isArray(eventsRaw) ? eventsRaw : [];
 
@@ -72,12 +76,36 @@ export default function Dashboard() {
   const [confirming, setConfirming] = useState(false);
   const [popoverEvent, setPopoverEvent] = useState<CalendarEvent | null>(null);
 
-  // Sync calendar API view with state
+  // Persist view selection
   useEffect(() => {
-    const api2 = calRef.current?.getApi();
-    if (!api2) return;
-    api2.gotoDate(weekStart);
-  }, [weekStart]);
+    try {
+      window.localStorage.setItem(VIEW_STORAGE_KEY, view);
+    } catch {
+      /* ignore */
+    }
+  }, [view]);
+
+  const changeView = useCallback((next: CalView) => {
+    setView(next);
+    calRef.current?.getApi().changeView(next);
+  }, []);
+
+  // Keyboard shortcuts: d / w / m
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) return;
+      }
+      if (e.key === "d") changeView("timeGridDay");
+      else if (e.key === "w") changeView("timeGridWeek");
+      else if (e.key === "m") changeView("dayGridMonth");
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [changeView]);
 
   const handleNLP = useCallback(async (text: string) => {
     setNlpLoading(true);
@@ -128,33 +156,44 @@ export default function Dashboard() {
         const isFocus =
           e.is_focus_block ||
           (settings && e.title.toLowerCase().includes((settings.focus_label || "focus").toLowerCase()));
-        const color = isFocus ? settings?.focus_color || e.color || "#7C3AED" : e.color || "#3B82F6";
+        const isPersonal = !!e.is_personal_block || /personal time/i.test(e.title);
+        const color = isFocus
+          ? settings?.focus_color || e.color || "#7C3AED"
+          : isPersonal
+            ? "#6B7280"
+            : e.color || "#3B82F6";
+        const displayTitle = isFocus
+          ? `🎯 ${e.title.replace(/^🎯\s*/, "")}`
+          : isPersonal
+            ? `🏠 ${e.title.replace(/^🏠\s*/, "")}`
+            : e.title;
         return {
           id: e.id,
-          title: isFocus ? `🎯 ${e.title}` : e.title,
+          title: displayTitle,
           start: e.start,
           end: e.end,
           backgroundColor: color,
           borderColor: color,
-          editable: !isFocus,
-          extendedProps: { raw: e, isFocus },
+          editable: !isFocus && !isPersonal,
+          extendedProps: { raw: e, isFocus, isPersonal },
         };
       }),
     [events, settings],
   );
 
+  // Navigation helpers wired to FullCalendar's API so they work in any view
+  const goPrev = () => calRef.current?.getApi().prev();
+  const goNext = () => calRef.current?.getApi().next();
+  const goToday = () => calRef.current?.getApi().today();
+
   return (
     <div className="min-h-screen bg-muted/30">
       <MockBanner />
       <Navbar
-        weekLabel={fmtRange(weekStart)}
-        onPrevWeek={() => setWeekStart((w) => {
-          const d = new Date(w); d.setDate(d.getDate() - 7); return d;
-        })}
-        onNextWeek={() => setWeekStart((w) => {
-          const d = new Date(w); d.setDate(d.getDate() + 7); return d;
-        })}
-        onToday={() => setWeekStart(startOfWeek(new Date()))}
+        weekLabel={titleLabel}
+        onPrevWeek={goPrev}
+        onNextWeek={goNext}
+        onToday={goToday}
       />
 
       <main className="mx-auto w-full max-w-[1600px] space-y-4 p-4 sm:p-6">
@@ -168,12 +207,46 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
           {/* Calendar */}
           <section className="rounded-2xl border border-border bg-card p-3 shadow-sm sm:p-4">
+            {/* View toggle */}
+            <div className="mb-3 flex justify-end">
+              <div
+                role="group"
+                aria-label="Calendar view"
+                className="inline-flex items-center gap-1 rounded-lg border border-border bg-background p-1"
+              >
+                {([
+                  { key: "timeGridDay", label: "Day", hint: "d" },
+                  { key: "timeGridWeek", label: "Week", hint: "w" },
+                  { key: "dayGridMonth", label: "Month", hint: "m" },
+                ] as { key: CalView; label: string; hint: string }[]).map((opt) => {
+                  const active = view === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => changeView(opt.key)}
+                      aria-pressed={active}
+                      title={`${opt.label} (${opt.hint})`}
+                      className={
+                        "rounded-md px-3 py-1 text-xs font-medium transition " +
+                        (active
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground")
+                      }
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <FullCalendar
               ref={calRef}
               plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-              initialView="timeGridWeek"
-              initialDate={weekStart}
-              headerToolbar={{ left: "", center: "", right: "timeGridWeek,timeGridDay" }}
+              initialView={view}
+              initialDate={currentDate}
+              headerToolbar={false}
               firstDay={1}
               allDaySlot={false}
               nowIndicator
@@ -183,6 +256,16 @@ export default function Dashboard() {
               expandRows
               height="auto"
               contentHeight={680}
+              views={{
+                timeGridDay: {
+                  titleFormat: { weekday: "long", month: "long", day: "numeric", year: "numeric" },
+                },
+                timeGridWeek: {},
+                dayGridMonth: {
+                  dayMaxEvents: 3,
+                  moreLinkClick: "day",
+                },
+              }}
               businessHours={
                 settings
                   ? {
@@ -205,9 +288,13 @@ export default function Dashboard() {
                 if (raw) setPopoverEvent(raw);
               }}
               datesSet={(arg) => {
-                const newStart = startOfWeek(arg.start);
-                if (newStart.getTime() !== weekStart.getTime()) {
-                  setWeekStart(newStart);
+                setRangeStart(arg.start);
+                setRangeEnd(arg.end);
+                setCurrentDate(arg.view.currentStart);
+                setTitleLabel(arg.view.title);
+                const t = arg.view.type as CalView;
+                if (t === "timeGridDay" || t === "timeGridWeek" || t === "dayGridMonth") {
+                  if (t !== view) setView(t);
                 }
               }}
             />
