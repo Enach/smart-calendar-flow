@@ -39,21 +39,40 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     providers.find((x) => x.provider === p)?.connected ||
     !!providers.find((x) => x.provider === p)?.auto_with;
 
+  const buildOptimisticLink = (provider: ConferenceProvider, url?: string): ConferenceLink => {
+    const fallbackUrl =
+      provider === "google_meet"
+        ? `https://meet.google.com/lookup/${eventId.slice(0, 10)}`
+        : provider === "zoom"
+          ? `https://zoom.us/j/${Math.floor(Math.random() * 1e10)}`
+          : provider === "teams"
+            ? `https://teams.microsoft.com/l/meetup-join/${eventId}`
+            : url ?? "";
+    return { provider, url: url ?? fallbackUrl };
+  };
+
   const add = async (provider: ConferenceProvider, url?: string) => {
     if (!isConnected(provider)) {
       toast.error("Provider not connected — open Settings → Conferencing");
       return;
     }
+    const previous = conference;
+    const optimistic = buildOptimisticLink(provider, url);
+    // Show the new link immediately
+    onChange(optimistic);
+    setOpen(false);
+    setCustomMode(false);
+    setCustomUrl("");
     setBusy(provider);
     try {
       const link = await api.addConference(eventId, { provider, url });
+      // Reconcile with server response
       onChange(link);
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`${PROVIDER_META[provider].label} link added`);
-      setOpen(false);
-      setCustomMode(false);
-      setCustomUrl("");
     } catch {
+      // Rollback
+      onChange(previous);
       toast.error("Failed to generate meeting link");
     } finally {
       setBusy(null);
@@ -61,13 +80,16 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   };
 
   const remove = async () => {
+    const previous = conference;
+    // Clear immediately
+    onChange(undefined);
     setBusy("custom");
     try {
       await api.removeConference(eventId);
-      onChange(undefined);
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success("Meeting link removed");
     } catch {
+      onChange(previous);
       toast.error("Failed to remove link");
     } finally {
       setBusy(null);

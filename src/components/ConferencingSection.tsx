@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogIn, LogOut } from "lucide-react";
 import { api, mockZoomConnect } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import type { ConferenceProvider, Settings } from "@/api/types";
+import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -55,11 +55,21 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
+  const patchZoomCache = (connected: boolean, email?: string) => {
+    qc.setQueryData<ConferenceProviderStatus[]>(["conferenceProviders"], (prev) => {
+      if (!prev) return prev;
+      return prev.map((p) =>
+        p.provider === "zoom" ? { ...p, connected, email: connected ? email ?? p.email : undefined } : p,
+      );
+    });
+  };
+
   const handleZoomConnect = async () => {
+    const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
+    // Optimistically flip to connected immediately
+    patchZoomCache(true, "you@example.com");
     setZoomBusy("connect");
     try {
-      // In a real backend this navigates to OAuth. The mock helper toggles the
-      // connection synchronously so the UI demonstrates the connected state.
       try {
         mockZoomConnect();
         toast.success("Zoom connected (demo)");
@@ -67,18 +77,26 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       } catch {
         window.location.href = api.zoomConnectUrl();
       }
+    } catch {
+      // Rollback on failure
+      if (previous) qc.setQueryData(["conferenceProviders"], previous);
+      toast.error("Failed to connect Zoom");
     } finally {
       setZoomBusy(null);
     }
   };
 
   const handleZoomDisconnect = async () => {
+    const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
+    // Optimistically flip to disconnected immediately
+    patchZoomCache(false);
     setZoomBusy("disconnect");
     try {
       await api.zoomDisconnect();
       toast.success("Disconnected Zoom");
       refresh();
     } catch {
+      if (previous) qc.setQueryData(["conferenceProviders"], previous);
       toast.error("Failed to disconnect");
     } finally {
       setZoomBusy(null);
