@@ -150,6 +150,7 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["events"] });
         qc.invalidateQueries({ queryKey: ["focusBlocks"] });
         toast.success("Focus time scheduled");
+        demoWriteToast();
       } else {
         setNlpError(res.error || "Sorry, I couldn't understand that request.");
       }
@@ -166,6 +167,7 @@ export default function Dashboard() {
     try {
       const ev = await api.nlpConfirm(parseResult, slotIndex);
       toast.success(`Scheduled "${ev.title}"`);
+      demoWriteToast();
       setParseResult(null);
       setNlpInitial("");
       qc.invalidateQueries({ queryKey: ["events"] });
@@ -189,6 +191,7 @@ export default function Dashboard() {
           attendees: [],
         });
         toast.success(`Created "${ev.title}"`);
+        demoWriteToast();
         qc.invalidateQueries({ queryKey: ["events"] });
         setQuickCreate(null);
       } catch {
@@ -241,6 +244,7 @@ export default function Dashboard() {
             ? `Moved "${event.title}"`
             : `Resized "${event.title}"`,
         );
+        demoWriteToast();
       } catch {
         revert();
         toast.error(kind === "drop" ? "Failed to move event" : "Failed to resize event");
@@ -296,6 +300,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
+      <DemoBanner />
       <MockBanner />
       <Navbar
         weekLabel={titleLabel}
