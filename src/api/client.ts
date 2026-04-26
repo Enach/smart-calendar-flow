@@ -19,7 +19,6 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
-import { startRequest } from "@/components/GlobalProgressBar";
 
 // ---------- Mock state ----------
 // Used as a fallback when the Go backend at /api is not reachable
@@ -272,21 +271,14 @@ async function realFetch<T>(method: string, path: string, body?: unknown, query?
 }
 
 async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
-  // Pulse the global top progress bar for every API request, regardless
-  // of whether it ultimately resolves via the real backend or the mock.
-  const end = startRequest();
+  if (usingMocks) return mock();
   try {
-    if (usingMocks) return await mock();
-    try {
-      const v = await real();
-      if (usingMocks) setMockMode(false);
-      return v;
-    } catch {
-      setMockMode(true);
-      return await mock();
-    }
-  } finally {
-    end();
+    const v = await real();
+    if (usingMocks) setMockMode(false);
+    return v;
+  } catch {
+    setMockMode(true);
+    return mock();
   }
 }
 
