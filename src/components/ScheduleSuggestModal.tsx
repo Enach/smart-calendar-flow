@@ -320,6 +320,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
                       ))}
                     </div>
                   )}
+                  <SlotCoverageNote coverage={s.coverage} className="mt-2" />
                 </button>
               );
             })}
