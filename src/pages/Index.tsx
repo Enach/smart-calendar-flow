@@ -117,7 +117,7 @@ const PacedayMark = () => (
 
 /* ---------- hero ---------- */
 
-const Hero = () => (
+const Hero = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => (
   <section className="relative overflow-hidden border-b border-border/70">
     <div className="bg-grid-soft pointer-events-none absolute inset-0 opacity-[0.35]" />
     <Container className="relative grid gap-16 py-24 lg:grid-cols-12 lg:py-32">
@@ -131,11 +131,13 @@ const Hero = () => (
           Paceday protects your focus, trims meetings, and organizes your day automatically.
         </p>
         <div className="mt-10 flex flex-wrap items-center gap-3">
-          <Button asChild size="lg" className="h-12 rounded-full bg-primary px-6 text-base text-primary-foreground hover:bg-primary/90">
-            <Link to="/signup">
-              Get your time back
-              <ArrowRight className="ml-1 h-4 w-4" />
-            </Link>
+          <Button
+            onClick={() => onOpenAuth("signup")}
+            size="lg"
+            className="h-12 rounded-full bg-primary px-6 text-base text-primary-foreground hover:bg-primary/90"
+          >
+            Get your time back
+            <ArrowRight className="ml-1 h-4 w-4" />
           </Button>
           <a href="#preview" className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
             See how it works
@@ -498,7 +500,7 @@ const BenefitCard = ({
 
 /* ---------- final CTA ---------- */
 
-const FinalCTA = () => (
+const FinalCTA = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => (
   <section id="cta" className="py-28">
     <Container>
       <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-12 text-center md:p-20">
@@ -512,11 +514,13 @@ const FinalCTA = () => (
             Connect your calendar in under a minute. Paceday handles the rest.
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <Button asChild size="lg" className="h-12 rounded-full bg-primary px-7 text-base text-primary-foreground hover:bg-primary/90">
-              <Link to="/signup">
-                Get your time back
-                <ArrowRight className="ml-1 h-4 w-4" />
-              </Link>
+            <Button
+              onClick={() => onOpenAuth("signup")}
+              size="lg"
+              className="h-12 rounded-full bg-primary px-7 text-base text-primary-foreground hover:bg-primary/90"
+            >
+              Get your time back
+              <ArrowRight className="ml-1 h-4 w-4" />
             </Button>
             <span className="text-xs text-muted-foreground">No credit card required.</span>
           </div>
@@ -542,19 +546,31 @@ const Footer = () => (
 
 /* ---------- page ---------- */
 
-const Index = () => {
-  // Suppress unused logo warning while keeping the asset import available for future use
+interface IndexProps {
+  initialAuth?: "signin" | "signup";
+}
+
+const Index = ({ initialAuth }: IndexProps = {}) => {
   void logo;
+  const [authOpen, setAuthOpen] = useState<boolean>(!!initialAuth);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">(initialAuth ?? "signin");
+
+  const openAuth = (mode: "signin" | "signup") => {
+    setAuthMode(mode);
+    setAuthOpen(true);
+  };
+
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <Nav />
-      <Hero />
+      <Nav onOpenAuth={openAuth} />
+      <Hero onOpenAuth={openAuth} />
       <Problem />
       <Solution />
       <Preview />
       <Benefits />
-      <FinalCTA />
+      <FinalCTA onOpenAuth={openAuth} />
       <Footer />
+      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} mode={authMode} />
     </main>
   );
 };
