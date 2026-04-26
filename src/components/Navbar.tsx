@@ -1,4 +1,4 @@
-import { Settings as SettingsIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -77,15 +77,26 @@ export function Navbar({
           </div>
         )}
 
-        {showSettingsLink && (
-          <Link
-            to="/settings"
-            className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-          >
-            <SettingsIcon className="h-4 w-4" />
-            <span className="hidden sm:inline">Settings</span>
-          </Link>
-        )}
+        <div className="flex items-center gap-1">
+          {(user || isDemo) && (
+            <Link
+              to="/app/links"
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              <Link2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Links</span>
+            </Link>
+          )}
+          {showSettingsLink && (
+            <Link
+              to="/settings"
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              <SettingsIcon className="h-4 w-4" />
+              <span className="hidden sm:inline">Settings</span>
+            </Link>
+          )}
+        </div>
       </div>
     </header>
   );
