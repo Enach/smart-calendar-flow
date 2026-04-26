@@ -6,10 +6,19 @@ interface NavbarProps {
   onPrevWeek?: () => void;
   onNextWeek?: () => void;
   onToday?: () => void;
+  /** When false, render a "Today" jump-back button. When true, hide it. */
+  todayInRange?: boolean;
   showSettingsLink?: boolean;
 }
 
-export function Navbar({ weekLabel, onPrevWeek, onNextWeek, onToday, showSettingsLink = true }: NavbarProps) {
+export function Navbar({
+  weekLabel,
+  onPrevWeek,
+  onNextWeek,
+  onToday,
+  todayInRange = true,
+  showSettingsLink = true,
+}: NavbarProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
@@ -25,21 +34,23 @@ export function Navbar({ weekLabel, onPrevWeek, onNextWeek, onToday, showSetting
             <button
               onClick={onPrevWeek}
               className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-              aria-label="Previous week"
+              aria-label="Previous"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
-            <button
-              onClick={onToday}
-              className="rounded-md px-3 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
-            >
-              Today
-            </button>
+            {!todayInRange && (
+              <button
+                onClick={onToday}
+                className="rounded-md px-3 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
+              >
+                Today
+              </button>
+            )}
             <span className="px-2 text-xs font-medium text-muted-foreground">{weekLabel}</span>
             <button
               onClick={onNextWeek}
               className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-              aria-label="Next week"
+              aria-label="Next"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
