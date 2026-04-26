@@ -286,7 +286,9 @@ export default function Dashboard() {
 
             <div className="relative p-3 sm:p-4">
             <LoadingOverlay
-              show={(eventsLoading || (eventsFetching && events.length === 0)) && !eventsError}
+              show={useDebouncedFlag(
+                (eventsLoading || (eventsFetching && events.length === 0)) && !eventsError,
+              )}
               label="Loading events…"
             />
             {eventsError && events.length === 0 ? (
