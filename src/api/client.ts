@@ -271,14 +271,22 @@ async function realFetch<T>(method: string, path: string, body?: unknown, query?
 }
 
 async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
-  if (usingMocks) return mock();
+  // Pulse the global top progress bar for every API request, regardless
+  // of whether it ultimately resolves via the real backend or the mock.
+  const { startRequest } = await import("@/components/GlobalProgressBar");
+  const end = startRequest();
   try {
-    const v = await real();
-    if (usingMocks) setMockMode(false);
-    return v;
-  } catch {
-    setMockMode(true);
-    return mock();
+    if (usingMocks) return await mock();
+    try {
+      const v = await real();
+      if (usingMocks) setMockMode(false);
+      return v;
+    } catch {
+      setMockMode(true);
+      return await mock();
+    }
+  } finally {
+    end();
   }
 }
 
