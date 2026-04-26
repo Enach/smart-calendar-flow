@@ -304,9 +304,17 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
     if (day !== 0 && day !== 6 && hour >= 9 && hour < 17) {
       const s = new Date(cursor);
       const e = new Date(cursor.getTime() + durationMin * 60_000);
-      const conflict = mockState.events.some(
-        (ev) => new Date(ev.start) < e && new Date(ev.end) > s,
-      );
+      // Mirror Google's behavior: events the current user has DECLINED
+      // should not block a new candidate slot, even if other invitees still
+      // hold the meeting on their calendars.
+      const conflict = mockState.events.some((ev) => {
+        if (new Date(ev.start) >= e || new Date(ev.end) <= s) return false;
+        const me = ev.attendee_details?.find(
+          (a) => a.organizer || a.email === mockState.auth.email,
+        );
+        if (me?.rsvp === "declined") return false;
+        return true;
+      });
       if (!conflict) {
         out.push({
           start: s.toISOString(),
