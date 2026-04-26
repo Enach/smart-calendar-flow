@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Loader2,
@@ -104,12 +104,7 @@ function fmtWeekLabel(d: Date) {
 export default function Manager() {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const profile = managerApi.getProfile();
-
-  // If the user is not a manager, route back to /app
-  if (!profile.is_manager) {
-    navigate("/app", { replace: true });
-  }
+  const [profile, setProfile] = useState(() => managerApi.getProfile());
 
   const [weekOffset, setWeekOffset] = useState(0);
   const [search, setSearch] = useState("");
