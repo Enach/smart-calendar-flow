@@ -90,7 +90,7 @@ export default function Onboarding() {
         managerApi.detect().then((r) => {
           if (r.added > 0) toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s.`);
         }).catch(() => undefined);
-        navigate("/app/manager", { replace: true });
+        navigate("/app/team", { replace: true });
       } else {
         navigate("/app", { replace: true });
       }

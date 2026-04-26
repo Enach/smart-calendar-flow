@@ -659,7 +659,7 @@ function ProfileSection() {
           <span className="ml-auto">
             <button
               type="button"
-              onClick={() => navigate("/app/manager")}
+              onClick={() => navigate("/app/team")}
               className="text-[#5B7FFF] hover:underline"
             >
               Open My Team →
