@@ -27,6 +27,7 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
       );
     })
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  const showSkeleton = useDebouncedFlag(!!loading && events.length === 0 && !error);
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
