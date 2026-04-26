@@ -236,7 +236,7 @@ function seedMocks() {
     },
   );
 }
-seedMocks();
+
 
 // ---------- Tiny fetch wrapper with mock fallback ----------
 
@@ -396,6 +396,9 @@ function coverageFromAttendees(attendees: string[] | undefined): { total: number
   }
   return { total: list.length + organizerCounted, checked };
 }
+
+
+seedMocks();
 
 // ---------- Public API ----------
 
