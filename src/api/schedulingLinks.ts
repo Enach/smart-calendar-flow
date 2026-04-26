@@ -338,6 +338,9 @@ export const schedulingLinksApi = {
     window_end: string;
     buffer_before: number;
     buffer_after: number;
+    min_notice_minutes: number;
+    usage_type: LinkUsageType;
+    max_uses?: number;
     co_host_emails: string[];
   }) =>
     withFallback<SchedulingLink>(
@@ -354,6 +357,10 @@ export const schedulingLinksApi = {
           window_end: input.window_end,
           buffer_before: input.buffer_before,
           buffer_after: input.buffer_after,
+          min_notice_minutes: input.min_notice_minutes,
+          usage_type: input.usage_type,
+          max_uses: input.usage_type === "recurring" ? input.max_uses : undefined,
+          uses_count: 0,
           active: true,
           hosts: [
             makeOwnerHost(),
@@ -378,6 +385,9 @@ export const schedulingLinksApi = {
       window_end: string;
       buffer_before: number;
       buffer_after: number;
+      min_notice_minutes: number;
+      usage_type: LinkUsageType;
+      max_uses: number | undefined;
       active: boolean;
       co_host_emails: string[];
     }>,
@@ -389,6 +399,8 @@ export const schedulingLinksApi = {
         if (idx < 0) throw new Error("not found");
         const current = mockState.links[idx];
         const updated: SchedulingLink = { ...current, ...input } as SchedulingLink;
+        // Drop max_uses when no longer recurring.
+        if (input.usage_type && input.usage_type !== "recurring") updated.max_uses = undefined;
         if (input.co_host_emails) {
           // Preserve already-known hosts (keep statuses) and add new pending ones.
           const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
