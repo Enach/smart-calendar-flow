@@ -1,14 +1,15 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, Trash2, ScrollText, ChevronDown, Loader2 } from "lucide-react";
+import { Play, Trash2, ScrollText, ChevronDown, Loader2, Sparkles } from "lucide-react";
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 
 interface QuickActionsProps {
   weekISO: string;
+  onScheduleMeeting?: () => void;
 }
 
-export function QuickActions({ weekISO }: QuickActionsProps) {
+export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) {
   const qc = useQueryClient();
   const [running, setRunning] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -59,6 +60,17 @@ export function QuickActions({ weekISO }: QuickActionsProps) {
         Quick Actions
       </h3>
       <div className="space-y-2">
+        {onScheduleMeeting && (
+          <button
+            onClick={onScheduleMeeting}
+            className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary/40 hover:bg-primary-muted"
+          >
+            <span className="flex items-center gap-2">
+              <Sparkles className="h-3.5 w-3.5 text-primary" />
+              Schedule Meeting
+            </span>
+          </button>
+        )}
         <button
           onClick={runFocus}
           disabled={running}
