@@ -65,10 +65,13 @@ export default function Dashboard() {
   const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
   const { data: settings } = useSettings();
-  const { data: eventsRaw, isLoading: eventsLoading, isFetching: eventsFetching } = useCalendarEvents(
-    rangeStart.toISOString(),
-    rangeEnd.toISOString(),
-  );
+  const {
+    data: eventsRaw,
+    isLoading: eventsLoading,
+    isFetching: eventsFetching,
+    isError: eventsError,
+    refetch: refetchEvents,
+  } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
   const events = Array.isArray(eventsRaw) ? eventsRaw : [];
 
   const [nlpInitial, setNlpInitial] = useState<string>("");
