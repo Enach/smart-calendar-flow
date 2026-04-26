@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Plus, Loader2 } from "lucide-react";
 
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
-import type { LinkUsageType, SchedulingLink, Weekday } from "@/api/types";
+import { api } from "@/api/client";
+import type { LinkUsageType, ParticipantCoverage, SchedulingLink, Weekday } from "@/api/types";
+import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
 
 interface LinkEditDrawerProps {
