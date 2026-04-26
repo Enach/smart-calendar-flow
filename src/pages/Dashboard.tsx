@@ -287,7 +287,7 @@ export default function Dashboard() {
   }, [rangeStart, rangeEnd]);
 
   return (
-    <div className="min-h-screen bg-muted/30">
+    <div className="min-h-screen bg-background">
       <MockBanner />
       <Navbar
         weekLabel={titleLabel}
