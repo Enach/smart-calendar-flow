@@ -56,7 +56,15 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         </div>
       </div>
 
-      {isLoading && blocks.length === 0 ? (
+      {isError && blocks.length === 0 ? (
+        <InlineError
+          compact
+          title="Couldn't load focus data"
+          message="Check your connection and try again."
+          onRetry={() => refetch()}
+          retrying={isFetching}
+        />
+      ) : isLoading && blocks.length === 0 ? (
         <div aria-busy="true" aria-live="polite" className="space-y-3">
           <SkeletonLine className="h-7 w-1/2" />
           <SkeletonLine className="h-3 w-1/3" />
