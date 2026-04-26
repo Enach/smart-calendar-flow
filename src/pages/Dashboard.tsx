@@ -169,14 +169,14 @@ export default function Dashboard() {
 
   // Quick-create from a calendar selection
   const handleQuickCreateSave = useCallback(
-    async (title: string) => {
+    async (title: string, end: Date) => {
       if (!quickCreate) return;
       setQuickCreateSaving(true);
       try {
         const ev = await api.scheduleCreate({
           title,
           start: quickCreate.start.toISOString(),
-          end: quickCreate.end.toISOString(),
+          end: end.toISOString(),
           attendees: [],
         });
         toast.success(`Created "${ev.title}"`);
@@ -192,13 +192,13 @@ export default function Dashboard() {
   );
 
   const handleQuickCreateMore = useCallback(
-    (title: string) => {
+    (title: string, end: Date) => {
       if (!quickCreate) return;
       const day = quickCreate.start.toLocaleDateString(undefined, { weekday: "long" });
       const time = quickCreate.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
       const durationMin = Math.max(
         15,
-        Math.round((quickCreate.end.getTime() - quickCreate.start.getTime()) / 60000),
+        Math.round((end.getTime() - quickCreate.start.getTime()) / 60000),
       );
       const subject = title.trim() || "meeting";
       setNlpInitial(`Schedule a ${durationMin} min ${subject} on ${day} at ${time}`);

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Trash2, Video, ExternalLink, Settings as SettingsIcon } from "lucide-react";
+import { AlertCircle, Loader2, Plus, RotateCcw, Trash2, Video, ExternalLink, Settings as SettingsIcon, X } from "lucide-react";
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceLink, ConferenceProvider } from "@/api/types";
@@ -33,6 +33,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   const [busy, setBusy] = useState<ConferenceProvider | null>(null);
   const [customMode, setCustomMode] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
+  const [linkError, setLinkError] = useState<{ message: string; retry: () => void } | null>(null);
 
   const isConnected = (p: ConferenceProvider) =>
     p === "custom" ||
@@ -52,10 +53,13 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   };
 
   const add = async (provider: ConferenceProvider, url?: string) => {
+    // Concurrent-toggle guard
+    if (busy !== null) return;
     if (!isConnected(provider)) {
-      toast.error("Provider not connected — open Settings → Conferencing");
+      toast.error(`${PROVIDER_META[provider].label} isn't connected — open Settings → Conferencing to link it.`);
       return;
     }
+    setLinkError(null);
     const previous = conference;
     const optimistic = buildOptimisticLink(provider, url);
     // Show the new link immediately
@@ -73,13 +77,20 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     } catch {
       // Rollback
       onChange(previous);
-      toast.error("Failed to generate meeting link");
+      const message = previous
+        ? `Couldn't switch to ${PROVIDER_META[provider].label} — the previous link has been restored.`
+        : `Couldn't add a ${PROVIDER_META[provider].label} link — no link was attached.`;
+      toast.error(message);
+      setLinkError({ message, retry: () => add(provider, url) });
     } finally {
       setBusy(null);
     }
   };
 
   const remove = async () => {
+    // Concurrent-toggle guard
+    if (busy !== null) return;
+    setLinkError(null);
     const previous = conference;
     // Clear immediately
     onChange(undefined);
@@ -90,38 +101,70 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       toast.success("Meeting link removed");
     } catch {
       onChange(previous);
-      toast.error("Failed to remove link");
+      const message = "Couldn't remove the meeting link — it's still attached to the event.";
+      toast.error(message);
+      setLinkError({ message, retry: remove });
     } finally {
       setBusy(null);
     }
   };
 
+  const errorBanner = linkError ? (
+    <div
+      role="alert"
+      className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-2.5 py-1.5"
+    >
+      <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />
+      <p className="min-w-0 flex-1 text-[11px] text-destructive/90">{linkError.message}</p>
+      <button
+        type="button"
+        onClick={linkError.retry}
+        disabled={busy !== null}
+        className="flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-1.5 py-0.5 text-[10px] font-medium text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+      >
+        <RotateCcw className="h-2.5 w-2.5" />
+        Retry
+      </button>
+      <button
+        type="button"
+        onClick={() => setLinkError(null)}
+        aria-label="Dismiss"
+        className="rounded-md p-0.5 text-destructive/70 transition hover:bg-destructive/10 hover:text-destructive"
+      >
+        <X className="h-2.5 w-2.5" />
+      </button>
+    </div>
+  ) : null;
+
   if (conference) {
     const meta = PROVIDER_META[conference.provider];
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
-        <span className="text-base leading-none">{meta.emoji}</span>
-        <div className="min-w-0 flex-1">
-          <p className={`text-xs font-semibold ${meta.cls}`}>{meta.label}</p>
-          <a
-            href={conference.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 truncate text-xs text-foreground hover:text-primary hover:underline"
+      <div>
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
+          <span className="text-base leading-none">{meta.emoji}</span>
+          <div className="min-w-0 flex-1">
+            <p className={`text-xs font-semibold ${meta.cls}`}>{meta.label}</p>
+            <a
+              href={conference.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 truncate text-xs text-foreground hover:text-primary hover:underline"
+            >
+              <span className="truncate">{conference.url}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          </div>
+          <button
+            type="button"
+            onClick={remove}
+            disabled={busy !== null}
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+            aria-label="Remove meeting link"
           >
-            <span className="truncate">{conference.url}</span>
-            <ExternalLink className="h-3 w-3 shrink-0" />
-          </a>
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={remove}
-          disabled={busy !== null}
-          className="shrink-0 rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-          aria-label="Remove meeting link"
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-        </button>
+        {errorBanner}
       </div>
     );
   }
@@ -198,6 +241,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
           )}
         </div>
       )}
+      {errorBanner}
     </div>
   );
 }
