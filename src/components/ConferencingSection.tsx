@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, LogIn, LogOut } from "lucide-react";
+import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
 import { api, mockZoomConnect } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
@@ -47,6 +47,10 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   });
 
   const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [zoomError, setZoomError] = useState<{
+    message: string;
+    retry: () => void;
+  } | null>(null);
 
   const meet = providers.find((p) => p.provider === "google_meet");
   const zoom = providers.find((p) => p.provider === "zoom");
@@ -65,6 +69,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   };
 
   const handleZoomConnect = async () => {
+    // Concurrent-toggle guard: ignore if a request is already in flight
+    if (zoomBusy !== null) return;
+    setZoomError(null);
     const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
     // Optimistically flip to connected immediately
     patchZoomCache(true, "you@example.com");
@@ -80,13 +87,18 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     } catch {
       // Rollback on failure
       if (previous) qc.setQueryData(["conferenceProviders"], previous);
-      toast.error("Failed to connect Zoom");
+      const message = "Couldn't connect to Zoom — your previous state has been restored.";
+      toast.error(message);
+      setZoomError({ message, retry: handleZoomConnect });
     } finally {
       setZoomBusy(null);
     }
   };
 
   const handleZoomDisconnect = async () => {
+    // Concurrent-toggle guard: ignore if a request is already in flight
+    if (zoomBusy !== null) return;
+    setZoomError(null);
     const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
     // Optimistically flip to disconnected immediately
     patchZoomCache(false);
@@ -97,7 +109,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       refresh();
     } catch {
       if (previous) qc.setQueryData(["conferenceProviders"], previous);
-      toast.error("Failed to disconnect");
+      const message = "Couldn't disconnect Zoom — your account is still linked.";
+      toast.error(message);
+      setZoomError({ message, retry: handleZoomDisconnect });
     } finally {
       setZoomBusy(null);
     }
