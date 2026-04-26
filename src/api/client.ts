@@ -191,8 +191,13 @@ async function realFetch<T>(method: string, path: string, body?: unknown, query?
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     if (res.status === 204) return undefined as T;
     const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) return (await res.json()) as T;
-    return (await res.text()) as unknown as T;
+    // Strict: only accept JSON. If the dev server returns HTML
+    // (e.g. SPA index.html when no real backend exists), treat as failure
+    // so the mock fallback engages.
+    if (!ct.includes("application/json")) {
+      throw new Error("Non-JSON response");
+    }
+    return (await res.json()) as T;
   } finally {
     clearTimeout(t);
   }
