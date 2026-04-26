@@ -145,6 +145,48 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     if (!slugDirty) setSlug(slugify(title));
   }, [title, slugDirty]);
 
+  // ---------- Real-time availability coverage for co-host chips (T-40) ----------
+  // We hit /api/freebusy for the next 14 days whenever the chip set changes,
+  // then map the response back onto each email so we can render the right badge.
+  const coverageRange = useMemo(() => {
+    const start = new Date();
+    const end = new Date(Date.now() + 14 * 86_400_000);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, []);
+  const sortedCoHostsKey = useMemo(() => [...coHosts].sort().join(","), [coHosts]);
+  const coverageQuery = useQuery({
+    queryKey: ["link-edit-freebusy", sortedCoHostsKey],
+    queryFn: () =>
+      api.freebusy({
+        emails: coHosts,
+        start_time: coverageRange.start,
+        end_time: coverageRange.end,
+      }),
+    enabled: coHosts.length > 0 && open,
+    staleTime: 60_000,
+  });
+  const coverageByEmail = useMemo(() => {
+    const m = new Map<string, ParticipantCoverage>();
+    (coverageQuery.data?.participants ?? []).forEach((p) => m.set(p.email.toLowerCase(), p));
+    return m;
+  }, [coverageQuery.data]);
+
+  function chipStateFor(email: string): ChipState {
+    const wasAlreadyHere = initialEmails.includes(email);
+    // Co-hosts who already accepted in a prior session are full Paceday users.
+    if (link && wasAlreadyHere) {
+      const host = link.hosts.find((h) => h.email.toLowerCase() === email.toLowerCase());
+      if (host?.status === "accepted" && host.user_id) return { kind: "paceday-accepted" };
+      if (host?.status === "pending") return { kind: "paceday-pending" };
+    }
+    if (coverageQuery.isLoading) return { kind: "loading" };
+    const cov = coverageByEmail.get(email.toLowerCase());
+    if (!cov) return { kind: "loading" };
+    if (cov.status === "paceday_user") return { kind: "paceday-accepted" };
+    if (cov.status === "known") return { kind: "synced", provider: cov.provider };
+    return { kind: "unknown" };
+  }
+
   const mutation = useMutation({
     mutationFn: async () => {
       const payload = {
