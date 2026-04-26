@@ -55,34 +55,52 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         </div>
       </div>
 
-      <p className="text-2xl font-semibold tracking-tight text-foreground">{fmtHM(totalMin)}</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        of {fmtHM(weeklyTarget)} target ({pct}%)
-      </p>
-
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${pct}%`, backgroundColor: focusColor }}
-        />
-      </div>
-
-      <div className="mt-4 flex items-end justify-between gap-1.5">
-        {DAYS.map((d, i) => {
-          const h = Math.max(6, Math.round((perDay[i] / dayMax) * 48));
-          return (
-            <div key={d} className="flex flex-1 flex-col items-center gap-1">
-              <div className="flex h-12 w-full items-end">
-                <div
-                  className="w-full rounded-md transition-all"
-                  style={{ height: `${h}px`, backgroundColor: perDay[i] > 0 ? focusColor : "hsl(var(--muted))" }}
-                />
+      {isLoading && blocks.length === 0 ? (
+        <div aria-busy="true" aria-live="polite" className="space-y-3">
+          <SkeletonLine className="h-7 w-1/2" />
+          <SkeletonLine className="h-3 w-1/3" />
+          <SkeletonLine className="mt-3 h-2 w-full" />
+          <div className="mt-4 flex items-end justify-between gap-1.5">
+            {DAYS.map((d) => (
+              <div key={d} className="flex flex-1 flex-col items-center gap-1">
+                <SkeletonLine className="h-12 w-full" />
+                <span className="text-[10px] font-medium text-muted-foreground">{d}</span>
               </div>
-              <span className="text-[10px] font-medium text-muted-foreground">{d}</span>
-            </div>
-          );
-        })}
-      </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="text-2xl font-semibold tracking-tight text-foreground">{fmtHM(totalMin)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            of {fmtHM(weeklyTarget)} target ({pct}%)
+          </p>
+
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${pct}%`, backgroundColor: focusColor }}
+            />
+          </div>
+
+          <div className="mt-4 flex items-end justify-between gap-1.5">
+            {DAYS.map((d, i) => {
+              const h = Math.max(6, Math.round((perDay[i] / dayMax) * 48));
+              return (
+                <div key={d} className="flex flex-1 flex-col items-center gap-1">
+                  <div className="flex h-12 w-full items-end">
+                    <div
+                      className="w-full rounded-md transition-all"
+                      style={{ height: `${h}px`, backgroundColor: perDay[i] > 0 ? focusColor : "hsl(var(--muted))" }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-medium text-muted-foreground">{d}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
