@@ -579,7 +579,13 @@ export const api = {
   }) =>
     withFallback(
       () => realFetch<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body),
-      () => ({ slots: mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end) }),
+      () => {
+        const cov = coverageFromAttendees(body.attendees);
+        const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end).map(
+          (s) => ({ ...s, coverage: cov }),
+        );
+        return { slots };
+      },
     ),
   scheduleCreate: (body: {
     title: string;
