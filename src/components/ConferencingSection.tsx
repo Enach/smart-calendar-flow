@@ -55,8 +55,20 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
+  /** Patch the cached providers list so the UI updates instantly. */
+  const patchZoomCache = (patch: Partial<ConferenceProviderStatus>) => {
+    const prev = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
+    qc.setQueryData<ConferenceProviderStatus[]>(["conferenceProviders"], (curr) => {
+      const list = curr ?? prev ?? [];
+      return list.map((p) => (p.provider === "zoom" ? { ...p, ...patch } : p));
+    });
+    return prev;
+  };
+
   const handleZoomConnect = async () => {
     setZoomBusy("connect");
+    // Optimistically flip to connected so the user sees the result immediately.
+    const snapshot = patchZoomCache({ connected: true, email: "you@zoom.us" });
     try {
       // In a real backend this navigates to OAuth. The mock helper toggles the
       // connection synchronously so the UI demonstrates the connected state.
@@ -67,6 +79,10 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       } catch {
         window.location.href = api.zoomConnectUrl();
       }
+    } catch {
+      // Roll back on failure.
+      qc.setQueryData(["conferenceProviders"], snapshot);
+      toast.error("Failed to connect Zoom");
     } finally {
       setZoomBusy(null);
     }
@@ -74,11 +90,14 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const handleZoomDisconnect = async () => {
     setZoomBusy("disconnect");
+    // Optimistically flip to disconnected.
+    const snapshot = patchZoomCache({ connected: false, email: undefined });
     try {
       await api.zoomDisconnect();
       toast.success("Disconnected Zoom");
       refresh();
     } catch {
+      qc.setQueryData(["conferenceProviders"], snapshot);
       toast.error("Failed to disconnect");
     } finally {
       setZoomBusy(null);
