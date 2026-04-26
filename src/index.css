@@ -4,54 +4,61 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222 20% 12%;
+    /* Paceday brand palette — light, calm, structured */
+    --background: 72 22% 96%;            /* #F7F8F4 off-white */
+    --foreground: 90 7% 17%;             /* #2B2F2A deep ink */
 
-    --card: 0 0% 100%;
-    --card-foreground: 222 20% 12%;
+    --card: 0 0% 100%;                   /* #FFFFFF surface */
+    --card-foreground: 90 7% 17%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222 20% 12%;
+    --popover-foreground: 90 7% 17%;
 
-    --primary: 239 84% 60%;
+    --primary: 226 100% 68%;             /* #5B7FFF focus blue */
     --primary-foreground: 0 0% 100%;
-    --primary-muted: 239 84% 96%;
+    --primary-muted: 226 100% 96%;
 
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 222 20% 12%;
+    --secondary: 72 18% 92%;
+    --secondary-foreground: 90 7% 17%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 72 18% 92%;
+    --muted-foreground: 96 5% 43%;       /* #6B7366 secondary text */
 
-    --accent: 239 84% 96%;
-    --accent-foreground: 239 84% 40%;
+    --accent: 226 100% 96%;
+    --accent-foreground: 226 80% 50%;
 
-    --destructive: 0 72% 51%;
+    --destructive: 0 71% 63%;            /* #E35D5D conflict red */
     --destructive-foreground: 0 0% 100%;
 
-    --success: 142 71% 45%;
+    --success: 162 49% 58%;              /* #5FC9A6 */
     --success-foreground: 0 0% 100%;
 
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --warning: 42 78% 60%;               /* #E9B949 meeting yellow */
+    --warning-foreground: 90 7% 17%;
 
-    --info: 217 91% 60%;
+    --info: 226 100% 68%;
     --info-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 239 84% 60%;
+    --ai: 261 60% 68%;                   /* #9B7AE0 purple */
+    --ai-foreground: 0 0% 100%;
 
-    --radius: 0.75rem;
+    --border: 84 17% 88%;                /* #E3E6DC borders */
+    --input: 84 17% 88%;
+    --ring: 226 100% 68%;
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --radius: 0.625rem;
+
+    --sidebar-background: 72 22% 96%;
+    --sidebar-foreground: 90 7% 17%;
+    --sidebar-primary: 226 100% 68%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 72 18% 92%;
+    --sidebar-accent-foreground: 90 7% 17%;
+    --sidebar-border: 84 17% 88%;
+    --sidebar-ring: 226 100% 68%;
+
+    --font-serif: "Playfair Display", ui-serif, Georgia, "Times New Roman", serif;
+    --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
 
   .dark {
@@ -61,26 +68,28 @@
     --card-foreground: 210 40% 98%;
     --popover: 222 20% 10%;
     --popover-foreground: 210 40% 98%;
-    --primary: 239 84% 67%;
+    --primary: 226 100% 72%;
     --primary-foreground: 222 20% 8%;
-    --primary-muted: 239 50% 18%;
+    --primary-muted: 226 60% 18%;
     --secondary: 217 32% 17%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217 32% 17%;
     --muted-foreground: 215 20% 65%;
-    --accent: 239 50% 18%;
-    --accent-foreground: 239 84% 80%;
+    --accent: 226 60% 18%;
+    --accent-foreground: 226 100% 80%;
     --destructive: 0 62% 50%;
     --destructive-foreground: 210 40% 98%;
-    --success: 142 71% 45%;
+    --success: 162 49% 58%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
-    --info: 217 91% 60%;
+    --warning: 42 78% 60%;
+    --warning-foreground: 90 7% 17%;
+    --info: 226 100% 68%;
     --info-foreground: 0 0% 100%;
+    --ai: 261 60% 68%;
+    --ai-foreground: 0 0% 100%;
     --border: 217 32% 17%;
     --input: 217 32% 17%;
-    --ring: 239 84% 67%;
+    --ring: 226 100% 72%;
   }
 }
 
@@ -90,7 +99,22 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Inter, sans-serif;
+    font-family: var(--font-sans);
+    font-feature-settings: "ss01", "cv11";
+  }
+  .font-serif {
+    font-family: var(--font-serif);
+    font-feature-settings: "lnum";
+  }
+}
+
+@layer utilities {
+  /* Subtle, structured grid backdrop — never loud */
+  .bg-grid-soft {
+    background-image:
+      linear-gradient(to right, hsl(var(--border) / 0.55) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--border) / 0.55) 1px, transparent 1px);
+    background-size: 56px 56px;
   }
 }
 
