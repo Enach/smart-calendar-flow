@@ -59,10 +59,11 @@ export default function Dashboard() {
   }, [weekStart]);
 
   const { data: settings } = useSettings();
-  const { data: events = [], refetch: refetchEvents } = useCalendarEvents(
+  const { data: eventsRaw, refetch: refetchEvents } = useCalendarEvents(
     weekStart.toISOString(),
     weekEnd.toISOString(),
   );
+  const events = Array.isArray(eventsRaw) ? eventsRaw : [];
 
   const [nlpInitial, setNlpInitial] = useState<string>("");
   const [nlpLoading, setNlpLoading] = useState(false);
