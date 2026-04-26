@@ -343,21 +343,19 @@ export const managerApi = {
   },
 
   gaps(): OneOnOneGap[] {
-    return load()
-      .members.map((m) => {
-        const overdue = computeDaysOverdue(m);
-        return overdue == null
-          ? null
-          : {
-              email: m.email,
-              display_name: m.display_name,
-              cadence: m.cadence,
-              last_one_on_one: m.last_one_on_one,
-              days_overdue: overdue,
-            };
-      })
-      .filter((x): x is OneOnOneGap => x != null)
-      .sort((a, b) => b.days_overdue - a.days_overdue);
+    const list: OneOnOneGap[] = [];
+    for (const m of load().members) {
+      const overdue = computeDaysOverdue(m);
+      if (overdue == null) continue;
+      list.push({
+        email: m.email,
+        display_name: m.display_name,
+        cadence: m.cadence,
+        last_one_on_one: m.last_one_on_one,
+        days_overdue: overdue,
+      });
+    }
+    return list.sort((a, b) => b.days_overdue - a.days_overdue);
   },
 
   /** Build a /app?prefill= URL the calendar can deep-link to. */
