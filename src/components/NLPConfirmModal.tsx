@@ -111,6 +111,7 @@ export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NL
                         ))}
                       </div>
                     )}
+                    <SlotCoverageNote coverage={s.coverage ?? parseResult.coverage} className="mt-2" />
                   </button>
                 );
               })}
