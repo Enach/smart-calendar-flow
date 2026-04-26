@@ -167,6 +167,46 @@ export default function Dashboard() {
     }
   }, [parseResult, qc]);
 
+  // Quick-create from a calendar selection
+  const handleQuickCreateSave = useCallback(
+    async (title: string) => {
+      if (!quickCreate) return;
+      setQuickCreateSaving(true);
+      try {
+        const ev = await api.scheduleCreate({
+          title,
+          start: quickCreate.start.toISOString(),
+          end: quickCreate.end.toISOString(),
+          attendees: [],
+        });
+        toast.success(`Created "${ev.title}"`);
+        qc.invalidateQueries({ queryKey: ["events"] });
+        setQuickCreate(null);
+      } catch {
+        toast.error("Failed to create event");
+      } finally {
+        setQuickCreateSaving(false);
+      }
+    },
+    [quickCreate, qc],
+  );
+
+  const handleQuickCreateMore = useCallback(
+    (title: string) => {
+      if (!quickCreate) return;
+      const day = quickCreate.start.toLocaleDateString(undefined, { weekday: "long" });
+      const time = quickCreate.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const durationMin = Math.max(
+        15,
+        Math.round((quickCreate.end.getTime() - quickCreate.start.getTime()) / 60000),
+      );
+      const subject = title.trim() || "meeting";
+      setNlpInitial(`Schedule a ${durationMin} min ${subject} on ${day} at ${time}`);
+      setQuickCreate(null);
+    },
+    [quickCreate],
+  );
+
   // Drag-to-reschedule + resize-to-extend handlers
   const handleEventChange = useCallback(
     async (
