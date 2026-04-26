@@ -1,4 +1,4 @@
-import { Calendar, Settings as SettingsIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Settings as SettingsIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 interface NavbarProps {
@@ -11,6 +11,24 @@ interface NavbarProps {
   showSettingsLink?: boolean;
 }
 
+/** Paceday brand mark — abstract structured calendar blocks. */
+function PacedayMark({ className = "h-6 w-6" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 22 22" className={className} aria-hidden="true">
+      {/* outlined small block */}
+      <rect x="0.5" y="0.5" width="6" height="6" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      {/* mid stair */}
+      <rect x="8" y="8" width="6" height="6" rx="1" fill="currentColor" />
+      {/* top stair, outlined */}
+      <rect x="15.5" y="0.5" width="6" height="6" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      {/* base block */}
+      <rect x="0.5" y="15.5" width="6" height="6" rx="1" fill="currentColor" />
+      {/* accent square */}
+      <rect x="15.5" y="15.5" width="6" height="6" rx="1" fill="hsl(var(--primary))" />
+    </svg>
+  );
+}
+
 export function Navbar({
   weekLabel,
   onPrevWeek,
@@ -20,20 +38,18 @@ export function Navbar({
   showSettingsLink = true,
 }: NavbarProps) {
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-card/80 backdrop-blur-md">
+    <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Calendar className="h-4 w-4" />
-          </div>
-          <span className="text-sm font-semibold tracking-tight">Clockwise-like</span>
+        <Link to="/" className="flex items-center gap-2.5 text-foreground">
+          <PacedayMark className="h-6 w-6 text-foreground" />
+          <span className="font-serif text-lg leading-none tracking-tight">Paceday</span>
         </Link>
 
         {weekLabel && (
-          <div className="hidden items-center gap-1 rounded-lg border border-border bg-background px-1 py-1 sm:flex">
+          <div className="hidden items-center gap-1 rounded-full border border-border bg-card px-1 py-1 sm:flex">
             <button
               onClick={onPrevWeek}
-              className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="rounded-full p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
               aria-label="Previous"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -41,7 +57,7 @@ export function Navbar({
             {!todayInRange && (
               <button
                 onClick={onToday}
-                className="rounded-md px-3 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
+                className="rounded-full px-3 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
               >
                 Today
               </button>
@@ -49,7 +65,7 @@ export function Navbar({
             <span className="px-2 text-xs font-medium text-muted-foreground">{weekLabel}</span>
             <button
               onClick={onNextWeek}
-              className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              className="rounded-full p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
               aria-label="Next"
             >
               <ChevronRight className="h-4 w-4" />
@@ -60,7 +76,7 @@ export function Navbar({
         {showSettingsLink && (
           <Link
             to="/settings"
-            className="flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
           >
             <SettingsIcon className="h-4 w-4" />
             <span className="hidden sm:inline">Settings</span>
