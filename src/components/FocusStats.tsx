@@ -84,6 +84,7 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         ) : (
           <div className="h-[140px]" aria-busy="true" aria-live="polite" />
         )
+      ) : (
         <>
           <p className="text-2xl font-semibold tracking-tight text-foreground">{fmtHM(totalMin)}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
