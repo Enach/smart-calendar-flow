@@ -56,6 +56,12 @@ function loadInitialView(): CalView {
 export default function Dashboard() {
   const calRef = useRef<FullCalendar | null>(null);
   const qc = useQueryClient();
+  const { isDemo } = useAuth();
+
+  /** Reminds the user that demo writes never reach a backend. */
+  const demoWriteToast = useCallback(() => {
+    if (isDemo) toast.info("Changes are local — connect the backend to save them.");
+  }, [isDemo]);
 
   const [view, setView] = useState<CalView>(() => loadInitialView());
   const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
