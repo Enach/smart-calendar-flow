@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Save, Zap } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
-import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { MockBanner } from "@/components/MockBanner";
+import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
+import { PersonalCalendarsSection } from "@/components/PersonalCalendarsSection";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { toast } from "@/hooks/useToast";
-import type { Settings } from "@/api/types";
+import { api } from "@/api/client";
+import type { LLMProvider, Settings } from "@/api/types";
 
 const TIMEZONES = [
   "UTC",
@@ -22,7 +24,20 @@ const TIMEZONES = [
   "Australia/Sydney",
   "Pacific/Auckland",
 ];
-const PROVIDERS = ["openai", "anthropic", "ollama"];
+
+const LLM_PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "ollama", label: "Ollama (local)" },
+  { value: "bedrock", label: "AWS Bedrock (Claude)" },
+  { value: "azure_openai", label: "Azure OpenAI (ChatGPT)" },
+];
+
+const BEDROCK_MODELS = [
+  "claude-opus-4-5",
+  "claude-sonnet-4-5",
+  "claude-haiku-4-5-20251001",
+];
 
 function fmtHM(min: number) {
   const h = Math.floor(min / 60);
