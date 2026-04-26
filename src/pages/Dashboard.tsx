@@ -63,7 +63,7 @@ export default function Dashboard() {
   const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
   const { data: settings } = useSettings();
-  const { data: eventsRaw } = useCalendarEvents(
+  const { data: eventsRaw, isLoading: eventsLoading, isFetching: eventsFetching } = useCalendarEvents(
     rangeStart.toISOString(),
     rangeEnd.toISOString(),
   );
