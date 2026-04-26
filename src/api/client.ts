@@ -1,9 +1,13 @@
 import type {
   AuditEntry,
   AuthStatus,
+  Attendee,
   CalendarEvent,
   CalendarProvider,
   CompressionResult,
+  ConferenceLink,
+  ConferenceProvider,
+  ConferenceProviderStatus,
   FocusBlock,
   FocusRunResult,
   LLMTestResult,
@@ -11,6 +15,7 @@ import type {
   ParseResult,
   PersonalCalendar,
   PersonalCalendarType,
+  Room,
   Settings,
   SuggestedSlot,
 } from "./types";
@@ -77,7 +82,32 @@ const DEFAULT_SETTINGS: Settings = {
   azure_endpoint: "",
   azure_deployment: "",
   azure_api_version: "2024-02-01",
+  default_conference_provider: "google_meet",
+  teams_enabled: false,
 };
+
+const MOCK_ROOMS: Room[] = [
+  { id: "r1", name: "Helsinki", email: "room.helsinki@co.com", building: "HQ", floor: "3", capacity: 6 },
+  { id: "r2", name: "Reykjavik", email: "room.reykjavik@co.com", building: "HQ", floor: "3", capacity: 4 },
+  { id: "r3", name: "Oslo", email: "room.oslo@co.com", building: "HQ", floor: "2", capacity: 12 },
+  { id: "r4", name: "Stockholm", email: "room.stockholm@co.com", building: "HQ", floor: "2", capacity: 8 },
+  { id: "r5", name: "Copenhagen", email: "room.copenhagen@co.com", building: "Annex", floor: "1", capacity: 20 },
+  { id: "r6", name: "Phone Booth A", email: "room.booth-a@co.com", building: "HQ", floor: "1", capacity: 1 },
+  { id: "r7", name: "Phone Booth B", email: "room.booth-b@co.com", building: "HQ", floor: "1", capacity: 1 },
+];
+
+const MOCK_DIRECTORY: Attendee[] = [
+  { email: "alice@co.com", name: "Alice Martin" },
+  { email: "bob@co.com", name: "Bob Chen" },
+  { email: "carol@co.com", name: "Carol Diaz" },
+  { email: "david@co.com", name: "David Okonkwo" },
+  { email: "emma@co.com", name: "Emma Laurent" },
+  { email: "felix@co.com", name: "Felix Weber" },
+  { email: "grace@co.com", name: "Grace Park" },
+  { info: undefined, email: "client@acme.com", name: "Acme Client" } as Attendee,
+  { email: "pm@co.com", name: "Pat Morgan" },
+  { email: "team@co.com", name: "All Hands" },
+];
 
 const mockState = {
   settings: { ...DEFAULT_SETTINGS },
@@ -86,6 +116,9 @@ const mockState = {
   focusBlocks: [] as FocusBlock[],
   audit: [] as AuditEntry[],
   personalCalendars: [] as PersonalCalendar[],
+  conference: {
+    zoom: { connected: false, email: undefined as string | undefined },
+  },
   nextEventId: 1000,
   nextFocusId: 1,
   nextAuditId: 1,
