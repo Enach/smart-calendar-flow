@@ -241,6 +241,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
           )}
         </div>
       )}
+      {errorBanner}
     </div>
   );
 }
