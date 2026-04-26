@@ -604,6 +604,7 @@ export const api = {
           end: body.end,
           attendees: body.attendees,
           color: "#3B82F6",
+          coverage: coverageFromAttendees(body.attendees),
         };
         mockState.events.push(ev);
         logAudit("schedule.create", `Created "${body.title}" (mock)`);
