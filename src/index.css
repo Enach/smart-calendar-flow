@@ -140,4 +140,30 @@
     border-color: hsl(var(--destructive));
     color: hsl(var(--destructive));
   }
+  /* Month view: dim weekends */
+  .fc .fc-daygrid-day.fc-day-sat,
+  .fc .fc-daygrid-day.fc-day-sun,
+  .fc .fc-col-header-cell.fc-day-sat,
+  .fc .fc-col-header-cell.fc-day-sun {
+    opacity: 0.7;
+  }
+  /* Month view: event chip styling — colored left border + truncated title */
+  .fc .fc-daygrid-event {
+    @apply rounded-sm px-1.5 py-0.5 text-xs font-medium shadow-none;
+    background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
+    border: 0;
+    border-left: 3px solid currentColor;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fc .fc-daygrid-event .fc-event-title {
+    @apply text-foreground;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .fc .fc-daygrid-more-link {
+    @apply text-xs font-medium text-muted-foreground hover:text-foreground;
+  }
 }
