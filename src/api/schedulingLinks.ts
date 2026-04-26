@@ -260,10 +260,15 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
   const out: BookingSlot[] = [];
   let cursor = new Date(dayStart);
 
+  // Earliest bookable instant given the link's minimum-notice setting.
+  const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
+  const earliest = new Date(Date.now() + minNoticeMs);
+
   while (cursor.getTime() + durationMin * 60_000 <= dayEnd.getTime()) {
     const startIso = cursor.toISOString();
     const endIso = new Date(cursor.getTime() + durationMin * 60_000).toISOString();
     const taken = mockState.takenSlots.has(`${link.slug}|${startIso}`);
+    const tooSoon = cursor.getTime() < earliest.getTime();
 
     // Simulate "all hosts must be free": chop a few slots out for collective links
     let collectiveBlocked = false;
@@ -273,12 +278,19 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
       if (hour === 12 || hour === 14) collectiveBlocked = true;
     }
 
-    if (!taken && !collectiveBlocked) {
+    if (!taken && !collectiveBlocked && !tooSoon) {
       out.push({ start: startIso, end: endIso });
     }
     cursor = new Date(cursor.getTime() + step * 60_000);
   }
   return out;
+}
+
+/** True when the link has used up its allowed bookings. */
+function isLinkExhausted(link: SchedulingLink): boolean {
+  if (link.usage_type === "single_use") return link.uses_count >= 1;
+  if (link.usage_type === "recurring" && link.max_uses) return link.uses_count >= link.max_uses;
+  return false;
 }
 
 // ---------- Public API ----------
