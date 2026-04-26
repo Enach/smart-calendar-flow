@@ -648,6 +648,7 @@ export const api = {
         const now = new Date();
         const rangeStart = now.toISOString();
         const rangeEnd = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString();
+        const cov = coverageFromAttendees(attendees);
         return {
           intent: "schedule_meeting",
           title,
@@ -655,7 +656,8 @@ export const api = {
           attendees,
           range_start: rangeStart,
           range_end: rangeEnd,
-          suggested_slots: mockSuggestedSlots(duration, rangeStart, rangeEnd),
+          suggested_slots: mockSuggestedSlots(duration, rangeStart, rangeEnd).map((s) => ({ ...s, coverage: cov })),
+          coverage: cov,
         } as ParseResult;
       },
     ),
