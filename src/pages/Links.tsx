@@ -116,7 +116,14 @@ function LinkCard({
             </div>
           </div>
 
-          <DurationBadges durations={link.durations} />
+          <div className="flex flex-wrap items-center gap-2">
+            <DurationBadges durations={link.durations} />
+            <UsageBadge link={link} />
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <Hourglass className="h-3 w-3" />
+              {formatNotice(link.min_notice_minutes)}
+            </span>
+          </div>
 
           <div className="flex items-center gap-3 pt-1">
             <HostAvatars hosts={link.hosts} size="sm" />
