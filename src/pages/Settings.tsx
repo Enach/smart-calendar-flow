@@ -105,6 +105,27 @@ export default function SettingsPage() {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
     setDraft((d) => (d ? { ...d, [k]: v } : d));
   };
+  const patchDraft = (patch: Partial<Settings>) => {
+    setDraft((d) => (d ? { ...d, ...patch } : d));
+  };
+
+  const [llmTesting, setLlmTesting] = useState(false);
+  const testLlm = async () => {
+    if (!draft) return;
+    setLlmTesting(true);
+    try {
+      const res = await api.llmTest(draft);
+      if (res.ok) {
+        toast.success(res.message || "Connection OK");
+      } else {
+        toast.error(res.message || "Test failed");
+      }
+    } catch {
+      toast.error("Test failed");
+    } finally {
+      setLlmTesting(false);
+    }
+  };
 
   const save = async () => {
     if (!draft) return;
