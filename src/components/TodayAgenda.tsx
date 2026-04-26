@@ -48,17 +48,20 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
         />
       ) : loading && events.length === 0 ? (
         showSkeleton ? (
-        <ul className="space-y-2" aria-busy="true" aria-live="polite">
-          {[0, 1, 2].map((i) => (
-            <li key={i} className="flex items-start gap-3 p-2">
-              <SkeletonLine className="mt-1.5 h-2 w-2 rounded-full" />
-              <div className="flex-1 space-y-1.5">
-                <SkeletonLine className="h-3 w-3/4" />
-                <SkeletonLine className="h-2.5 w-1/3" />
-              </div>
-            </li>
-          ))}
-        </ul>
+          <ul className="space-y-2" aria-busy="true" aria-live="polite">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="flex items-start gap-3 p-2">
+                <SkeletonLine className="mt-1.5 h-2 w-2 rounded-full" />
+                <div className="flex-1 space-y-1.5">
+                  <SkeletonLine className="h-3 w-3/4" />
+                  <SkeletonLine className="h-2.5 w-1/3" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="h-[88px]" aria-busy="true" aria-live="polite" />
+        )
       ) : todays.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-4 text-center">
           <p className="text-sm text-muted-foreground">
