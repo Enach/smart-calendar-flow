@@ -319,6 +319,14 @@ export default function Dashboard() {
                   : undefined
               }
               events={fcEvents}
+              editable
+              eventStartEditable
+              eventDurationEditable
+              eventResizableFromStart
+              dragRevertDuration={150}
+              snapDuration="00:15:00"
+              eventDrop={(arg) => handleEventChange(arg, "drop")}
+              eventResize={(arg) => handleEventChange(arg, "resize")}
               selectable
               select={(arg) => {
                 const day = arg.start.toLocaleDateString(undefined, { weekday: "long" });
