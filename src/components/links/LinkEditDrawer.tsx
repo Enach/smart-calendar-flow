@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
-import type { SchedulingLink, Weekday } from "@/api/types";
+import type { LinkUsageType, SchedulingLink, Weekday } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 
 interface LinkEditDrawerProps {
@@ -30,6 +30,40 @@ const ALL_WEEKDAYS: Array<{ value: Weekday; label: string }> = [
 
 const DURATIONS = [15, 30, 45, 60];
 const BUFFERS = [0, 5, 10, 15];
+
+/** Minimum-notice presets, expressed in minutes. */
+const NOTICE_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: "No minimum" },
+  { value: 60, label: "1 hour" },
+  { value: 120, label: "2 hours" },
+  { value: 240, label: "4 hours" },
+  { value: 480, label: "8 hours" },
+  { value: 1440, label: "1 day" },
+  { value: 2880, label: "2 days" },
+  { value: 10080, label: "1 week" },
+];
+
+const USAGE_OPTIONS: Array<{
+  value: LinkUsageType;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "reusable",
+    label: "Reusable",
+    description: "Anyone with the link can book — no limit.",
+  },
+  {
+    value: "recurring",
+    label: "Recurring",
+    description: "Bookable a fixed number of times, then auto-disables.",
+  },
+  {
+    value: "single_use",
+    label: "Single use",
+    description: "One booking only. Great for sharing with one person.",
+  },
+];
 
 function slugify(s: string) {
   return s
@@ -57,6 +91,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const [windowEnd, setWindowEnd] = useState("18:00");
   const [bufferBefore, setBufferBefore] = useState(5);
   const [bufferAfter, setBufferAfter] = useState(5);
+  const [minNotice, setMinNotice] = useState<number>(60);
+  const [usageType, setUsageType] = useState<LinkUsageType>("reusable");
+  const [maxUses, setMaxUses] = useState<number>(5);
   const [coHostEmail, setCoHostEmail] = useState("");
   const [coHosts, setCoHosts] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +117,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setWindowEnd(link.window_end);
       setBufferBefore(link.buffer_before);
       setBufferAfter(link.buffer_after);
+      setMinNotice(link.min_notice_minutes ?? 0);
+      setUsageType(link.usage_type ?? "reusable");
+      setMaxUses(link.max_uses ?? 5);
       setCoHosts(link.hosts.filter((h) => !h.is_owner).map((h) => h.email));
     } else {
       setTitle("");
@@ -91,6 +131,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setWindowEnd("18:00");
       setBufferBefore(5);
       setBufferAfter(5);
+      setMinNotice(60);
+      setUsageType("reusable");
+      setMaxUses(5);
       setCoHosts([]);
     }
   }, [open, link]);
@@ -111,6 +154,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
         window_end: windowEnd,
         buffer_before: bufferBefore,
         buffer_after: bufferAfter,
+        min_notice_minutes: minNotice,
+        usage_type: usageType,
+        max_uses: usageType === "recurring" ? Math.max(1, maxUses) : undefined,
         co_host_emails: coHosts,
       };
       if (link) return schedulingLinksApi.updateLink(link.id, payload);
@@ -275,7 +321,75 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             </div>
           </div>
 
-          {/* Slug */}
+          {/* Minimum notice */}
+          <div className="space-y-2">
+            <Label htmlFor="min-notice">Minimum notice before a meeting</Label>
+            <select
+              id="min-notice"
+              value={minNotice}
+              onChange={(e) => setMinNotice(parseInt(e.target.value, 10))}
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {NOTICE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Bookings can't start sooner than this. Useful to give yourself prep time.
+            </p>
+          </div>
+
+          {/* Usage type */}
+          <div className="space-y-2">
+            <Label>Link type</Label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {USAGE_OPTIONS.map((opt) => {
+                const on = usageType === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setUsageType(opt.value)}
+                    className={`rounded-lg border p-3 text-left transition ${
+                      on
+                        ? "border-primary bg-primary-muted"
+                        : "border-border bg-background hover:border-primary/40"
+                    }`}
+                  >
+                    <p className={`text-sm font-semibold ${on ? "text-primary" : "text-foreground"}`}>
+                      {opt.label}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{opt.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+            {usageType === "recurring" && (
+              <div className="flex items-center gap-2 pt-1">
+                <Label htmlFor="max-uses" className="text-xs text-muted-foreground">
+                  Allow up to
+                </Label>
+                <Input
+                  id="max-uses"
+                  type="number"
+                  min={1}
+                  max={999}
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(Math.max(1, parseInt(e.target.value || "1", 10)))}
+                  className="h-9 w-24"
+                />
+                <span className="text-xs text-muted-foreground">bookings, then auto-disable.</span>
+              </div>
+            )}
+            {isEdit && link && (link.uses_count ?? 0) > 0 && (
+              <p className="pt-1 text-[11px] text-muted-foreground">
+                Already booked {link.uses_count}
+                {usageType === "recurring" && link.max_uses ? ` / ${link.max_uses}` : ""} time
+                {link.uses_count === 1 ? "" : "s"}.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="link-slug">Slug</Label>
             <Input

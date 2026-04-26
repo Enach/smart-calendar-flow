@@ -161,6 +161,12 @@ export default function PublicBooking() {
         setSubmitError("This slot was just taken — please pick another time.");
         setSelectedSlot(null);
         slotsQuery.refetch();
+      } else if (status === 422) {
+        setSubmitError("This time is too soon — the host requires more advance notice.");
+        setSelectedSlot(null);
+        slotsQuery.refetch();
+      } else if (status === 410) {
+        setSubmitError("This link is no longer accepting bookings.");
       } else {
         setSubmitError("Could not complete the booking. Please try again.");
         toast.error("Booking failed");
@@ -168,14 +174,20 @@ export default function PublicBooking() {
     },
   });
 
-  // ---------- Render: not found ----------
+  // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
+    const status = (linkQuery.error as { status?: number } | null)?.status;
+    const gone = status === 410;
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="font-serif text-3xl text-foreground">Link not found</h1>
+          <h1 className="font-serif text-3xl text-foreground">
+            {gone ? "Link no longer available" : "Link not found"}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This booking link doesn't exist or is no longer active.
+            {gone
+              ? "This booking link has been used up or paused. Reach out to the host for another time."
+              : "This booking link doesn't exist or is no longer active."}
           </p>
           <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
             ← Back to Paceday
@@ -315,6 +327,23 @@ export default function PublicBooking() {
                 <div className="flex items-center gap-2">
                   <Users className="h-4 w-4" />
                   <span>All hosts must be available</span>
+                </div>
+              )}
+              {!!link.min_notice_minutes && link.min_notice_minutes > 0 && (
+                <div className="flex items-center gap-2">
+                  <Clock className="h-4 w-4" />
+                  <span>
+                    {link.min_notice_minutes < 60
+                      ? `${link.min_notice_minutes} min notice required`
+                      : link.min_notice_minutes < 1440
+                        ? `${Math.round(link.min_notice_minutes / 60)} hour${Math.round(link.min_notice_minutes / 60) === 1 ? "" : "s"} notice required`
+                        : `${Math.round(link.min_notice_minutes / 1440)} day${Math.round(link.min_notice_minutes / 1440) === 1 ? "" : "s"} notice required`}
+                  </span>
+                </div>
+              )}
+              {link.usage_type === "single_use" && (
+                <div className="rounded-md border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-3 py-2 text-xs text-[#5C3DA1]">
+                  This is a one-time link — only one booking is allowed.
                 </div>
               )}
             </div>

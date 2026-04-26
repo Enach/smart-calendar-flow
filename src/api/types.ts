@@ -201,6 +201,14 @@ export interface SchedulingHost {
 
 export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 
+/**
+ * Usage type controls how many times a link can be booked.
+ * - reusable:    unlimited bookings (default)
+ * - recurring:   bookable up to `max_uses` times, then auto-disables
+ * - single_use:  one booking only, then auto-disables
+ */
+export type LinkUsageType = "reusable" | "recurring" | "single_use";
+
 export interface SchedulingLink {
   id: string;
   owner_id: string;
@@ -212,6 +220,14 @@ export interface SchedulingLink {
   window_end: string;            // "HH:MM"
   buffer_before: number;         // minutes
   buffer_after: number;          // minutes
+  /** Minimum lead time (in minutes) before a booking can start. */
+  min_notice_minutes: number;
+  /** Usage policy — see LinkUsageType. */
+  usage_type: LinkUsageType;
+  /** Cap for recurring links. Ignored for reusable / single_use. */
+  max_uses?: number;
+  /** How many bookings have been made (consumed) so far. */
+  uses_count: number;
   active: boolean;
   hosts: SchedulingHost[];       // owner first, then co-hosts
   created_at: string;
@@ -240,6 +256,9 @@ export interface PublicLinkInfo {
   durations: number[];
   hosts: Array<Pick<SchedulingHost, "email" | "name" | "avatar_url">>;
   timezone_hint?: string;
+  /** Echoed for the public page so it can show "We need X notice" if relevant. */
+  min_notice_minutes?: number;
+  usage_type?: LinkUsageType;
 }
 
 export interface BookingConfirmation {

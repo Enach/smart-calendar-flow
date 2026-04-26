@@ -12,6 +12,7 @@ import type {
   BookingConfirmation,
   BookingSlot,
   CoHostInvite,
+  LinkUsageType,
   PublicLinkInfo,
   SchedulingHost,
   SchedulingLink,
@@ -43,9 +44,10 @@ async function realFetch<T>(
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include",
     });
-    if (res.status === 409) {
-      const err = new Error("conflict") as Error & { status: number };
-      err.status = 409;
+    // Surface a few client-side errors as real, typed errors so the UI can react.
+    if (res.status === 409 || res.status === 410 || res.status === 422) {
+      const err = new Error(`http_${res.status}`) as Error & { status: number };
+      err.status = res.status;
       throw err;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -64,8 +66,9 @@ async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T
     const v = await real();
     return v;
   } catch (e) {
-    // Surface 409 (race condition) as a real error — never mask with mock.
-    if ((e as { status?: number })?.status === 409) throw e;
+    // Surface meaningful client errors (race / gone / unprocessable) — never mask with mock.
+    const status = (e as { status?: number })?.status;
+    if (status === 409 || status === 410 || status === 422) throw e;
     setMockMode(true);
     return mock();
   }
@@ -141,6 +144,9 @@ function seedMockLinks() {
     window_end: "18:00",
     buffer_before: 5,
     buffer_after: 5,
+    min_notice_minutes: 60,
+    usage_type: "reusable",
+    uses_count: 0,
     active: true,
     hosts: [makeOwnerHost()],
     created_at: new Date(Date.now() - 7 * 86400_000).toISOString(),
@@ -159,6 +165,10 @@ function seedMockLinks() {
     window_end: "17:00",
     buffer_before: 10,
     buffer_after: 5,
+    min_notice_minutes: 240,
+    usage_type: "recurring",
+    max_uses: 5,
+    uses_count: 1,
     active: true,
     hosts: [
       makeOwnerHost(),
@@ -181,6 +191,9 @@ function seedMockLinks() {
     window_end: "17:00",
     buffer_before: 0,
     buffer_after: 10,
+    min_notice_minutes: 1440,
+    usage_type: "single_use",
+    uses_count: 0,
     active: true,
     hosts: [
       { ...buildHostFromEmail("emma@co.com", "accepted"), is_owner: true },
@@ -249,10 +262,15 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
   const out: BookingSlot[] = [];
   let cursor = new Date(dayStart);
 
+  // Earliest bookable instant given the link's minimum-notice setting.
+  const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
+  const earliest = new Date(Date.now() + minNoticeMs);
+
   while (cursor.getTime() + durationMin * 60_000 <= dayEnd.getTime()) {
     const startIso = cursor.toISOString();
     const endIso = new Date(cursor.getTime() + durationMin * 60_000).toISOString();
     const taken = mockState.takenSlots.has(`${link.slug}|${startIso}`);
+    const tooSoon = cursor.getTime() < earliest.getTime();
 
     // Simulate "all hosts must be free": chop a few slots out for collective links
     let collectiveBlocked = false;
@@ -262,12 +280,19 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
       if (hour === 12 || hour === 14) collectiveBlocked = true;
     }
 
-    if (!taken && !collectiveBlocked) {
+    if (!taken && !collectiveBlocked && !tooSoon) {
       out.push({ start: startIso, end: endIso });
     }
     cursor = new Date(cursor.getTime() + step * 60_000);
   }
   return out;
+}
+
+/** True when the link has used up its allowed bookings. */
+function isLinkExhausted(link: SchedulingLink): boolean {
+  if (link.usage_type === "single_use") return link.uses_count >= 1;
+  if (link.usage_type === "recurring" && link.max_uses) return link.uses_count >= link.max_uses;
+  return false;
 }
 
 // ---------- Public API ----------
@@ -315,6 +340,9 @@ export const schedulingLinksApi = {
     window_end: string;
     buffer_before: number;
     buffer_after: number;
+    min_notice_minutes: number;
+    usage_type: LinkUsageType;
+    max_uses?: number;
     co_host_emails: string[];
   }) =>
     withFallback<SchedulingLink>(
@@ -331,6 +359,10 @@ export const schedulingLinksApi = {
           window_end: input.window_end,
           buffer_before: input.buffer_before,
           buffer_after: input.buffer_after,
+          min_notice_minutes: input.min_notice_minutes,
+          usage_type: input.usage_type,
+          max_uses: input.usage_type === "recurring" ? input.max_uses : undefined,
+          uses_count: 0,
           active: true,
           hosts: [
             makeOwnerHost(),
@@ -355,6 +387,9 @@ export const schedulingLinksApi = {
       window_end: string;
       buffer_before: number;
       buffer_after: number;
+      min_notice_minutes: number;
+      usage_type: LinkUsageType;
+      max_uses: number | undefined;
       active: boolean;
       co_host_emails: string[];
     }>,
@@ -366,6 +401,8 @@ export const schedulingLinksApi = {
         if (idx < 0) throw new Error("not found");
         const current = mockState.links[idx];
         const updated: SchedulingLink = { ...current, ...input } as SchedulingLink;
+        // Drop max_uses when no longer recurring.
+        if (input.usage_type && input.usage_type !== "recurring") updated.max_uses = undefined;
         if (input.co_host_emails) {
           // Preserve already-known hosts (keep statuses) and add new pending ones.
           const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
@@ -406,11 +443,18 @@ export const schedulingLinksApi = {
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");
+        if (!link.active || isLinkExhausted(link)) {
+          const err = new Error("gone") as Error & { status: number };
+          err.status = 410;
+          throw err;
+        }
         return {
           slug: link.slug,
           title: link.title,
           durations: link.durations,
           hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
+          min_notice_minutes: link.min_notice_minutes,
+          usage_type: link.usage_type,
         };
       },
     ),
@@ -424,7 +468,9 @@ export const schedulingLinksApi = {
         }),
       () => {
         const link = publicLinkBySlug(slug);
-        if (!link) return { available_dates: [], slots: [] };
+        if (!link || !link.active || isLinkExhausted(link)) {
+          return { available_dates: [], slots: [] };
+        }
 
         if (params.date) {
           const duration = params.duration ?? link.durations[0] ?? 30;
@@ -456,6 +502,18 @@ export const schedulingLinksApi = {
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");
+        if (!link.active || isLinkExhausted(link)) {
+          const err = new Error("gone") as Error & { status: number };
+          err.status = 410;
+          throw err;
+        }
+        // Enforce minimum notice on the booking attempt itself.
+        const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
+        if (new Date(input.start).getTime() < Date.now() + minNoticeMs) {
+          const err = new Error("too_soon") as Error & { status: number };
+          err.status = 422;
+          throw err;
+        }
         const key = `${slug}|${input.start}`;
         if (mockState.takenSlots.has(key)) {
           const err = new Error("conflict") as Error & { status: number };
@@ -463,6 +521,9 @@ export const schedulingLinksApi = {
           throw err;
         }
         mockState.takenSlots.add(key);
+        // Bump usage counter and auto-disable if needed.
+        link.uses_count += 1;
+        if (isLinkExhausted(link)) link.active = false;
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
         const conf: BookingConfirmation = {
           id: `bk_${++mockState.nextId}`,
