@@ -70,6 +70,7 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
   const fallbackDemo = () => {
     loginDemo();
     onClose();
+    navigate(resolveRedirect(), { replace: true });
   };
 
   const onSocial = async (provider: "google" | "microsoft") => {
