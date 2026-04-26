@@ -2,6 +2,7 @@ import { useFocusBlocks } from "@/hooks/useFocusBlocks";
 import { Target } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 interface FocusStatsProps {
   weekISO: string;
@@ -22,6 +23,7 @@ const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusStatsProps) {
   const { data, isLoading, isError, isFetching, refetch } = useFocusBlocks(weekISO);
   const blocks = Array.isArray(data) ? data : [];
+  const showSkeleton = useDebouncedFlag(isLoading && blocks.length === 0 && !isError);
 
   const weeklyTarget = dailyTargetMinutes * 5;
   const totalMin = blocks.reduce(
@@ -65,19 +67,23 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
           retrying={isFetching}
         />
       ) : isLoading && blocks.length === 0 ? (
-        <div aria-busy="true" aria-live="polite" className="space-y-3">
-          <SkeletonLine className="h-7 w-1/2" />
-          <SkeletonLine className="h-3 w-1/3" />
-          <SkeletonLine className="mt-3 h-2 w-full" />
-          <div className="mt-4 flex items-end justify-between gap-1.5">
-            {DAYS.map((d) => (
-              <div key={d} className="flex flex-1 flex-col items-center gap-1">
-                <SkeletonLine className="h-12 w-full" />
-                <span className="text-[10px] font-medium text-muted-foreground">{d}</span>
-              </div>
-            ))}
+        showSkeleton ? (
+          <div aria-busy="true" aria-live="polite" className="space-y-3">
+            <SkeletonLine className="h-7 w-1/2" />
+            <SkeletonLine className="h-3 w-1/3" />
+            <SkeletonLine className="mt-3 h-2 w-full" />
+            <div className="mt-4 flex items-end justify-between gap-1.5">
+              {DAYS.map((d) => (
+                <div key={d} className="flex flex-1 flex-col items-center gap-1">
+                  <SkeletonLine className="h-12 w-full" />
+                  <span className="text-[10px] font-medium text-muted-foreground">{d}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="h-[140px]" aria-busy="true" aria-live="polite" />
+        )
       ) : (
         <>
           <p className="text-2xl font-semibold tracking-tight text-foreground">{fmtHM(totalMin)}</p>

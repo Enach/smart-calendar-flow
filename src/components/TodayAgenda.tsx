@@ -1,6 +1,7 @@
 import type { CalendarEvent } from "@/api/types";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
@@ -26,6 +27,7 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
       );
     })
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+  const showSkeleton = useDebouncedFlag(!!loading && events.length === 0 && !error);
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -45,17 +47,21 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
           retrying={retrying}
         />
       ) : loading && events.length === 0 ? (
-        <ul className="space-y-2" aria-busy="true" aria-live="polite">
-          {[0, 1, 2].map((i) => (
-            <li key={i} className="flex items-start gap-3 p-2">
-              <SkeletonLine className="mt-1.5 h-2 w-2 rounded-full" />
-              <div className="flex-1 space-y-1.5">
-                <SkeletonLine className="h-3 w-3/4" />
-                <SkeletonLine className="h-2.5 w-1/3" />
-              </div>
-            </li>
-          ))}
-        </ul>
+        showSkeleton ? (
+          <ul className="space-y-2" aria-busy="true" aria-live="polite">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="flex items-start gap-3 p-2">
+                <SkeletonLine className="mt-1.5 h-2 w-2 rounded-full" />
+                <div className="flex-1 space-y-1.5">
+                  <SkeletonLine className="h-3 w-3/4" />
+                  <SkeletonLine className="h-2.5 w-1/3" />
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="h-[88px]" aria-busy="true" aria-live="polite" />
+        )
       ) : todays.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-4 text-center">
           <p className="text-sm text-muted-foreground">
