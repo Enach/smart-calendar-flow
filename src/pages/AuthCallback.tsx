@@ -17,7 +17,10 @@ export default function AuthCallback() {
     (async () => {
       try {
         await refresh();
-        if (!cancelled) navigate("/app", { replace: true });
+        if (cancelled) return;
+        const params = new URLSearchParams(window.location.search);
+        const redirect = sanitizeRedirect(params.get("redirect"));
+        navigate(redirect ?? "/app", { replace: true });
       } catch {
         if (!cancelled) navigate("/?error=auth_failed", { replace: true });
       }
@@ -32,4 +35,11 @@ export default function AuthCallback() {
       <Spinner size="lg" label="Signing you in…" />
     </div>
   );
+}
+
+/** Only allow same-origin internal paths to prevent open-redirect. */
+function sanitizeRedirect(value: string | null): string | null {
+  if (!value) return null;
+  if (!value.startsWith("/") || value.startsWith("//")) return null;
+  return value;
 }

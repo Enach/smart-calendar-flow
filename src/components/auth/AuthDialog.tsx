@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Mail, ArrowRight, ArrowLeft, AlertCircle } from "lucide-react";
 import { z } from "zod";
 
@@ -46,6 +47,19 @@ export function AuthDialog({ open, onOpenChange, mode = "signin" }: AuthDialogPr
 
 function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose: () => void }) {
   const { loginDemo, refresh } = useAuth();
+  const navigate = useNavigate();
+
+  /** Where to land after a successful login. Honours ?redirect= on the URL. */
+  const resolveRedirect = (): string => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const r = params.get("redirect");
+      if (r && r.startsWith("/") && !r.startsWith("//")) return r;
+    } catch {
+      /* ignore */
+    }
+    return "/app";
+  };
 
   const [step, setStep] = useState<"discover" | "generic">("discover");
   const [email, setEmail] = useState("");
@@ -56,6 +70,7 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
   const fallbackDemo = () => {
     loginDemo();
     onClose();
+    navigate(resolveRedirect(), { replace: true });
   };
 
   const onSocial = async (provider: "google" | "microsoft") => {
@@ -131,6 +146,7 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
           onSuccess={async () => {
             await refresh();
             onClose();
+            navigate(resolveRedirect(), { replace: true });
           }}
           onApiDown={fallbackDemo}
         />

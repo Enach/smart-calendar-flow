@@ -1,6 +1,8 @@
 import { Settings as SettingsIcon, ChevronLeft, ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
+import { useAuth } from "@/contexts/AuthContext";
+
 interface NavbarProps {
   weekLabel?: string;
   onPrevWeek?: () => void;
@@ -37,10 +39,12 @@ export function Navbar({
   todayInRange = true,
   showSettingsLink = true,
 }: NavbarProps) {
+  const { user, isDemo } = useAuth();
+  const homeHref = user || isDemo ? "/app" : "/";
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
-        <Link to="/" className="flex items-center gap-2.5 text-foreground">
+        <Link to={homeHref} className="flex items-center gap-2.5 text-foreground">
           <PacedayMark className="h-6 w-6 text-foreground" />
           <span className="font-serif text-lg leading-none tracking-tight">Paceday</span>
         </Link>
