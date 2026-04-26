@@ -137,6 +137,8 @@ export interface SuggestedSlot {
   end: string;
   score: number;
   reasons: string[];
+  /** Coverage of the attendees considered when ranking this slot (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface ParseResult {
@@ -149,6 +151,8 @@ export interface ParseResult {
   constraints?: string;
   error?: string;
   suggested_slots?: SuggestedSlot[];
+  /** Optional coverage summary applied to ALL suggested_slots (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface MoveProposal {
