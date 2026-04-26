@@ -151,6 +151,39 @@ export default function Dashboard() {
     }
   }, [parseResult, qc]);
 
+  // Drag-to-reschedule + resize-to-extend handlers
+  const handleEventChange = useCallback(
+    async (
+      info: {
+        event: { id: string; title: string; start: Date | null; end: Date | null };
+        revert: () => void;
+      },
+      kind: "drop" | "resize",
+    ) => {
+      const { event, revert } = info;
+      if (!event.start || !event.end) {
+        revert();
+        return;
+      }
+      const start = event.start.toISOString();
+      const end = event.end.toISOString();
+      try {
+        await api.updateEvent(event.id, { start, end }, "none");
+        qc.invalidateQueries({ queryKey: ["events"] });
+        qc.invalidateQueries({ queryKey: ["focusBlocks"] });
+        toast.success(
+          kind === "drop"
+            ? `Moved "${event.title}"`
+            : `Resized "${event.title}"`,
+        );
+      } catch {
+        revert();
+        toast.error(kind === "drop" ? "Failed to move event" : "Failed to resize event");
+      }
+    },
+    [qc],
+  );
+
   const fcEvents = useMemo(
     () =>
       events.map((e) => {
