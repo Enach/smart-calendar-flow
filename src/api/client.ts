@@ -27,7 +27,9 @@ export function isUsingMocks() {
 export function subscribeMockMode(cb: (v: boolean) => void) {
   mockListeners.add(cb);
   cb(usingMocks);
-  return () => mockListeners.delete(cb);
+  return () => {
+    mockListeners.delete(cb);
+  };
 }
 function setMockMode(v: boolean) {
   if (usingMocks === v) return;
