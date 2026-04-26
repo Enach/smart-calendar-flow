@@ -185,6 +185,7 @@ function seedMocks() {
       end: isoAt(d, s.eh, s.em),
       color: s.color,
       attendees: s.att,
+      coverage: s.att && s.att.length > 0 ? coverageFromAttendees(s.att) : undefined,
     });
   });
 
