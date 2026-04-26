@@ -40,7 +40,7 @@ export function subscribeMockMode(cb: (v: boolean) => void) {
     mockListeners.delete(cb);
   };
 }
-function setMockMode(v: boolean) {
+export function setMockMode(v: boolean) {
   if (usingMocks === v) return;
   usingMocks = v;
   try {
@@ -846,4 +846,12 @@ export function mockZoomConnect(email = "you@zoom.us") {
 // keep helper for components that want to nudge state
 export const _mockHelpers = {
   get: () => mockState,
+  pushEvent: (ev: CalendarEvent) => {
+    // Replace any existing event with the same id so seeding is idempotent.
+    mockState.events = mockState.events.filter((e) => e.id !== ev.id);
+    mockState.events.push(ev);
+  },
+  removeEventsWithPrefix: (prefix: string) => {
+    mockState.events = mockState.events.filter((e) => !e.id.startsWith(prefix));
+  },
 };
