@@ -246,7 +246,11 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="p-3 sm:p-4">
+            <div className="relative p-3 sm:p-4">
+            <LoadingOverlay
+              show={eventsLoading || (eventsFetching && events.length === 0)}
+              label="Loading events…"
+            />
             <FullCalendar
               ref={calRef}
               plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
