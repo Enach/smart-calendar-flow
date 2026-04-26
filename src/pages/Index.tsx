@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Calendar as CalendarIcon,
@@ -10,6 +11,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/paceday-logo.png";
+import { AuthDialog } from "@/components/auth/AuthDialog";
+import { useAuth } from "@/contexts/AuthContext";
 
 /* ---------- shared bits ---------- */
 
@@ -26,33 +29,79 @@ const Eyebrow = ({ children }: { children: React.ReactNode }) => (
 
 /* ---------- nav ---------- */
 
-const Nav = () => (
-  <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur">
-    <Container className="flex h-16 items-center justify-between">
-      <Link to="/" className="flex items-center gap-2.5">
-        <PacedayMark />
-        <span className="font-serif text-xl text-foreground">Paceday</span>
-      </Link>
-      <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
-        <a href="#problem" className="transition-colors hover:text-foreground">The problem</a>
-        <a href="#solution" className="transition-colors hover:text-foreground">How it works</a>
-        <a href="#preview" className="transition-colors hover:text-foreground">Product</a>
-        <a href="#benefits" className="transition-colors hover:text-foreground">Benefits</a>
-      </nav>
-      <div className="flex items-center gap-2">
-        <Link
-          to="/signin"
-          className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
-        >
-          Sign in
+const Nav = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => {
+  const { user, isDemo, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const goApp = () => navigate("/app");
+  const onExitDemo = async () => {
+    await logout();
+    navigate("/");
+  };
+
+  return (
+    <header className="sticky top-0 z-30 border-b border-border/70 bg-background/80 backdrop-blur">
+      <Container className="flex h-16 items-center justify-between">
+        <Link to="/" className="flex items-center gap-2.5">
+          <PacedayMark />
+          <span className="font-serif text-xl text-foreground">Paceday</span>
         </Link>
-        <Button asChild size="sm" className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90">
-          <Link to="/signup">Get your time back</Link>
-        </Button>
-      </div>
-    </Container>
-  </header>
-);
+        <nav className="hidden items-center gap-8 text-sm text-muted-foreground md:flex">
+          <a href="#problem" className="transition-colors hover:text-foreground">The problem</a>
+          <a href="#solution" className="transition-colors hover:text-foreground">How it works</a>
+          <a href="#preview" className="transition-colors hover:text-foreground">Product</a>
+          <a href="#benefits" className="transition-colors hover:text-foreground">Benefits</a>
+        </nav>
+        <div className="flex items-center gap-2">
+          {isDemo ? (
+            <>
+              <button
+                type="button"
+                onClick={goApp}
+                className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              >
+                Open app
+              </button>
+              <Button
+                onClick={onExitDemo}
+                size="sm"
+                variant="outline"
+                className="rounded-full border-border bg-card px-4 text-sm text-foreground hover:bg-muted"
+              >
+                Exit demo
+              </Button>
+            </>
+          ) : user ? (
+            <Button
+              onClick={goApp}
+              size="sm"
+              className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+            >
+              Open app
+            </Button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => onOpenAuth("signin")}
+                className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
+              >
+                Sign in
+              </button>
+              <Button
+                onClick={() => onOpenAuth("signup")}
+                size="sm"
+                className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90"
+              >
+                Get your time back
+              </Button>
+            </>
+          )}
+        </div>
+      </Container>
+    </header>
+  );
+};
 
 /* ---------- minimal "blocks" mark (no Tetris vibes) ---------- */
 
@@ -68,7 +117,7 @@ const PacedayMark = () => (
 
 /* ---------- hero ---------- */
 
-const Hero = () => (
+const Hero = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => (
   <section className="relative overflow-hidden border-b border-border/70">
     <div className="bg-grid-soft pointer-events-none absolute inset-0 opacity-[0.35]" />
     <Container className="relative grid gap-16 py-24 lg:grid-cols-12 lg:py-32">
@@ -82,11 +131,13 @@ const Hero = () => (
           Paceday protects your focus, trims meetings, and organizes your day automatically.
         </p>
         <div className="mt-10 flex flex-wrap items-center gap-3">
-          <Button asChild size="lg" className="h-12 rounded-full bg-primary px-6 text-base text-primary-foreground hover:bg-primary/90">
-            <Link to="/signup">
-              Get your time back
-              <ArrowRight className="ml-1 h-4 w-4" />
-            </Link>
+          <Button
+            onClick={() => onOpenAuth("signup")}
+            size="lg"
+            className="h-12 rounded-full bg-primary px-6 text-base text-primary-foreground hover:bg-primary/90"
+          >
+            Get your time back
+            <ArrowRight className="ml-1 h-4 w-4" />
           </Button>
           <a href="#preview" className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
             See how it works
@@ -449,7 +500,7 @@ const BenefitCard = ({
 
 /* ---------- final CTA ---------- */
 
-const FinalCTA = () => (
+const FinalCTA = ({ onOpenAuth }: { onOpenAuth: (mode: "signin" | "signup") => void }) => (
   <section id="cta" className="py-28">
     <Container>
       <div className="relative overflow-hidden rounded-2xl border border-border bg-card p-12 text-center md:p-20">
@@ -463,11 +514,13 @@ const FinalCTA = () => (
             Connect your calendar in under a minute. Paceday handles the rest.
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <Button asChild size="lg" className="h-12 rounded-full bg-primary px-7 text-base text-primary-foreground hover:bg-primary/90">
-              <Link to="/signup">
-                Get your time back
-                <ArrowRight className="ml-1 h-4 w-4" />
-              </Link>
+            <Button
+              onClick={() => onOpenAuth("signup")}
+              size="lg"
+              className="h-12 rounded-full bg-primary px-7 text-base text-primary-foreground hover:bg-primary/90"
+            >
+              Get your time back
+              <ArrowRight className="ml-1 h-4 w-4" />
             </Button>
             <span className="text-xs text-muted-foreground">No credit card required.</span>
           </div>
@@ -493,19 +546,31 @@ const Footer = () => (
 
 /* ---------- page ---------- */
 
-const Index = () => {
-  // Suppress unused logo warning while keeping the asset import available for future use
+interface IndexProps {
+  initialAuth?: "signin" | "signup";
+}
+
+const Index = ({ initialAuth }: IndexProps = {}) => {
   void logo;
+  const [authOpen, setAuthOpen] = useState<boolean>(!!initialAuth);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">(initialAuth ?? "signin");
+
+  const openAuth = (mode: "signin" | "signup") => {
+    setAuthMode(mode);
+    setAuthOpen(true);
+  };
+
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <Nav />
-      <Hero />
+      <Nav onOpenAuth={openAuth} />
+      <Hero onOpenAuth={openAuth} />
       <Problem />
       <Solution />
       <Preview />
       <Benefits />
-      <FinalCTA />
+      <FinalCTA onOpenAuth={openAuth} />
       <Footer />
+      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} mode={authMode} />
     </main>
   );
 };
