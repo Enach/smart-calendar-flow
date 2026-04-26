@@ -340,7 +340,22 @@ export const api = {
     }
   },
 
-  // Auth
+  /**
+   * Free/busy probe (T-39 / T-40).
+   *
+   * Tells the UI which participants we can read calendar data for.
+   * Mock heuristic — covers the demo + offline cases:
+   *   - email matches the current org domain → status=paceday_user (provider=paceday)
+   *   - known directory (co.com, acme.com, paceday.com) → known + google
+   *   - microsoft.com / outlook.com / hotmail.com / live.com → known + outlook
+   *   - personal mail (gmail.com, yahoo.com, proton.me, ...) → unknown
+   * The real backend overrides all of this when reachable.
+   */
+  freebusy: (input: { emails: string[]; start_time: string; end_time: string }) =>
+    withFallback<FreeBusyResponse>(
+      () => realFetch("POST", "/freebusy", input),
+      () => mockFreebusy(input),
+    ),
   authStatus: () =>
     withFallback(
       () => realFetch<AuthStatus>("GET", "/auth/status"),
