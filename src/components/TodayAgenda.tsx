@@ -1,16 +1,20 @@
 import type { CalendarEvent } from "@/api/types";
 import { SkeletonLine } from "@/components/ui/spinner";
+import { InlineError } from "@/components/ui/inline-error";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
   loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+  retrying?: boolean;
 }
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-export function TodayAgenda({ events, loading }: TodayAgendaProps) {
+export function TodayAgenda({ events, loading, error, onRetry, retrying }: TodayAgendaProps) {
   const today = new Date();
   const todays = events
     .filter((e) => {
