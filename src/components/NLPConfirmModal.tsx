@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { X, Calendar, Clock, Users, Loader2 } from "lucide-react";
 import type { ParseResult } from "@/api/types";
+import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 
 interface NLPConfirmModalProps {
   parseResult: ParseResult;
