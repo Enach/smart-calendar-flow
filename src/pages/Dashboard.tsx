@@ -294,6 +294,7 @@ export default function Dashboard() {
         onPrevWeek={goPrev}
         onNextWeek={goNext}
         onToday={goToday}
+        todayInRange={todayInRange}
       />
 
       <main className="mx-auto w-full max-w-[1600px] space-y-4 p-4 sm:p-6">
