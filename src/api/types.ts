@@ -186,6 +186,42 @@ export interface FreeBusyEntry {
 
 export type FreeBusyMap = Record<string, FreeBusyEntry[]>;
 
+// ---------- Free/busy coverage (T-39 / T-40) ----------
+
+/**
+ * How well we can see this participant's calendar:
+ * - paceday_user: they have a Paceday account (we use their stored events)
+ * - known:        external user but we successfully read their calendar
+ *                 (e.g. shared Google Workspace freebusy)
+ * - unknown:      we could not reach their calendar — slots may overlap
+ */
+export type CoverageStatus = "paceday_user" | "known" | "unknown";
+
+/** Provider that surfaced the freebusy data (drives the small logo on the badge). */
+export type CoverageProvider = "google" | "outlook" | "paceday";
+
+export interface ParticipantCoverage {
+  email: string;
+  status: CoverageStatus;
+  provider?: CoverageProvider;
+}
+
+export interface FreeBusyResponse {
+  start_time: string;
+  end_time: string;
+  participants: ParticipantCoverage[];
+  /** Per-participant busy windows. Keyed by lowercase email. */
+  busy?: Record<string, FreeBusyEntry[]>;
+}
+
+/** Compact summary embedded on a CalendarEvent / suggestion / public link. */
+export interface CoverageSummary {
+  total: number;
+  checked: number;
+  /** True when the organizer has no calendar provider connected at all. */
+  organizer_disconnected?: boolean;
+}
+
 // ---------- Scheduling links (T-28) ----------
 
 export type CoHostStatus = "accepted" | "pending" | "declined";
