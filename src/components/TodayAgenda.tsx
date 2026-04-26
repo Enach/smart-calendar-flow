@@ -1,14 +1,16 @@
 import type { CalendarEvent } from "@/api/types";
+import { SkeletonLine } from "@/components/ui/spinner";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
+  loading?: boolean;
 }
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-export function TodayAgenda({ events }: TodayAgendaProps) {
+export function TodayAgenda({ events, loading }: TodayAgendaProps) {
   const today = new Date();
   const todays = events
     .filter((e) => {
