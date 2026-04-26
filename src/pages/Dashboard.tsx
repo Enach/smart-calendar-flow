@@ -167,15 +167,18 @@ export default function Dashboard() {
           : isPersonal
             ? `🏠 ${e.title.replace(/^🏠\s*/, "")}`
             : e.title;
+        // Soften the fill so the colored accent bar pops while keeping the chip readable
+        const bg = `${color}26`; // ~15% alpha
         return {
           id: e.id,
           title: displayTitle,
           start: e.start,
           end: e.end,
-          backgroundColor: color,
+          backgroundColor: bg,
           borderColor: color,
+          textColor: color,
           editable: !isFocus && !isPersonal,
-          extendedProps: { raw: e, isFocus, isPersonal },
+          extendedProps: { raw: e, isFocus, isPersonal, accent: color },
         };
       }),
     [events, settings],
