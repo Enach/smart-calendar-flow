@@ -14,6 +14,7 @@ import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
+import { QuickCreatePopover } from "@/components/QuickCreatePopover";
 import { LoadingOverlay } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
@@ -85,6 +86,12 @@ export default function Dashboard() {
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [popoverEvent, setPopoverEvent] = useState<CalendarEvent | null>(null);
+  const [quickCreate, setQuickCreate] = useState<{
+    anchor: { x: number; y: number };
+    start: Date;
+    end: Date;
+  } | null>(null);
+  const [quickCreateSaving, setQuickCreateSaving] = useState(false);
 
   // Persist view selection
   useEffect(() => {
@@ -159,6 +166,46 @@ export default function Dashboard() {
       setConfirming(false);
     }
   }, [parseResult, qc]);
+
+  // Quick-create from a calendar selection
+  const handleQuickCreateSave = useCallback(
+    async (title: string) => {
+      if (!quickCreate) return;
+      setQuickCreateSaving(true);
+      try {
+        const ev = await api.scheduleCreate({
+          title,
+          start: quickCreate.start.toISOString(),
+          end: quickCreate.end.toISOString(),
+          attendees: [],
+        });
+        toast.success(`Created "${ev.title}"`);
+        qc.invalidateQueries({ queryKey: ["events"] });
+        setQuickCreate(null);
+      } catch {
+        toast.error("Failed to create event");
+      } finally {
+        setQuickCreateSaving(false);
+      }
+    },
+    [quickCreate, qc],
+  );
+
+  const handleQuickCreateMore = useCallback(
+    (title: string) => {
+      if (!quickCreate) return;
+      const day = quickCreate.start.toLocaleDateString(undefined, { weekday: "long" });
+      const time = quickCreate.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const durationMin = Math.max(
+        15,
+        Math.round((quickCreate.end.getTime() - quickCreate.start.getTime()) / 60000),
+      );
+      const subject = title.trim() || "meeting";
+      setNlpInitial(`Schedule a ${durationMin} min ${subject} on ${day} at ${time}`);
+      setQuickCreate(null);
+    },
+    [quickCreate],
+  );
 
   // Drag-to-reschedule + resize-to-extend handlers
   const handleEventChange = useCallback(
@@ -357,10 +404,13 @@ export default function Dashboard() {
                   eventDrop={(arg) => handleEventChange(arg, "drop")}
                   eventResize={(arg) => handleEventChange(arg, "resize")}
                   selectable
+                  selectMirror
                   select={(arg) => {
-                    const day = arg.start.toLocaleDateString(undefined, { weekday: "long" });
-                    const time = arg.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-                    setNlpInitial(`Schedule a 30 min meeting on ${day} at ${time}`);
+                    const j = arg.jsEvent;
+                    const anchor = j
+                      ? { x: j.clientX, y: j.clientY }
+                      : { x: window.innerWidth / 2, y: window.innerHeight / 3 };
+                    setQuickCreate({ anchor, start: arg.start, end: arg.end });
                     arg.view.calendar.unselect();
                   }}
                   eventClick={(arg) => {
@@ -420,6 +470,17 @@ export default function Dashboard() {
           workStart={settings?.work_start ?? "09:00"}
           workEnd={settings?.work_end ?? "18:00"}
           onClose={() => setPopoverEvent(null)}
+        />
+      )}
+      {quickCreate && (
+        <QuickCreatePopover
+          anchor={quickCreate.anchor}
+          start={quickCreate.start}
+          end={quickCreate.end}
+          saving={quickCreateSaving}
+          onClose={() => !quickCreateSaving && setQuickCreate(null)}
+          onSave={handleQuickCreateSave}
+          onMoreOptions={handleQuickCreateMore}
         />
       )}
     </div>
