@@ -314,7 +314,7 @@ export default function Dashboard() {
           {/* Sidebar */}
           <aside className="space-y-4">
             <ConnectionStatus />
-            <TodayAgenda events={events} />
+            <TodayAgenda events={events} loading={eventsLoading} />
             {settings && (
               <FocusStats
                 weekISO={weekISO}
