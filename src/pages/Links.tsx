@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity, Repeat, Zap } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -51,6 +51,43 @@ function DurationBadges({ durations }: { durations: number[] }) {
         </span>
       ))}
     </div>
+  );
+}
+
+function formatNotice(min: number): string {
+  if (!min) return "No minimum notice";
+  if (min < 60) return `${min} min notice`;
+  if (min < 1440) {
+    const h = Math.round(min / 60);
+    return `${h} hour${h === 1 ? "" : "s"} notice`;
+  }
+  const d = Math.round(min / 1440);
+  return `${d} day${d === 1 ? "" : "s"} notice`;
+}
+
+function UsageBadge({ link }: { link: SchedulingLink }) {
+  if (link.usage_type === "single_use") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-2 py-0.5 text-[11px] font-medium text-[#5C3DA1]">
+        <Zap className="h-3 w-3" /> Single use
+      </span>
+    );
+  }
+  if (link.usage_type === "recurring") {
+    const left = link.max_uses ? Math.max(0, link.max_uses - link.uses_count) : null;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full border border-[#5B7FFF]/30 bg-[#5B7FFF]/10 px-2 py-0.5 text-[11px] font-medium text-[#3a5cd9]">
+        <Repeat className="h-3 w-3" />
+        {link.max_uses
+          ? `${link.uses_count}/${link.max_uses} used${left === 0 ? " · ended" : ""}`
+          : "Recurring"}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+      <Infinity className="h-3 w-3" /> Reusable
+    </span>
   );
 }
 
