@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { subscribeMockMode } from "@/api/client";
+import { useHealthPing } from "@/hooks/useHealthPing";
 import { Wifi } from "lucide-react";
 
 export function MockBanner() {
   const [on, setOn] = useState(false);
+  useHealthPing(30_000);
   useEffect(() => subscribeMockMode(setOn), []);
   if (!on) return null;
   return (
@@ -13,3 +15,4 @@ export function MockBanner() {
     </div>
   );
 }
+
