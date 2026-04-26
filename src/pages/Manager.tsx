@@ -184,6 +184,47 @@ export default function Manager() {
     navigate(managerApi.schedulePrefillUrl(email));
   };
 
+  if (!profile.is_manager) {
+    return (
+      <div className="min-h-screen bg-[#F7F8F4]">
+        <Navbar />
+        <main className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-20">
+          <div className="rounded-2xl border border-border bg-card p-8 text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#9B7AE0]/10 text-[#9B7AE0]">
+              <Users className="h-6 w-6" />
+            </div>
+            <h1 className="font-serif text-2xl tracking-tight text-foreground">
+              Manager mode is off
+            </h1>
+            <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+              Enable Manager mode to see your team's 1:1 cadence, focus time, and upcoming gaps.
+              You can switch back anytime in Settings.
+            </p>
+            <div className="mt-6 flex flex-col items-center justify-center gap-2 sm:flex-row">
+              <Button
+                onClick={() => {
+                  managerApi.setProfile({ is_manager: true, onboarding_profile_selected: true });
+                  setProfile(managerApi.getProfile());
+                  // Seed team in the background so the page is useful right away.
+                  void managerApi.detect().then(() => {
+                    qc.invalidateQueries({ queryKey: ["manager-team"] });
+                    toast.success("Manager mode enabled. Detecting your team…");
+                  });
+                }}
+                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+              >
+                Enable Manager mode
+              </Button>
+              <Button variant="outline" onClick={() => navigate("/settings")}>
+                Open Settings
+              </Button>
+            </div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F7F8F4]">
       <Navbar />
@@ -197,6 +238,7 @@ export default function Manager() {
             </p>
           </div>
         </div>
+
 
         {/* Loading skeleton */}
         {teamQ.isLoading && (
