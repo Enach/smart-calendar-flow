@@ -104,7 +104,7 @@ const MOCK_DIRECTORY: Attendee[] = [
   { email: "emma@co.com", name: "Emma Laurent" },
   { email: "felix@co.com", name: "Felix Weber" },
   { email: "grace@co.com", name: "Grace Park" },
-  { info: undefined, email: "client@acme.com", name: "Acme Client" } as Attendee,
+  { email: "client@acme.com", name: "Acme Client" },
   { email: "pm@co.com", name: "Pat Morgan" },
   { email: "team@co.com", name: "All Hands" },
 ];
