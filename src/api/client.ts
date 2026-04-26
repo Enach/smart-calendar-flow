@@ -371,6 +371,23 @@ function mockFreebusy(input: { emails: string[]; start_time: string; end_time: s
   };
 }
 
+/**
+ * Compute the coverage summary the UI shows next to suggestions / events.
+ * `total` includes the organizer (assumed connected — otherwise we'd flag
+ * organizer_disconnected). Mirrors what the backend returns for T-39.
+ */
+function coverageFromAttendees(attendees: string[] | undefined): { total: number; checked: number; organizer_disconnected?: boolean } {
+  const list = (attendees ?? []).filter(Boolean);
+  // Count organizer (always known via Paceday) + each attendee whose mail we can read.
+  const organizerCounted = 1;
+  let checked = organizerCounted;
+  for (const e of list) {
+    const c = classifyEmail(e);
+    if (c.status === "paceday_user" || c.status === "known") checked += 1;
+  }
+  return { total: list.length + organizerCounted, checked };
+}
+
 // ---------- Public API ----------
 
 export const api = {
