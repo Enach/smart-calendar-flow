@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import { api } from "@/api/client";
+import { getFreebusy } from "@/api/coverageCache";
 import type { LinkUsageType, ParticipantCoverage, SchedulingLink, Weekday } from "@/api/types";
 import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
@@ -157,7 +158,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const coverageQuery = useQuery({
     queryKey: ["link-edit-freebusy", sortedCoHostsKey],
     queryFn: () =>
-      api.freebusy({
+      getFreebusy({
         emails: coHosts,
         start_time: coverageRange.start,
         end_time: coverageRange.end,

@@ -1,7 +1,8 @@
-import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2 } from "lucide-react";
+import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
+import { managerApi } from "@/api/manager";
 
 interface NavbarProps {
   weekLabel?: string;
@@ -41,6 +42,7 @@ export function Navbar({
 }: NavbarProps) {
   const { user, isDemo } = useAuth();
   const homeHref = user || isDemo ? "/app" : "/";
+  const isManager = (user || isDemo) ? managerApi.getProfile().is_manager : false;
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
@@ -78,6 +80,15 @@ export function Navbar({
         )}
 
         <div className="flex items-center gap-1">
+          {(user || isDemo) && isManager && (
+            <Link
+              to="/app/manager"
+              className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            >
+              <Users className="h-4 w-4" />
+              <span className="hidden sm:inline">My Team</span>
+            </Link>
+          )}
           {(user || isDemo) && (
             <Link
               to="/app/links"

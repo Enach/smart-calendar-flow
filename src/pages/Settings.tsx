@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Loader2, Save, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Loader2, Save, Zap, RefreshCw, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
@@ -8,6 +9,17 @@ import { ConferencingSection } from "@/components/ConferencingSection";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { toast } from "@/hooks/useToast";
 import { api } from "@/api/client";
+import { managerApi } from "@/api/manager";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { LLMProvider, Settings } from "@/api/types";
 
 const TIMEZONES = [
@@ -168,6 +180,8 @@ export default function SettingsPage() {
             Save changes
           </button>
         </div>
+
+        <ProfileSection />
 
         <Section title="Working Hours" description="When you're available for meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -531,5 +545,148 @@ export default function SettingsPage() {
         </Section>
       </main>
     </div>
+  );
+}
+
+// ============================================================
+// Profile section (manager / IC role) — added for T-43.
+// ============================================================
+
+function ProfileSection() {
+  const navigate = useNavigate();
+  const [profile, setProfile] = useState(() => managerApi.getProfile());
+  const [confirmSwitch, setConfirmSwitch] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanLabel, setScanLabel] = useState<string | null>(null);
+  const lastScan = managerApi.lastScanAt();
+
+  const setRole = (manager: boolean) => {
+    if (profile.is_manager && !manager) {
+      // Switching from Manager → IC requires confirmation
+      setConfirmSwitch(true);
+      return;
+    }
+    if (!profile.is_manager && manager) {
+      const next = managerApi.setProfile({
+        is_manager: true,
+        onboarding_profile_selected: true,
+      });
+      setProfile(next);
+      toast.success("Manager mode enabled. Detecting your team from calendar…");
+      managerApi
+        .detect()
+        .then((r) => {
+          if (r.added > 0) {
+            toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s. View in My Team.`);
+          }
+        })
+        .catch(() => undefined);
+    }
+  };
+
+  const confirmSwitchToIC = () => {
+    const next = managerApi.setProfile({ is_manager: false });
+    setProfile(next);
+    setConfirmSwitch(false);
+    toast.success("Switched to Individual contributor.");
+  };
+
+  const rescan = async () => {
+    setScanning(true);
+    setScanLabel(null);
+    try {
+      const r = await managerApi.detect();
+      setScanLabel(r.added > 0 ? `${r.added} new member${r.added === 1 ? "" : "s"} found` : "No new members found");
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold tracking-tight text-foreground">Your profile</h2>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          We tailor Paceday to how you use your calendar.
+        </p>
+      </div>
+
+      <label className="mb-2 block text-xs font-medium text-foreground">Role</label>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setRole(false)}
+          className={
+            "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
+            (!profile.is_manager
+              ? "border-transparent bg-[#5B7FFF] text-white"
+              : "border-border bg-background text-foreground hover:bg-muted")
+          }
+        >
+          <User className="h-3.5 w-3.5" />
+          Individual contributor
+        </button>
+        <button
+          type="button"
+          onClick={() => setRole(true)}
+          className={
+            "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
+            (profile.is_manager
+              ? "border-transparent bg-[#9B7AE0] text-white"
+              : "border-border bg-background text-foreground hover:bg-muted")
+          }
+        >
+          <Users className="h-3.5 w-3.5" />
+          Manager
+        </button>
+      </div>
+
+      {profile.is_manager && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <button
+            type="button"
+            onClick={rescan}
+            disabled={scanning}
+            className="inline-flex items-center gap-1.5 text-[#5B7FFF] hover:underline disabled:opacity-60"
+          >
+            {scanning ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Re-scan calendar for team members
+          </button>
+          {scanLabel && <span className="text-foreground">· {scanLabel}</span>}
+          {lastScan && !scanLabel && (
+            <span>· Last scanned: {new Date(lastScan).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+          )}
+          <span className="ml-auto">
+            <button
+              type="button"
+              onClick={() => navigate("/app/manager")}
+              className="text-[#5B7FFF] hover:underline"
+            >
+              Open My Team →
+            </button>
+          </span>
+        </div>
+      )}
+
+      <AlertDialog open={confirmSwitch} onOpenChange={setConfirmSwitch}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Switch to Individual contributor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your team list and 1:1 cadences will be kept but the My Team sidebar item will be hidden.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmSwitchToIC}
+              className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+            >
+              Switch
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
   );
 }
