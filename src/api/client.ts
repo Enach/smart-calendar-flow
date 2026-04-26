@@ -236,7 +236,7 @@ function seedMocks() {
     },
   );
 }
-seedMocks();
+
 
 // ---------- Tiny fetch wrapper with mock fallback ----------
 
