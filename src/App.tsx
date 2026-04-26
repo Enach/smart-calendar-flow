@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import SettingsPage from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import { ToastViewport } from "./components/Toast";
+import { GlobalProgressBar } from "./components/GlobalProgressBar";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -13,6 +14,7 @@ const queryClient = new QueryClient({
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <GlobalProgressBar />
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Dashboard />} />
