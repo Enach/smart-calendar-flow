@@ -44,9 +44,10 @@ async function realFetch<T>(
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include",
     });
-    if (res.status === 409) {
-      const err = new Error("conflict") as Error & { status: number };
-      err.status = 409;
+    // Surface a few client-side errors as real, typed errors so the UI can react.
+    if (res.status === 409 || res.status === 410 || res.status === 422) {
+      const err = new Error(`http_${res.status}`) as Error & { status: number };
+      err.status = res.status;
       throw err;
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -65,8 +66,9 @@ async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T
     const v = await real();
     return v;
   } catch (e) {
-    // Surface 409 (race condition) as a real error — never mask with mock.
-    if ((e as { status?: number })?.status === 409) throw e;
+    // Surface meaningful client errors (race / gone / unprocessable) — never mask with mock.
+    const status = (e as { status?: number })?.status;
+    if (status === 409 || status === 410 || status === 422) throw e;
     setMockMode(true);
     return mock();
   }
