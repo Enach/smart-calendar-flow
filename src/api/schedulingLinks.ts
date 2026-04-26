@@ -441,11 +441,18 @@ export const schedulingLinksApi = {
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");
+        if (!link.active || isLinkExhausted(link)) {
+          const err = new Error("gone") as Error & { status: number };
+          err.status = 410;
+          throw err;
+        }
         return {
           slug: link.slug,
           title: link.title,
           durations: link.durations,
           hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
+          min_notice_minutes: link.min_notice_minutes,
+          usage_type: link.usage_type,
         };
       },
     ),
@@ -459,7 +466,9 @@ export const schedulingLinksApi = {
         }),
       () => {
         const link = publicLinkBySlug(slug);
-        if (!link) return { available_dates: [], slots: [] };
+        if (!link || !link.active || isLinkExhausted(link)) {
+          return { available_dates: [], slots: [] };
+        }
 
         if (params.date) {
           const duration = params.duration ?? link.durations[0] ?? 30;
@@ -491,6 +500,18 @@ export const schedulingLinksApi = {
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");
+        if (!link.active || isLinkExhausted(link)) {
+          const err = new Error("gone") as Error & { status: number };
+          err.status = 410;
+          throw err;
+        }
+        // Enforce minimum notice on the booking attempt itself.
+        const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
+        if (new Date(input.start).getTime() < Date.now() + minNoticeMs) {
+          const err = new Error("too_soon") as Error & { status: number };
+          err.status = 422;
+          throw err;
+        }
         const key = `${slug}|${input.start}`;
         if (mockState.takenSlots.has(key)) {
           const err = new Error("conflict") as Error & { status: number };
@@ -498,6 +519,9 @@ export const schedulingLinksApi = {
           throw err;
         }
         mockState.takenSlots.add(key);
+        // Bump usage counter and auto-disable if needed.
+        link.uses_count += 1;
+        if (isLinkExhausted(link)) link.active = false;
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
         const conf: BookingConfirmation = {
           id: `bk_${++mockState.nextId}`,
