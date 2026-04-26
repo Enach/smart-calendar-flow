@@ -562,6 +562,92 @@ export const api = {
       () => realFetch<AuditEntry[]>("GET", "/audit"),
       () => [...mockState.audit],
     ),
+
+  // Personal calendars
+  listPersonalCalendars: () =>
+    withFallback(
+      () => realFetch<PersonalCalendar[]>("GET", "/personal-calendars"),
+      () => [...mockState.personalCalendars],
+    ),
+  addPersonalCalendar: (body: { type: PersonalCalendarType; label: string; url?: string }) =>
+    withFallback(
+      () =>
+        realFetch<PersonalCalendar & { auth_url?: string }>(
+          "POST",
+          "/personal-calendars",
+          body,
+        ),
+      () => {
+        const id = String(mockState.nextPersonalId++);
+        const cal: PersonalCalendar = {
+          id,
+          label: body.label || "Personal",
+          type: body.type,
+          enabled: true,
+          last_synced_at: new Date().toISOString(),
+          ...(body.type === "webcal"
+            ? { url: body.url }
+            : { email: `you.${body.type}@example.com` }),
+        };
+        mockState.personalCalendars.push(cal);
+        logAudit("personal.add", `Added personal calendar "${cal.label}" (mock)`);
+        // No auth_url in mocks — we just pretend it succeeded.
+        return cal;
+      },
+    ),
+  updatePersonalCalendar: (id: string, patch: Partial<Pick<PersonalCalendar, "enabled" | "label">>) =>
+    withFallback(
+      () => realFetch<PersonalCalendar>("PATCH", `/personal-calendars/${id}`, patch),
+      () => {
+        const cal = mockState.personalCalendars.find((c) => c.id === id);
+        if (!cal) throw new Error("Not found");
+        Object.assign(cal, patch);
+        logAudit("personal.update", `Updated "${cal.label}" (mock)`);
+        return { ...cal };
+      },
+    ),
+  deletePersonalCalendar: (id: string) =>
+    withFallback(
+      () => realFetch<void>("DELETE", `/personal-calendars/${id}`),
+      () => {
+        mockState.personalCalendars = mockState.personalCalendars.filter((c) => c.id !== id);
+        logAudit("personal.delete", `Removed personal calendar (mock)`);
+      },
+    ),
+  syncPersonalCalendar: (id: string) =>
+    withFallback(
+      () => realFetch<PersonalCalendar>("POST", `/personal-calendars/${id}/sync`),
+      () => {
+        const cal = mockState.personalCalendars.find((c) => c.id === id);
+        if (!cal) throw new Error("Not found");
+        cal.last_synced_at = new Date().toISOString();
+        logAudit("personal.sync", `Synced "${cal.label}" (mock)`);
+        return { ...cal };
+      },
+    ),
+
+  // LLM
+  llmTest: (s: Settings) =>
+    withFallback(
+      () => realFetch<LLMTestResult>("POST", "/llm/test", s),
+      () => {
+        const provider = s.llm_provider;
+        const need = (...keys: Array<keyof Settings>) =>
+          keys.find((k) => !s[k] || String(s[k]).trim() === "");
+        let missing: keyof Settings | undefined;
+        if (provider === "bedrock") missing = need("aws_region");
+        else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
+        else if (provider === "ollama") missing = need("llm_base_url");
+        if (missing) {
+          return { ok: false, message: `Missing required field: ${String(missing)}` };
+        }
+        return {
+          ok: true,
+          message: `Reached ${provider} (${s.llm_model || "default model"}) — mock response`,
+          latency_ms: 120 + Math.floor(Math.random() * 80),
+        };
+      },
+    ),
 };
 
 // keep helper for components that want to nudge state
