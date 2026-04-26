@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowRight,
   Calendar as CalendarIcon,
@@ -10,6 +11,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/paceday-logo.png";
+import { AuthDialog } from "@/components/auth/AuthDialog";
+import { useAuth } from "@/contexts/AuthContext";
 
 /* ---------- shared bits ---------- */
 
