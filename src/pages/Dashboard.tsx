@@ -15,6 +15,8 @@ import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
+import { DemoBanner } from "@/components/DemoBanner";
+import { useAuth } from "@/contexts/AuthContext";
 import { QuickCreatePopover } from "@/components/QuickCreatePopover";
 import { LoadingOverlay } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
