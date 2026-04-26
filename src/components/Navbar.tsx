@@ -82,7 +82,7 @@ export function Navbar({
         <div className="flex items-center gap-1">
           {signedIn && (
             <Link
-              to="/app/manager"
+              to="/app/team"
               className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
             >
               <Users className="h-4 w-4" />

@@ -7,8 +7,9 @@ import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import AuthCallback from "./pages/AuthCallback";
 import LinksPage from "./pages/Links";
-import Manager from "./pages/Manager";
+import Team from "./pages/Team";
 import Onboarding from "./pages/Onboarding";
+import { Navigate } from "react-router-dom";
 import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";
 import { ToastViewport } from "./components/Toast";
@@ -55,13 +56,14 @@ const App = () => (
             }
           />
           <Route
-            path="/app/manager"
+            path="/app/team"
             element={
               <RequireAuth>
-                <Manager />
+                <Team />
               </RequireAuth>
             }
           />
+          <Route path="/app/manager" element={<Navigate to="/app/team" replace />} />
           <Route
             path="/settings"
             element={
