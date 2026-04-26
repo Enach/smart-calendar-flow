@@ -60,7 +60,7 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
             disabled={busy}
             className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
           >
-            <LogOut className="h-3 w-3" />
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
             Disconnect
           </button>
         ) : (
