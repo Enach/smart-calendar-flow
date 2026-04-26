@@ -177,6 +177,26 @@ function seedMocks() {
   });
 
   logAudit("seed", "Initialised mock workspace");
+
+  // Seed two personal calendars
+  mockState.personalCalendars.push(
+    {
+      id: String(mockState.nextPersonalId++),
+      label: "Personal",
+      type: "google",
+      email: "me.personal@gmail.com",
+      enabled: true,
+      last_synced_at: new Date(Date.now() - 12 * 60_000).toISOString(),
+    },
+    {
+      id: String(mockState.nextPersonalId++),
+      label: "Family (iCloud)",
+      type: "webcal",
+      url: "webcal://example.com/family.ics",
+      enabled: false,
+      last_synced_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    },
+  );
 }
 seedMocks();
 
