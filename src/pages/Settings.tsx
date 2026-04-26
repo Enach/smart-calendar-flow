@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Loader2, Save, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Loader2, Save, Zap, RefreshCw, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
@@ -8,6 +9,17 @@ import { ConferencingSection } from "@/components/ConferencingSection";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { toast } from "@/hooks/useToast";
 import { api } from "@/api/client";
+import { managerApi } from "@/api/manager";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { LLMProvider, Settings } from "@/api/types";
 
 const TIMEZONES = [
