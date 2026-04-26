@@ -57,12 +57,12 @@ const Nav = () => (
 /* ---------- minimal "blocks" mark (no Tetris vibes) ---------- */
 
 const PacedayMark = () => (
-  <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
-    <rect x="0" y="0" width="9" height="9" rx="1.5" fill="hsl(var(--primary))" />
-    <rect x="11" y="0" width="9" height="4" rx="1" fill="hsl(var(--foreground))" opacity="0.85" />
-    <rect x="11" y="6" width="4" height="16" rx="1" fill="hsl(var(--foreground))" opacity="0.85" />
-    <rect x="0" y="11" width="9" height="11" rx="1.5" fill="hsl(var(--border))" />
-    <rect x="17" y="11" width="3" height="3" rx="0.75" fill="hsl(var(--warning))" />
+  <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" className="text-foreground">
+    <rect x="0.5" y="0.5" width="6" height="6" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    <rect x="8" y="8" width="6" height="6" rx="1" fill="currentColor" />
+    <rect x="15.5" y="0.5" width="6" height="6" rx="1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+    <rect x="0.5" y="15.5" width="6" height="6" rx="1" fill="currentColor" />
+    <rect x="15.5" y="15.5" width="6" height="6" rx="1" fill="hsl(var(--primary))" />
   </svg>
 );
 
