@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SettingsPage from "./pages/Settings";
@@ -9,7 +9,6 @@ import AuthCallback from "./pages/AuthCallback";
 import LinksPage from "./pages/Links";
 import Team from "./pages/Team";
 import Onboarding from "./pages/Onboarding";
-import { Navigate } from "react-router-dom";
 import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";
 import { ToastViewport } from "./components/Toast";
