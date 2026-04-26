@@ -157,7 +157,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const coverageQuery = useQuery({
     queryKey: ["link-edit-freebusy", sortedCoHostsKey],
     queryFn: () =>
-      api.freebusy({
+      getFreebusy({
         emails: coHosts,
         start_time: coverageRange.start,
         end_time: coverageRange.end,
