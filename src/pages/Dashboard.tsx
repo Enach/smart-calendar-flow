@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { NLPBar } from "@/components/NLPBar";
 import { NLPConfirmModal } from "@/components/NLPConfirmModal";
+import { ScheduleSuggestModal } from "@/components/ScheduleSuggestModal";
 import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { TodayAgenda } from "@/components/TodayAgenda";
 import { FocusStats } from "@/components/FocusStats";
