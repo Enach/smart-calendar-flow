@@ -4,6 +4,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import { useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { NLPBar } from "@/components/NLPBar";
@@ -279,6 +280,12 @@ export default function Dashboard() {
   const goNext = () => calRef.current?.getApi().next();
   const goToday = () => calRef.current?.getApi().today();
 
+  // True only when "today" falls inside the currently visible range.
+  const todayInRange = useMemo(() => {
+    const now = new Date();
+    return now >= rangeStart && now < rangeEnd;
+  }, [rangeStart, rangeEnd]);
+
   return (
     <div className="min-h-screen bg-muted/30">
       <MockBanner />
@@ -287,6 +294,7 @@ export default function Dashboard() {
         onPrevWeek={goPrev}
         onNextWeek={goNext}
         onToday={goToday}
+        todayInRange={todayInRange}
       />
 
       <main className="mx-auto w-full max-w-[1600px] space-y-4 p-4 sm:p-6">
@@ -301,8 +309,45 @@ export default function Dashboard() {
           {/* Calendar */}
           <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
             {/* Calendar toolbar */}
-            <div className="flex items-center justify-between gap-3 border-b border-border bg-card/60 px-4 py-3">
-              <p className="text-sm font-semibold text-foreground">{titleLabel || "Calendar"}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/60 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <div
+                  role="group"
+                  aria-label="Calendar navigation"
+                  className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-background p-0.5"
+                >
+                  <button
+                    type="button"
+                    onClick={goPrev}
+                    aria-label="Previous"
+                    title="Previous"
+                    className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={goNext}
+                    aria-label="Next"
+                    title="Next"
+                    className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+                {!todayInRange && (
+                  <button
+                    type="button"
+                    onClick={goToday}
+                    title="Jump to today"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted"
+                  >
+                    <CalendarDays className="h-3.5 w-3.5" />
+                    Today
+                  </button>
+                )}
+                <p className="ml-1 text-sm font-semibold text-foreground">{titleLabel || "Calendar"}</p>
+              </div>
               <div
                 role="group"
                 aria-label="Calendar view"
