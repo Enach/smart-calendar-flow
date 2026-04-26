@@ -64,6 +64,24 @@ export default function Dashboard() {
     if (isDemo) toast.info("Changes are local — connect the backend to save them.");
   }, [isDemo]);
 
+  // Read prefill query params (?title=&attendees=&duration=) from links like
+  // the Manager dashboard's "Schedule" buttons. We surface a toast and prefill
+  // the NLP bar — the user confirms the suggested slot from there.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const title = sp.get("title");
+    const attendees = sp.get("attendees");
+    if (title || attendees) {
+      const dur = sp.get("duration") ?? "30";
+      const text = `Schedule ${dur}m ${title ?? "meeting"}${attendees ? ` with ${attendees}` : ""}`;
+      setNlpInitial(text);
+      toast.info("Prefilled from manager dashboard — review and confirm a slot.");
+      window.history.replaceState({}, "", "/app");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
   const [view, setView] = useState<CalView>(() => loadInitialView());
   const [currentDate, setCurrentDate] = useState<Date>(() => new Date());
   const [titleLabel, setTitleLabel] = useState<string>("");
