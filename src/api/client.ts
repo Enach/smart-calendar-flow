@@ -397,6 +397,9 @@ function coverageFromAttendees(attendees: string[] | undefined): { total: number
   return { total: list.length + organizerCounted, checked };
 }
 
+
+seedMocks();
+
 // ---------- Public API ----------
 
 export const api = {
