@@ -36,7 +36,15 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
         </span>
       </h3>
 
-      {loading && events.length === 0 ? (
+      {error && events.length === 0 ? (
+        <InlineError
+          compact
+          title="Couldn't load today's agenda"
+          message="Check your connection and try again."
+          onRetry={onRetry}
+          retrying={retrying}
+        />
+      ) : loading && events.length === 0 ? (
         <ul className="space-y-2" aria-busy="true" aria-live="polite">
           {[0, 1, 2].map((i) => (
             <li key={i} className="flex items-start gap-3 p-2">
