@@ -2,6 +2,7 @@ import { useFocusBlocks } from "@/hooks/useFocusBlocks";
 import { Target } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 interface FocusStatsProps {
   weekISO: string;
