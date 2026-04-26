@@ -359,7 +359,6 @@ export default function PublicBooking() {
             )}
             {!selectedSlot ? (
               <div className="grid gap-6 sm:grid-cols-[auto_1fr]">
-                {/* Step 1 — Calendar */}
                 <div>
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Pick a date
