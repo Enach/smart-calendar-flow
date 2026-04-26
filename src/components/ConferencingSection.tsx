@@ -46,6 +46,8 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     staleTime: 60_000,
   });
 
+  const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
+
   const meet = providers.find((p) => p.provider === "google_meet");
   const zoom = providers.find((p) => p.provider === "zoom");
   const teams = providers.find((p) => p.provider === "teams");
@@ -53,25 +55,33 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
-  const handleZoomConnect = () => {
-    // In a real backend this navigates to OAuth. The mock helper toggles the
-    // connection synchronously so the UI demonstrates the connected state.
+  const handleZoomConnect = async () => {
+    setZoomBusy("connect");
     try {
-      mockZoomConnect();
-      toast.success("Zoom connected (demo)");
-      refresh();
-    } catch {
-      window.location.href = api.zoomConnectUrl();
+      // In a real backend this navigates to OAuth. The mock helper toggles the
+      // connection synchronously so the UI demonstrates the connected state.
+      try {
+        mockZoomConnect();
+        toast.success("Zoom connected (demo)");
+        refresh();
+      } catch {
+        window.location.href = api.zoomConnectUrl();
+      }
+    } finally {
+      setZoomBusy(null);
     }
   };
 
   const handleZoomDisconnect = async () => {
+    setZoomBusy("disconnect");
     try {
       await api.zoomDisconnect();
       toast.success("Disconnected Zoom");
       refresh();
     } catch {
       toast.error("Failed to disconnect");
+    } finally {
+      setZoomBusy(null);
     }
   };
 
