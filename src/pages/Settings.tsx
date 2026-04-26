@@ -4,6 +4,7 @@ import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
 import { PersonalCalendarsSection } from "@/components/PersonalCalendarsSection";
+import { ConferencingSection } from "@/components/ConferencingSection";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { toast } from "@/hooks/useToast";
 import { api } from "@/api/client";
@@ -372,6 +373,13 @@ export default function SettingsPage() {
           description="Block out your personal time so the scheduler never books over it."
         >
           <PersonalCalendarsSection />
+        </Section>
+
+        <Section
+          title="Conferencing"
+          description="Choose where meeting links come from when you add one to an event."
+        >
+          <ConferencingSection settings={draft} onPatch={patchDraft} />
         </Section>
 
         <Section title="AI / NLP" description="The model used to interpret natural-language scheduling commands.">
