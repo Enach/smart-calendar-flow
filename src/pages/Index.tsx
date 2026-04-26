@@ -41,13 +41,13 @@ const Nav = () => (
       </nav>
       <div className="flex items-center gap-2">
         <Link
-          to="/app"
+          to="/signin"
           className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground sm:inline"
         >
           Sign in
         </Link>
         <Button asChild size="sm" className="rounded-full bg-primary px-4 text-primary-foreground hover:bg-primary/90">
-          <a href="#cta">Get your time back</a>
+          <Link to="/signup">Get your time back</Link>
         </Button>
       </div>
     </Container>
@@ -83,10 +83,10 @@ const Hero = () => (
         </p>
         <div className="mt-10 flex flex-wrap items-center gap-3">
           <Button asChild size="lg" className="h-12 rounded-full bg-primary px-6 text-base text-primary-foreground hover:bg-primary/90">
-            <a href="#cta">
+            <Link to="/signup">
               Get your time back
               <ArrowRight className="ml-1 h-4 w-4" />
-            </a>
+            </Link>
           </Button>
           <a href="#preview" className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
             See how it works
@@ -464,7 +464,7 @@ const FinalCTA = () => (
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
             <Button asChild size="lg" className="h-12 rounded-full bg-primary px-7 text-base text-primary-foreground hover:bg-primary/90">
-              <Link to="/app">
+              <Link to="/signup">
                 Get your time back
                 <ArrowRight className="ml-1 h-4 w-4" />
               </Link>
