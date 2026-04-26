@@ -161,6 +161,12 @@ export default function PublicBooking() {
         setSubmitError("This slot was just taken — please pick another time.");
         setSelectedSlot(null);
         slotsQuery.refetch();
+      } else if (status === 422) {
+        setSubmitError("This time is too soon — the host requires more advance notice.");
+        setSelectedSlot(null);
+        slotsQuery.refetch();
+      } else if (status === 410) {
+        setSubmitError("This link is no longer accepting bookings.");
       } else {
         setSubmitError("Could not complete the booking. Please try again.");
         toast.error("Booking failed");
@@ -168,14 +174,20 @@ export default function PublicBooking() {
     },
   });
 
-  // ---------- Render: not found ----------
+  // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
+    const status = (linkQuery.error as { status?: number } | null)?.status;
+    const gone = status === 410;
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="font-serif text-3xl text-foreground">Link not found</h1>
+          <h1 className="font-serif text-3xl text-foreground">
+            {gone ? "Link no longer available" : "Link not found"}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This booking link doesn't exist or is no longer active.
+            {gone
+              ? "This booking link has been used up or paused. Reach out to the host for another time."
+              : "This booking link doesn't exist or is no longer active."}
           </p>
           <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
             ← Back to Paceday
