@@ -290,12 +290,18 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
 // ---------- Public API ----------
 
 export const api = {
-  // Health
-  health: () =>
-    withFallback(
-      () => realFetch<{ status: string; version: string }>("GET", "/health"),
-      () => ({ status: "ok", version: "mock-1.0.0" }),
-    ),
+  // Health — used by the polling probe. We don't go through withFallback
+  // because we want to control the mock-mode flag directly here.
+  health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
+    try {
+      const r = await realFetch<{ status: string; version: string }>("GET", "/health");
+      if (usingMocks) setMockMode(false);
+      return { ...r, reachable: true };
+    } catch {
+      if (!usingMocks) setMockMode(true);
+      return { status: "ok", version: "mock-1.0.0", reachable: false };
+    }
+  },
 
   // Auth
   authStatus: () =>
@@ -303,13 +309,14 @@ export const api = {
       () => realFetch<AuthStatus>("GET", "/auth/status"),
       () => ({ ...mockState.auth }),
     ),
-  authConnectUrl: () => `${API_BASE}/auth/google`,
+  authConnectUrl: (provider: CalendarProvider = "google") =>
+    `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
   authDisconnect: () =>
     withFallback(
-      () => realFetch<void>("DELETE", "/auth/disconnect"),
+      () => realFetch<void>("POST", "/auth/logout"),
       () => {
-        mockState.auth = { connected: false, email: "" };
-        logAudit("auth.disconnect", "Disconnected Google Calendar (mock)");
+        mockState.auth = { connected: false, email: "", provider: undefined };
+        logAudit("auth.disconnect", "Disconnected calendar (mock)");
       },
     ),
 
