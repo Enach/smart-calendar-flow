@@ -472,6 +472,17 @@ export default function Dashboard() {
           onClose={() => setPopoverEvent(null)}
         />
       )}
+      {quickCreate && (
+        <QuickCreatePopover
+          anchor={quickCreate.anchor}
+          start={quickCreate.start}
+          end={quickCreate.end}
+          saving={quickCreateSaving}
+          onClose={() => !quickCreateSaving && setQuickCreate(null)}
+          onSave={handleQuickCreateSave}
+          onMoreOptions={handleQuickCreateMore}
+        />
+      )}
     </div>
   );
 }
