@@ -15,6 +15,7 @@ import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
 import { LoadingOverlay } from "@/components/ui/spinner";
+import { InlineError } from "@/components/ui/inline-error";
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
@@ -64,10 +65,13 @@ export default function Dashboard() {
   const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
   const { data: settings } = useSettings();
-  const { data: eventsRaw, isLoading: eventsLoading, isFetching: eventsFetching } = useCalendarEvents(
-    rangeStart.toISOString(),
-    rangeEnd.toISOString(),
-  );
+  const {
+    data: eventsRaw,
+    isLoading: eventsLoading,
+    isFetching: eventsFetching,
+    isError: eventsError,
+    refetch: refetchEvents,
+  } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
   const events = Array.isArray(eventsRaw) ? eventsRaw : [];
 
   const [nlpInitial, setNlpInitial] = useState<string>("");
@@ -281,81 +285,109 @@ export default function Dashboard() {
 
             <div className="relative p-3 sm:p-4">
             <LoadingOverlay
-              show={eventsLoading || (eventsFetching && events.length === 0)}
+              show={(eventsLoading || (eventsFetching && events.length === 0)) && !eventsError}
               label="Loading events…"
             />
-            <FullCalendar
-              ref={calRef}
-              plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
-              initialView={view}
-              initialDate={currentDate}
-              headerToolbar={false}
-              firstDay={1}
-              allDaySlot={false}
-              nowIndicator
-              slotDuration="00:30:00"
-              slotMinTime="07:00:00"
-              slotMaxTime="21:00:00"
-              expandRows
-              height="auto"
-              contentHeight={680}
-              views={{
-                timeGridDay: {
-                  titleFormat: { weekday: "long", month: "long", day: "numeric", year: "numeric" },
-                },
-                timeGridWeek: {},
-                dayGridMonth: {
-                  dayMaxEvents: 3,
-                  moreLinkClick: "day",
-                },
-              }}
-              businessHours={
-                settings
-                  ? {
-                      daysOfWeek: [1, 2, 3, 4, 5],
-                      startTime: settings.work_start,
-                      endTime: settings.work_end,
+            {eventsError && events.length === 0 ? (
+              <InlineError
+                title="Couldn't load your calendar"
+                message="We couldn't reach the calendar service. Check your connection and try again."
+                onRetry={() => refetchEvents()}
+                retrying={eventsFetching}
+                className="my-8"
+              />
+            ) : (
+              <>
+                {eventsError && events.length > 0 && (
+                  <InlineError
+                    compact
+                    title="Calendar may be out of date"
+                    message="Latest changes failed to load."
+                    onRetry={() => refetchEvents()}
+                    retrying={eventsFetching}
+                    className="mb-3"
+                  />
+                )}
+                <FullCalendar
+                  ref={calRef}
+                  plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+                  initialView={view}
+                  initialDate={currentDate}
+                  headerToolbar={false}
+                  firstDay={1}
+                  allDaySlot={false}
+                  nowIndicator
+                  slotDuration="00:30:00"
+                  slotMinTime="07:00:00"
+                  slotMaxTime="21:00:00"
+                  expandRows
+                  height="auto"
+                  contentHeight={680}
+                  views={{
+                    timeGridDay: {
+                      titleFormat: { weekday: "long", month: "long", day: "numeric", year: "numeric" },
+                    },
+                    timeGridWeek: {},
+                    dayGridMonth: {
+                      dayMaxEvents: 3,
+                      moreLinkClick: "day",
+                    },
+                  }}
+                  businessHours={
+                    settings
+                      ? {
+                          daysOfWeek: [1, 2, 3, 4, 5],
+                          startTime: settings.work_start,
+                          endTime: settings.work_end,
+                        }
+                      : undefined
+                  }
+                  events={fcEvents}
+                  editable
+                  eventStartEditable
+                  eventDurationEditable
+                  eventResizableFromStart
+                  dragRevertDuration={150}
+                  snapDuration="00:15:00"
+                  eventDrop={(arg) => handleEventChange(arg, "drop")}
+                  eventResize={(arg) => handleEventChange(arg, "resize")}
+                  selectable
+                  select={(arg) => {
+                    const day = arg.start.toLocaleDateString(undefined, { weekday: "long" });
+                    const time = arg.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                    setNlpInitial(`Schedule a 30 min meeting on ${day} at ${time}`);
+                    arg.view.calendar.unselect();
+                  }}
+                  eventClick={(arg) => {
+                    const raw = arg.event.extendedProps.raw as CalendarEvent | undefined;
+                    if (raw) setPopoverEvent(raw);
+                  }}
+                  datesSet={(arg) => {
+                    setRangeStart(arg.start);
+                    setRangeEnd(arg.end);
+                    setCurrentDate(arg.view.currentStart);
+                    setTitleLabel(arg.view.title);
+                    const t = arg.view.type as CalView;
+                    if (t === "timeGridDay" || t === "timeGridWeek" || t === "dayGridMonth") {
+                      if (t !== view) setView(t);
                     }
-                  : undefined
-              }
-              events={fcEvents}
-              editable
-              eventStartEditable
-              eventDurationEditable
-              eventResizableFromStart
-              dragRevertDuration={150}
-              snapDuration="00:15:00"
-              eventDrop={(arg) => handleEventChange(arg, "drop")}
-              eventResize={(arg) => handleEventChange(arg, "resize")}
-              selectable
-              select={(arg) => {
-                const day = arg.start.toLocaleDateString(undefined, { weekday: "long" });
-                const time = arg.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-                setNlpInitial(`Schedule a 30 min meeting on ${day} at ${time}`);
-                arg.view.calendar.unselect();
-              }}
-              eventClick={(arg) => {
-                const raw = arg.event.extendedProps.raw as CalendarEvent | undefined;
-                if (raw) setPopoverEvent(raw);
-              }}
-              datesSet={(arg) => {
-                setRangeStart(arg.start);
-                setRangeEnd(arg.end);
-                setCurrentDate(arg.view.currentStart);
-                setTitleLabel(arg.view.title);
-                const t = arg.view.type as CalView;
-                if (t === "timeGridDay" || t === "timeGridWeek" || t === "dayGridMonth") {
-                  if (t !== view) setView(t);
-                }
-              }}
-            />
+                  }}
+                />
+              </>
+            )}
             </div>
           </section>
 
           {/* Sidebar */}
           <aside className="space-y-4">
             <ConnectionStatus />
-            <TodayAgenda events={events} loading={eventsLoading} />
+            <TodayAgenda
+              events={events}
+              loading={eventsLoading}
+              error={eventsError}
+              onRetry={() => refetchEvents()}
+              retrying={eventsFetching}
+            />
             {settings && (
               <FocusStats
                 weekISO={weekISO}
