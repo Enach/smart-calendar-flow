@@ -349,9 +349,12 @@ export default function SettingsPage() {
           </p>
         </Section>
 
-        <Section title="Google Calendar">
+        <Section
+          title="Calendar Connection"
+          description="Choose which work calendar Clockwise-like reads and writes to."
+        >
           <div className="space-y-4">
-            <ConnectionStatus compact />
+            <WorkCalendarConnection settings={draft} onPatch={patchDraft} />
             <Field label="Calendar ID">
               <input
                 type="text"
@@ -364,7 +367,14 @@ export default function SettingsPage() {
           </div>
         </Section>
 
-        <Section title="AI / NLP">
+        <Section
+          title="Personal Calendars"
+          description="Block out your personal time so the scheduler never books over it."
+        >
+          <PersonalCalendarsSection />
+        </Section>
+
+        <Section title="AI / NLP" description="The model used to interpret natural-language scheduling commands.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Provider">
               <select
@@ -372,30 +382,104 @@ export default function SettingsPage() {
                 onChange={(e) => set("llm_provider", e.target.value)}
                 className={inputCls}
               >
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
+                {LLM_PROVIDERS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
                   </option>
                 ))}
               </select>
             </Field>
-            <Field label="Model">
-              <input
-                type="text"
-                value={draft.llm_model}
-                onChange={(e) => set("llm_model", e.target.value)}
-                className={inputCls}
-              />
-            </Field>
-            <Field label="API key">
-              <input
-                type="password"
-                value={draft.llm_api_key ?? ""}
-                onChange={(e) => set("llm_api_key", e.target.value)}
-                className={inputCls}
-                placeholder="••••••••"
-              />
-            </Field>
+
+            {draft.llm_provider === "bedrock" ? (
+              <Field label="Model">
+                <select
+                  value={draft.llm_model}
+                  onChange={(e) => set("llm_model", e.target.value)}
+                  className={inputCls}
+                >
+                  {BEDROCK_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : (
+              <Field label="Model">
+                <input
+                  type="text"
+                  value={draft.llm_model}
+                  onChange={(e) => set("llm_model", e.target.value)}
+                  className={inputCls}
+                  placeholder={
+                    draft.llm_provider === "ollama"
+                      ? "llama3"
+                      : draft.llm_provider === "azure_openai"
+                        ? "gpt-4o"
+                        : "gpt-4o-mini"
+                  }
+                />
+              </Field>
+            )}
+
+            {/* Bedrock-specific */}
+            {draft.llm_provider === "bedrock" && (
+              <>
+                <Field label="AWS Region">
+                  <input
+                    type="text"
+                    value={draft.aws_region ?? ""}
+                    onChange={(e) => set("aws_region", e.target.value)}
+                    className={inputCls}
+                    placeholder="us-east-1"
+                  />
+                </Field>
+                <Field label="AWS Profile" hint="Optional — leave empty to use the default credential chain.">
+                  <input
+                    type="text"
+                    value={draft.aws_profile ?? ""}
+                    onChange={(e) => set("aws_profile", e.target.value)}
+                    className={inputCls}
+                    placeholder="default"
+                  />
+                </Field>
+              </>
+            )}
+
+            {/* Azure-specific */}
+            {draft.llm_provider === "azure_openai" && (
+              <>
+                <Field label="Azure Endpoint">
+                  <input
+                    type="text"
+                    value={draft.azure_endpoint ?? ""}
+                    onChange={(e) => set("azure_endpoint", e.target.value)}
+                    className={inputCls}
+                    placeholder="https://your-resource.openai.azure.com"
+                  />
+                </Field>
+                <Field label="Deployment">
+                  <input
+                    type="text"
+                    value={draft.azure_deployment ?? ""}
+                    onChange={(e) => set("azure_deployment", e.target.value)}
+                    className={inputCls}
+                    placeholder="gpt-4o"
+                  />
+                </Field>
+                <Field label="API Version">
+                  <input
+                    type="text"
+                    value={draft.azure_api_version ?? "2024-02-01"}
+                    onChange={(e) => set("azure_api_version", e.target.value)}
+                    className={inputCls}
+                    placeholder="2024-02-01"
+                  />
+                </Field>
+              </>
+            )}
+
+            {/* Ollama-specific */}
             {draft.llm_provider === "ollama" && (
               <Field label="Base URL">
                 <input
@@ -407,6 +491,34 @@ export default function SettingsPage() {
                 />
               </Field>
             )}
+
+            {/* Legacy API key for openai/anthropic */}
+            {(draft.llm_provider === "openai" || draft.llm_provider === "anthropic") && (
+              <Field label="API key">
+                <input
+                  type="password"
+                  value={draft.llm_api_key ?? ""}
+                  onChange={(e) => set("llm_api_key", e.target.value)}
+                  className={inputCls}
+                  placeholder="••••••••"
+                />
+              </Field>
+            )}
+          </div>
+
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={testLlm}
+              disabled={llmTesting}
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground transition hover:bg-muted disabled:opacity-50"
+            >
+              {llmTesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+              Test connection
+            </button>
+            <p className="text-[11px] text-muted-foreground">
+              Sends a small probe to the selected provider using the values above.
+            </p>
           </div>
         </Section>
       </main>
