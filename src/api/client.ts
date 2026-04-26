@@ -674,6 +674,7 @@ export const api = {
           end: slot.end,
           attendees: parse_result.attendees,
           color: "#3B82F6",
+          coverage: parse_result.coverage ?? coverageFromAttendees(parse_result.attendees),
         };
         mockState.events.push(ev);
         logAudit("nlp.confirm", `Scheduled "${ev.title}" (mock)`);
