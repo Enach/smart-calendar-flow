@@ -137,6 +137,36 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
         </p>
       </div>
 
+      {zoomError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2"
+        >
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-destructive">Action rolled back</p>
+            <p className="text-[11px] text-destructive/90">{zoomError.message}</p>
+          </div>
+          <button
+            type="button"
+            onClick={zoomError.retry}
+            disabled={zoomBusy !== null}
+            className="flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-2 py-1 text-[11px] font-medium text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={() => setZoomError(null)}
+            aria-label="Dismiss"
+            className="rounded-md p-1 text-destructive/70 transition hover:bg-destructive/10 hover:text-destructive"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+
       <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
         {isLoading && (
           <li className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
