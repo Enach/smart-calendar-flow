@@ -158,8 +158,9 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
                 type="button"
                 onClick={() => customUrl.trim() && add("custom", customUrl.trim())}
                 disabled={!customUrl.trim() || busy !== null}
-                className="h-9 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
+                className="flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
               >
+                {busy === "custom" && <Loader2 className="h-3 w-3 animate-spin" />}
                 Add
               </button>
             </div>

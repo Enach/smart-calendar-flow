@@ -14,6 +14,7 @@ import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
+import { LoadingOverlay } from "@/components/ui/spinner";
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
@@ -63,7 +64,7 @@ export default function Dashboard() {
   const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
   const { data: settings } = useSettings();
-  const { data: eventsRaw } = useCalendarEvents(
+  const { data: eventsRaw, isLoading: eventsLoading, isFetching: eventsFetching } = useCalendarEvents(
     rangeStart.toISOString(),
     rangeEnd.toISOString(),
   );
@@ -245,7 +246,11 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="p-3 sm:p-4">
+            <div className="relative p-3 sm:p-4">
+            <LoadingOverlay
+              show={eventsLoading || (eventsFetching && events.length === 0)}
+              label="Loading events…"
+            />
             <FullCalendar
               ref={calRef}
               plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
@@ -309,7 +314,7 @@ export default function Dashboard() {
           {/* Sidebar */}
           <aside className="space-y-4">
             <ConnectionStatus />
-            <TodayAgenda events={events} />
+            <TodayAgenda events={events} loading={eventsLoading} />
             {settings && (
               <FocusStats
                 weekISO={weekISO}

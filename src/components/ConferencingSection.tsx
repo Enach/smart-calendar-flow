@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogIn, LogOut } from "lucide-react";
 import { api, mockZoomConnect } from "@/api/client";
@@ -45,6 +46,8 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     staleTime: 60_000,
   });
 
+  const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
+
   const meet = providers.find((p) => p.provider === "google_meet");
   const zoom = providers.find((p) => p.provider === "zoom");
   const teams = providers.find((p) => p.provider === "teams");
@@ -52,25 +55,33 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
-  const handleZoomConnect = () => {
-    // In a real backend this navigates to OAuth. The mock helper toggles the
-    // connection synchronously so the UI demonstrates the connected state.
+  const handleZoomConnect = async () => {
+    setZoomBusy("connect");
     try {
-      mockZoomConnect();
-      toast.success("Zoom connected (demo)");
-      refresh();
-    } catch {
-      window.location.href = api.zoomConnectUrl();
+      // In a real backend this navigates to OAuth. The mock helper toggles the
+      // connection synchronously so the UI demonstrates the connected state.
+      try {
+        mockZoomConnect();
+        toast.success("Zoom connected (demo)");
+        refresh();
+      } catch {
+        window.location.href = api.zoomConnectUrl();
+      }
+    } finally {
+      setZoomBusy(null);
     }
   };
 
   const handleZoomDisconnect = async () => {
+    setZoomBusy("disconnect");
     try {
       await api.zoomDisconnect();
       toast.success("Disconnected Zoom");
       refresh();
     } catch {
       toast.error("Failed to disconnect");
+    } finally {
+      setZoomBusy(null);
     }
   };
 
@@ -134,17 +145,21 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
             <button
               type="button"
               onClick={handleZoomDisconnect}
-              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              disabled={zoomBusy !== null}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
             >
-              <LogOut className="h-3 w-3" /> Disconnect
+              {zoomBusy === "disconnect" ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
+              Disconnect
             </button>
           ) : (
             <button
               type="button"
               onClick={handleZoomConnect}
-              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground transition hover:bg-primary/90"
+              disabled={zoomBusy !== null}
+              className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
             >
-              <LogIn className="h-3 w-3" /> Connect Zoom account
+              {zoomBusy === "connect" ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
+              Connect Zoom account
             </button>
           )}
         </li>
