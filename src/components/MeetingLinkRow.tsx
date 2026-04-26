@@ -39,21 +39,42 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     providers.find((x) => x.provider === p)?.connected ||
     !!providers.find((x) => x.provider === p)?.auto_with;
 
+  /** Build a temporary link so the UI updates instantly while the API runs. */
+  const buildOptimisticLink = (provider: ConferenceProvider, url?: string): ConferenceLink => {
+    if (provider === "custom") return { provider, url: (url ?? "").trim() };
+    const id = Math.random().toString(36).slice(2, 11);
+    switch (provider) {
+      case "google_meet":
+        return { provider, url: `https://meet.google.com/${id.slice(0, 3)}-${id.slice(3, 7)}-${id.slice(7, 10)}` };
+      case "zoom":
+        return { provider, url: `https://zoom.us/j/${Math.floor(1e10 + Math.random() * 9e10)}` };
+      case "teams":
+        return { provider, url: `https://teams.microsoft.com/l/meetup-join/${id}` };
+    }
+  };
+
   const add = async (provider: ConferenceProvider, url?: string) => {
     if (!isConnected(provider)) {
       toast.error("Provider not connected — open Settings → Conferencing");
       return;
     }
     setBusy(provider);
+    const previous = conference;
+    const optimistic = buildOptimisticLink(provider, url);
+    // Show the new link immediately, then close the menu so the action feels snappy.
+    onChange(optimistic);
+    setOpen(false);
+    setCustomMode(false);
+    setCustomUrl("");
     try {
       const link = await api.addConference(eventId, { provider, url });
+      // Replace the optimistic link with the canonical one from the server.
       onChange(link);
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`${PROVIDER_META[provider].label} link added`);
-      setOpen(false);
-      setCustomMode(false);
-      setCustomUrl("");
     } catch {
+      // Roll back to whatever was there before.
+      onChange(previous);
       toast.error("Failed to generate meeting link");
     } finally {
       setBusy(null);
@@ -62,12 +83,15 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
 
   const remove = async () => {
     setBusy("custom");
+    const previous = conference;
+    // Optimistically clear the link.
+    onChange(undefined);
     try {
       await api.removeConference(eventId);
-      onChange(undefined);
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success("Meeting link removed");
     } catch {
+      onChange(previous);
       toast.error("Failed to remove link");
     } finally {
       setBusy(null);
