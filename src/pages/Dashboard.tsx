@@ -404,10 +404,13 @@ export default function Dashboard() {
                   eventDrop={(arg) => handleEventChange(arg, "drop")}
                   eventResize={(arg) => handleEventChange(arg, "resize")}
                   selectable
+                  selectMirror
                   select={(arg) => {
-                    const day = arg.start.toLocaleDateString(undefined, { weekday: "long" });
-                    const time = arg.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-                    setNlpInitial(`Schedule a 30 min meeting on ${day} at ${time}`);
+                    const j = arg.jsEvent;
+                    const anchor = j
+                      ? { x: j.clientX, y: j.clientY }
+                      : { x: window.innerWidth / 2, y: window.innerHeight / 3 };
+                    setQuickCreate({ anchor, start: arg.start, end: arg.end });
                     arg.view.calendar.unselect();
                   }}
                   eventClick={(arg) => {
