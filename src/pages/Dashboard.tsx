@@ -325,7 +325,13 @@ export default function Dashboard() {
         />
       )}
       {popoverEvent && (
-        <EventDrawer event={popoverEvent} onClose={() => setPopoverEvent(null)} />
+        <EventDrawer
+          event={popoverEvent}
+          events={events}
+          workStart={settings?.work_start ?? "09:00"}
+          workEnd={settings?.work_end ?? "18:00"}
+          onClose={() => setPopoverEvent(null)}
+        />
       )}
     </div>
   );
