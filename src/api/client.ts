@@ -324,6 +324,53 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
   return out;
 }
 
+// ---------- Free/busy mock helper ----------
+
+const PACEDAY_DOMAINS = new Set(["paceday.com", "demo.paceday.com"]);
+const KNOWN_GOOGLE_DOMAINS = new Set(["co.com", "acme.com", "paceday.com", "demo.paceday.com"]);
+const KNOWN_OUTLOOK_DOMAINS = new Set([
+  "microsoft.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+]);
+const PERSONAL_DOMAINS = new Set([
+  "gmail.com",
+  "yahoo.com",
+  "yahoo.co.uk",
+  "proton.me",
+  "protonmail.com",
+  "icloud.com",
+  "me.com",
+  "aol.com",
+  "fastmail.com",
+  "gmx.com",
+]);
+
+function classifyEmail(email: string): { status: CoverageStatus; provider?: CoverageProvider } {
+  const domain = email.toLowerCase().split("@")[1] ?? "";
+  if (PACEDAY_DOMAINS.has(domain)) return { status: "paceday_user", provider: "paceday" };
+  if (KNOWN_GOOGLE_DOMAINS.has(domain)) return { status: "known", provider: "google" };
+  if (KNOWN_OUTLOOK_DOMAINS.has(domain)) return { status: "known", provider: "outlook" };
+  if (PERSONAL_DOMAINS.has(domain)) return { status: "unknown" };
+  // Heuristic: any non-personal corporate domain → assume Google Workspace
+  if (domain && !domain.startsWith("@")) return { status: "known", provider: "google" };
+  return { status: "unknown" };
+}
+
+function mockFreebusy(input: { emails: string[]; start_time: string; end_time: string }): FreeBusyResponse {
+  const participants: ParticipantCoverage[] = input.emails.map((email) => {
+    const { status, provider } = classifyEmail(email);
+    return { email: email.toLowerCase(), status, provider };
+  });
+  return {
+    start_time: input.start_time,
+    end_time: input.end_time,
+    participants,
+  };
+}
+
 // ---------- Public API ----------
 
 export const api = {
