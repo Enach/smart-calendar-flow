@@ -1,5 +1,6 @@
 import { useFocusBlocks } from "@/hooks/useFocusBlocks";
 import { Target } from "lucide-react";
+import { SkeletonLine } from "@/components/ui/spinner";
 
 interface FocusStatsProps {
   weekISO: string;
@@ -18,7 +19,7 @@ function fmtHM(min: number) {
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusStatsProps) {
-  const { data } = useFocusBlocks(weekISO);
+  const { data, isLoading } = useFocusBlocks(weekISO);
   const blocks = Array.isArray(data) ? data : [];
 
   const weeklyTarget = dailyTargetMinutes * 5;
