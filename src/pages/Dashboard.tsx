@@ -102,6 +102,7 @@ export default function Dashboard() {
     end: Date;
   } | null>(null);
   const [quickCreateSaving, setQuickCreateSaving] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
 
   // Persist view selection
   useEffect(() => {
@@ -509,7 +510,7 @@ export default function Dashboard() {
                 focusColor={settings.focus_color}
               />
             )}
-            <QuickActions weekISO={weekISO} />
+            <QuickActions weekISO={weekISO} onScheduleMeeting={() => setShowSuggest(true)} />
           </aside>
         </div>
       </main>
@@ -540,6 +541,13 @@ export default function Dashboard() {
           onClose={() => !quickCreateSaving && setQuickCreate(null)}
           onSave={handleQuickCreateSave}
           onMoreOptions={handleQuickCreateMore}
+        />
+      )}
+      {showSuggest && (
+        <ScheduleSuggestModal
+          defaultRangeStart={rangeStart.toISOString()}
+          defaultRangeEnd={rangeEnd.toISOString()}
+          onClose={() => setShowSuggest(false)}
         />
       )}
     </div>
