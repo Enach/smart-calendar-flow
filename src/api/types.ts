@@ -301,6 +301,8 @@ export interface PublicLinkInfo {
   /** Echoed for the public page so it can show "We need X notice" if relevant. */
   min_notice_minutes?: number;
   usage_type?: LinkUsageType;
+  /** Per-duration coverage of the hosts whose calendars we could read (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface BookingConfirmation {
