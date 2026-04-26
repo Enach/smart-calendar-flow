@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
-import type { SchedulingLink, Weekday } from "@/api/types";
+import type { LinkUsageType, SchedulingLink, Weekday } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 
 interface LinkEditDrawerProps {
@@ -30,6 +30,40 @@ const ALL_WEEKDAYS: Array<{ value: Weekday; label: string }> = [
 
 const DURATIONS = [15, 30, 45, 60];
 const BUFFERS = [0, 5, 10, 15];
+
+/** Minimum-notice presets, expressed in minutes. */
+const NOTICE_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: "No minimum" },
+  { value: 60, label: "1 hour" },
+  { value: 120, label: "2 hours" },
+  { value: 240, label: "4 hours" },
+  { value: 480, label: "8 hours" },
+  { value: 1440, label: "1 day" },
+  { value: 2880, label: "2 days" },
+  { value: 10080, label: "1 week" },
+];
+
+const USAGE_OPTIONS: Array<{
+  value: LinkUsageType;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "reusable",
+    label: "Reusable",
+    description: "Anyone with the link can book — no limit.",
+  },
+  {
+    value: "recurring",
+    label: "Recurring",
+    description: "Bookable a fixed number of times, then auto-disables.",
+  },
+  {
+    value: "single_use",
+    label: "Single use",
+    description: "One booking only. Great for sharing with one person.",
+  },
+];
 
 function slugify(s: string) {
   return s
@@ -57,6 +91,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const [windowEnd, setWindowEnd] = useState("18:00");
   const [bufferBefore, setBufferBefore] = useState(5);
   const [bufferAfter, setBufferAfter] = useState(5);
+  const [minNotice, setMinNotice] = useState<number>(60);
+  const [usageType, setUsageType] = useState<LinkUsageType>("reusable");
+  const [maxUses, setMaxUses] = useState<number>(5);
   const [coHostEmail, setCoHostEmail] = useState("");
   const [coHosts, setCoHosts] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -80,6 +117,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setWindowEnd(link.window_end);
       setBufferBefore(link.buffer_before);
       setBufferAfter(link.buffer_after);
+      setMinNotice(link.min_notice_minutes ?? 0);
+      setUsageType(link.usage_type ?? "reusable");
+      setMaxUses(link.max_uses ?? 5);
       setCoHosts(link.hosts.filter((h) => !h.is_owner).map((h) => h.email));
     } else {
       setTitle("");
@@ -91,6 +131,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setWindowEnd("18:00");
       setBufferBefore(5);
       setBufferAfter(5);
+      setMinNotice(60);
+      setUsageType("reusable");
+      setMaxUses(5);
       setCoHosts([]);
     }
   }, [open, link]);
@@ -111,6 +154,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
         window_end: windowEnd,
         buffer_before: bufferBefore,
         buffer_after: bufferAfter,
+        min_notice_minutes: minNotice,
+        usage_type: usageType,
+        max_uses: usageType === "recurring" ? Math.max(1, maxUses) : undefined,
         co_host_emails: coHosts,
       };
       if (link) return schedulingLinksApi.updateLink(link.id, payload);
