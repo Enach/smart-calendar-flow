@@ -14,6 +14,7 @@ import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
 import { MockBanner } from "@/components/MockBanner";
+import { LoadingOverlay } from "@/components/ui/spinner";
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
