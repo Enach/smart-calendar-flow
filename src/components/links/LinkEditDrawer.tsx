@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Plus, Loader2 } from "lucide-react";
 
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
-import type { LinkUsageType, SchedulingLink, Weekday } from "@/api/types";
+import { api } from "@/api/client";
+import type { LinkUsageType, ParticipantCoverage, SchedulingLink, Weekday } from "@/api/types";
+import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
 
 interface LinkEditDrawerProps {
@@ -142,6 +144,48 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   useEffect(() => {
     if (!slugDirty) setSlug(slugify(title));
   }, [title, slugDirty]);
+
+  // ---------- Real-time availability coverage for co-host chips (T-40) ----------
+  // We hit /api/freebusy for the next 14 days whenever the chip set changes,
+  // then map the response back onto each email so we can render the right badge.
+  const coverageRange = useMemo(() => {
+    const start = new Date();
+    const end = new Date(Date.now() + 14 * 86_400_000);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, []);
+  const sortedCoHostsKey = useMemo(() => [...coHosts].sort().join(","), [coHosts]);
+  const coverageQuery = useQuery({
+    queryKey: ["link-edit-freebusy", sortedCoHostsKey],
+    queryFn: () =>
+      api.freebusy({
+        emails: coHosts,
+        start_time: coverageRange.start,
+        end_time: coverageRange.end,
+      }),
+    enabled: coHosts.length > 0 && open,
+    staleTime: 60_000,
+  });
+  const coverageByEmail = useMemo(() => {
+    const m = new Map<string, ParticipantCoverage>();
+    (coverageQuery.data?.participants ?? []).forEach((p) => m.set(p.email.toLowerCase(), p));
+    return m;
+  }, [coverageQuery.data]);
+
+  function chipStateFor(email: string): ChipState {
+    const wasAlreadyHere = initialEmails.includes(email);
+    // Co-hosts who already accepted in a prior session are full Paceday users.
+    if (link && wasAlreadyHere) {
+      const host = link.hosts.find((h) => h.email.toLowerCase() === email.toLowerCase());
+      if (host?.status === "accepted" && host.user_id) return { kind: "paceday-accepted" };
+      if (host?.status === "pending") return { kind: "paceday-pending" };
+    }
+    if (coverageQuery.isLoading) return { kind: "loading" };
+    const cov = coverageByEmail.get(email.toLowerCase());
+    if (!cov) return { kind: "loading" };
+    if (cov.status === "paceday_user") return { kind: "paceday-accepted" };
+    if (cov.status === "known") return { kind: "synced", provider: cov.provider };
+    return { kind: "unknown" };
+  }
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -435,30 +479,23 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             {error && <p className="text-xs text-destructive">{error}</p>}
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
-                {coHosts.map((email) => {
-                  const wasAlreadyHere = initialEmails.includes(email);
-                  return (
-                    <li
-                      key={email}
-                      className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs"
+                {coHosts.map((email) => (
+                  <li
+                    key={email}
+                    className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs"
+                  >
+                    <span className="font-medium text-foreground">{email}</span>
+                    <CoverageBadge state={chipStateFor(email)} />
+                    <button
+                      type="button"
+                      onClick={() => removeCoHost(email)}
+                      className="rounded-full p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                      aria-label={`Remove ${email}`}
                     >
-                      <span className="font-medium text-foreground">{email}</span>
-                      {!wasAlreadyHere && (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                          Invite pending
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => removeCoHost(email)}
-                        className="rounded-full p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                        aria-label={`Remove ${email}`}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </li>
-                  );
-                })}
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
               </ul>
             )}
             <p className="pt-1 text-[11px] text-muted-foreground">{coHosts.length}/5 co-hosts</p>

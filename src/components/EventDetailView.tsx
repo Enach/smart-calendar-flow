@@ -125,6 +125,29 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
           </div>
         )}
 
+        {/* Scheduling confidence (T-40) — only when free/busy data was used at scheduling time. */}
+        {!isFocus && !isPersonal && event.coverage && event.coverage.total > 0 && (() => {
+          const total = event.coverage!.total;
+          const checked = event.coverage!.checked;
+          const allChecked = checked >= total;
+          return (
+            <div className="flex items-center gap-2 text-xs">
+              <span
+                className={
+                  "inline-block h-2 w-2 rounded-full " +
+                  (allChecked ? "bg-[#5FC9A6]" : "bg-[#E9B949]")
+                }
+                aria-hidden
+              />
+              <span className={allChecked ? "text-muted-foreground" : "font-medium text-[#8A6A14]"}>
+                {allChecked
+                  ? "Times verified for all attendees"
+                  : `Times verified for ${checked} of ${total} attendees`}
+              </span>
+            </div>
+          );
+        })()}
+
         {participants.length > 0 && (
           <div>
             <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">

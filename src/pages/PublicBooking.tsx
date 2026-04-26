@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HostAvatars } from "@/components/links/HostAvatars";
+import { CoveragePill } from "@/components/CoveragePill";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
@@ -351,9 +352,13 @@ export default function PublicBooking() {
 
           {/* RIGHT — 3-step flow */}
           <section className="rounded-2xl border border-border bg-card p-4 shadow-sm sm:p-6">
+            {isCollective && link.coverage && (
+              <div className="mb-4 flex">
+                <CoveragePill coverage={link.coverage} compactPrivate />
+              </div>
+            )}
             {!selectedSlot ? (
               <div className="grid gap-6 sm:grid-cols-[auto_1fr]">
-                {/* Step 1 — Calendar */}
                 <div>
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Pick a date

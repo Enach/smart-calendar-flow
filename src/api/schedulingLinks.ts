@@ -448,6 +448,13 @@ export const schedulingLinksApi = {
           err.status = 410;
           throw err;
         }
+        // Mock coverage: hosts on co.com / paceday domains are "checked".
+        // Personal-mail co-hosts (e.g. gmail.com) are not — surfaces the
+        // "Partial availability" pill on the public page.
+        const checked = link.hosts.filter((h) => {
+          const d = h.email.toLowerCase().split("@")[1] ?? "";
+          return /^(co\.com|paceday\.com|demo\.paceday\.com|acme\.com)$/.test(d) || d.endsWith(".com") && !/^(gmail|yahoo|hotmail|outlook|icloud|proton)/.test(d.split(".")[0]);
+        }).length;
         return {
           slug: link.slug,
           title: link.title,
@@ -455,6 +462,7 @@ export const schedulingLinksApi = {
           hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
           min_notice_minutes: link.min_notice_minutes,
           usage_type: link.usage_type,
+          coverage: { total: link.hosts.length, checked },
         };
       },
     ),

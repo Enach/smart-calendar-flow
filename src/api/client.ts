@@ -8,11 +8,15 @@ import type {
   ConferenceLink,
   ConferenceProvider,
   ConferenceProviderStatus,
+  CoverageProvider,
+  CoverageStatus,
   FocusBlock,
   FocusRunResult,
+  FreeBusyResponse,
   LLMTestResult,
   MoveProposal,
   ParseResult,
+  ParticipantCoverage,
   PersonalCalendar,
   PersonalCalendarType,
   Room,
@@ -166,7 +170,7 @@ function seedMocks() {
     { day: 1, sh: 11, sm: 0, eh: 12, em: 0, title: "Product review", color: "#F59E0B", att: ["pm@co.com"] },
     { day: 1, sh: 16, sm: 0, eh: 17, em: 0, title: "Design sync", color: "#EC4899" },
     { day: 2, sh: 10, sm: 0, eh: 10, em: 30, title: "Standup", color: "#3B82F6" },
-    { day: 2, sh: 15, sm: 30, eh: 16, em: 30, title: "Customer call", color: "#06B6D4", att: ["client@acme.com"] },
+    { day: 2, sh: 15, sm: 30, eh: 16, em: 30, title: "Customer call", color: "#06B6D4", att: ["client@gmail.com", "alice@co.com"] },
     { day: 3, sh: 9, sm: 30, eh: 10, em: 30, title: "Sprint planning", color: "#8B5CF6", att: ["team@co.com"] },
     { day: 3, sh: 14, sm: 0, eh: 14, em: 30, title: "Coffee with Sam", color: "#10B981" },
     { day: 4, sh: 11, sm: 0, eh: 12, em: 0, title: "Demo prep", color: "#F59E0B" },
@@ -181,6 +185,7 @@ function seedMocks() {
       end: isoAt(d, s.eh, s.em),
       color: s.color,
       attendees: s.att,
+      coverage: s.att && s.att.length > 0 ? coverageFromAttendees(s.att) : undefined,
     });
   });
 
@@ -320,6 +325,70 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
   return out;
 }
 
+// ---------- Free/busy mock helper ----------
+
+const PACEDAY_DOMAINS = new Set(["paceday.com", "demo.paceday.com"]);
+const KNOWN_GOOGLE_DOMAINS = new Set(["co.com", "acme.com", "paceday.com", "demo.paceday.com"]);
+const KNOWN_OUTLOOK_DOMAINS = new Set([
+  "microsoft.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "msn.com",
+]);
+const PERSONAL_DOMAINS = new Set([
+  "gmail.com",
+  "yahoo.com",
+  "yahoo.co.uk",
+  "proton.me",
+  "protonmail.com",
+  "icloud.com",
+  "me.com",
+  "aol.com",
+  "fastmail.com",
+  "gmx.com",
+]);
+
+function classifyEmail(email: string): { status: CoverageStatus; provider?: CoverageProvider } {
+  const domain = email.toLowerCase().split("@")[1] ?? "";
+  if (PACEDAY_DOMAINS.has(domain)) return { status: "paceday_user", provider: "paceday" };
+  if (KNOWN_GOOGLE_DOMAINS.has(domain)) return { status: "known", provider: "google" };
+  if (KNOWN_OUTLOOK_DOMAINS.has(domain)) return { status: "known", provider: "outlook" };
+  if (PERSONAL_DOMAINS.has(domain)) return { status: "unknown" };
+  // Heuristic: any non-personal corporate domain → assume Google Workspace
+  if (domain && !domain.startsWith("@")) return { status: "known", provider: "google" };
+  return { status: "unknown" };
+}
+
+function mockFreebusy(input: { emails: string[]; start_time: string; end_time: string }): FreeBusyResponse {
+  const participants: ParticipantCoverage[] = input.emails.map((email) => {
+    const { status, provider } = classifyEmail(email);
+    return { email: email.toLowerCase(), status, provider };
+  });
+  return {
+    start_time: input.start_time,
+    end_time: input.end_time,
+    participants,
+  };
+}
+
+/**
+ * Compute the coverage summary the UI shows next to suggestions / events.
+ * `total` includes the organizer (assumed connected — otherwise we'd flag
+ * organizer_disconnected). Mirrors what the backend returns for T-39.
+ */
+function coverageFromAttendees(attendees: string[] | undefined): { total: number; checked: number; organizer_disconnected?: boolean } {
+  const list = (attendees ?? []).filter(Boolean);
+  // Count organizer (always known via Paceday) + each attendee whose mail we can read.
+  const organizerCounted = 1;
+  let checked = organizerCounted;
+  for (const e of list) {
+    const c = classifyEmail(e);
+    if (c.status === "paceday_user" || c.status === "known") checked += 1;
+  }
+  return { total: list.length + organizerCounted, checked };
+}
+
 // ---------- Public API ----------
 
 export const api = {
@@ -336,7 +405,22 @@ export const api = {
     }
   },
 
-  // Auth
+  /**
+   * Free/busy probe (T-39 / T-40).
+   *
+   * Tells the UI which participants we can read calendar data for.
+   * Mock heuristic — covers the demo + offline cases:
+   *   - email matches the current org domain → status=paceday_user (provider=paceday)
+   *   - known directory (co.com, acme.com, paceday.com) → known + google
+   *   - microsoft.com / outlook.com / hotmail.com / live.com → known + outlook
+   *   - personal mail (gmail.com, yahoo.com, proton.me, ...) → unknown
+   * The real backend overrides all of this when reachable.
+   */
+  freebusy: (input: { emails: string[]; start_time: string; end_time: string }) =>
+    withFallback<FreeBusyResponse>(
+      () => realFetch("POST", "/freebusy", input),
+      () => mockFreebusy(input),
+    ),
   authStatus: () =>
     withFallback(
       () => realFetch<AuthStatus>("GET", "/auth/status"),
@@ -496,7 +580,13 @@ export const api = {
   }) =>
     withFallback(
       () => realFetch<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body),
-      () => ({ slots: mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end) }),
+      () => {
+        const cov = coverageFromAttendees(body.attendees);
+        const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end).map(
+          (s) => ({ ...s, coverage: cov }),
+        );
+        return { slots };
+      },
     ),
   scheduleCreate: (body: {
     title: string;
@@ -515,6 +605,7 @@ export const api = {
           end: body.end,
           attendees: body.attendees,
           color: "#3B82F6",
+          coverage: coverageFromAttendees(body.attendees),
         };
         mockState.events.push(ev);
         logAudit("schedule.create", `Created "${body.title}" (mock)`);
@@ -558,6 +649,7 @@ export const api = {
         const now = new Date();
         const rangeStart = now.toISOString();
         const rangeEnd = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString();
+        const cov = coverageFromAttendees(attendees);
         return {
           intent: "schedule_meeting",
           title,
@@ -565,7 +657,8 @@ export const api = {
           attendees,
           range_start: rangeStart,
           range_end: rangeEnd,
-          suggested_slots: mockSuggestedSlots(duration, rangeStart, rangeEnd),
+          suggested_slots: mockSuggestedSlots(duration, rangeStart, rangeEnd).map((s) => ({ ...s, coverage: cov })),
+          coverage: cov,
         } as ParseResult;
       },
     ),
@@ -582,6 +675,7 @@ export const api = {
           end: slot.end,
           attendees: parse_result.attendees,
           color: "#3B82F6",
+          coverage: parse_result.coverage ?? coverageFromAttendees(parse_result.attendees),
         };
         mockState.events.push(ev);
         logAudit("nlp.confirm", `Scheduled "${ev.title}" (mock)`);

@@ -93,6 +93,8 @@ export interface CalendarEvent {
   location?: string;
   room_resource_email?: string;
   conference?: ConferenceLink;
+  /** Set when the event was created with free/busy verification (T-39). */
+  coverage?: CoverageSummary;
 }
 
 export interface Room {
@@ -135,6 +137,8 @@ export interface SuggestedSlot {
   end: string;
   score: number;
   reasons: string[];
+  /** Coverage of the attendees considered when ranking this slot (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface ParseResult {
@@ -147,6 +151,8 @@ export interface ParseResult {
   constraints?: string;
   error?: string;
   suggested_slots?: SuggestedSlot[];
+  /** Optional coverage summary applied to ALL suggested_slots (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface MoveProposal {
@@ -185,6 +191,42 @@ export interface FreeBusyEntry {
 }
 
 export type FreeBusyMap = Record<string, FreeBusyEntry[]>;
+
+// ---------- Free/busy coverage (T-39 / T-40) ----------
+
+/**
+ * How well we can see this participant's calendar:
+ * - paceday_user: they have a Paceday account (we use their stored events)
+ * - known:        external user but we successfully read their calendar
+ *                 (e.g. shared Google Workspace freebusy)
+ * - unknown:      we could not reach their calendar — slots may overlap
+ */
+export type CoverageStatus = "paceday_user" | "known" | "unknown";
+
+/** Provider that surfaced the freebusy data (drives the small logo on the badge). */
+export type CoverageProvider = "google" | "outlook" | "paceday";
+
+export interface ParticipantCoverage {
+  email: string;
+  status: CoverageStatus;
+  provider?: CoverageProvider;
+}
+
+export interface FreeBusyResponse {
+  start_time: string;
+  end_time: string;
+  participants: ParticipantCoverage[];
+  /** Per-participant busy windows. Keyed by lowercase email. */
+  busy?: Record<string, FreeBusyEntry[]>;
+}
+
+/** Compact summary embedded on a CalendarEvent / suggestion / public link. */
+export interface CoverageSummary {
+  total: number;
+  checked: number;
+  /** True when the organizer has no calendar provider connected at all. */
+  organizer_disconnected?: boolean;
+}
 
 // ---------- Scheduling links (T-28) ----------
 
@@ -259,6 +301,8 @@ export interface PublicLinkInfo {
   /** Echoed for the public page so it can show "We need X notice" if relevant. */
   min_notice_minutes?: number;
   usage_type?: LinkUsageType;
+  /** Per-duration coverage of the hosts whose calendars we could read (T-40). */
+  coverage?: CoverageSummary;
 }
 
 export interface BookingConfirmation {

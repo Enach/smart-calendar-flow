@@ -4,6 +4,7 @@ import { Calendar, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-rea
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/AuthContext";
+import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import type { SuggestedSlot } from "@/api/types";
 
 interface Props {
@@ -319,6 +320,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
                       ))}
                     </div>
                   )}
+                  <SlotCoverageNote coverage={s.coverage} className="mt-2" />
                 </button>
               );
             })}
