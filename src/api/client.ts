@@ -276,15 +276,10 @@ async function realFetch<T>(method: string, path: string, body?: unknown, query?
 }
 
 async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
+  if (usingMocks) return mock();
   try {
-    const v = await real();
-    setMockMode(false);
-    return v;
-  } catch (err) {
-    // HTTP errors (401, 403, 5xx) mean the backend is reachable — don't enter mock mode
-    if (!(err instanceof Error && err.message.startsWith("HTTP "))) {
-      setMockMode(true);
-    }
+    return await real();
+  } catch {
     return mock();
   }
 }
@@ -410,10 +405,10 @@ export const api = {
   health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
     try {
       const r = await realFetch<{ status: string; version: string }>("GET", "/health");
-      if (usingMocks) setMockMode(false);
+      setMockMode(false);
       return { ...r, reachable: true };
     } catch {
-      if (!usingMocks) setMockMode(true);
+      setMockMode(true);
       return { status: "ok", version: "mock-1.0.0", reachable: false };
     }
   },
