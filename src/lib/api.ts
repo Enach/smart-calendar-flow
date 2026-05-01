@@ -12,9 +12,15 @@
  *   credentials and JSON, prefixed with VITE_API_URL.
  */
 
-export const API_BASE: string =
-  (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") ||
-  "http://localhost:3001";
+// Resolve API host at runtime so no URL is baked into the bundle.
+// __API_BASE_URL__ is injected by the Go fileserver and includes the /api
+// suffix (e.g. https://api.example.com/api). This module adds /api itself
+// in every path, so strip the trailing /api to avoid doubling it.
+export const API_BASE: string = (() => {
+  const win = window as Window & { __API_BASE_URL__?: string };
+  if (win.__API_BASE_URL__) return win.__API_BASE_URL__.replace(/\/api\/?$/, "");
+  return (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/+$/, "") ?? "";
+})();
 
 let availabilityPromise: Promise<boolean> | null = null;
 
