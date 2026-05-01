@@ -11,6 +11,16 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+    ...(process.env.VITE_BACKEND_URL
+      ? {
+          proxy: {
+            "/api": {
+              target: process.env.VITE_BACKEND_URL,
+              changeOrigin: true,
+            },
+          },
+        }
+      : {}),
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
