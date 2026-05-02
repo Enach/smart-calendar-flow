@@ -55,10 +55,13 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Quick Actions
-      </h3>
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          Quick actions
+        </h3>
+      </div>
       <div className="space-y-2">
         {onScheduleMeeting && (
           <button
