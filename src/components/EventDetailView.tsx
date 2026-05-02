@@ -165,27 +165,44 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
               {participants.length} participant{participants.length === 1 ? "" : "s"}
             </p>
             <ul className="space-y-1.5">
-              {participants.map((p) => (
-                <li
-                  key={p.email}
-                  className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-muted/50"
-                >
-                  <Avatar className="h-7 w-7">
-                    <AvatarFallback className="bg-primary-muted text-[10px] font-semibold text-accent-foreground">
-                      {initials(p)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-foreground">{p.name || p.email}</p>
-                    {p.name && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
-                  </div>
-                  {p.rsvp && (
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RSVP_COLOR[p.rsvp]}`}>
-                      {RSVP_LABEL[p.rsvp]}
-                    </span>
-                  )}
-                </li>
-              ))}
+              {participants.map((p) => {
+                const isMe = user?.email && p.email.toLowerCase() === user.email.toLowerCase();
+                return (
+                  <li
+                    key={p.email}
+                    className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-muted/50"
+                  >
+                    <Avatar className="h-7 w-7">
+                      <AvatarFallback className="bg-primary-muted text-[10px] font-semibold text-accent-foreground">
+                        {initials(p)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm text-foreground">
+                          {p.name || p.email}
+                          {isMe && <span className="ml-1 text-muted-foreground">(you)</span>}
+                        </p>
+                        {p.organizer && (
+                          <span
+                            className="inline-flex items-center gap-0.5 rounded bg-[#E9B949]/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#8A6A14]"
+                            title="Meeting organizer"
+                          >
+                            <Crown className="h-2.5 w-2.5" />
+                            Host
+                          </span>
+                        )}
+                      </div>
+                      {p.name && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
+                    </div>
+                    {p.rsvp && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RSVP_COLOR[p.rsvp]}`}>
+                        {RSVP_LABEL[p.rsvp]}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
