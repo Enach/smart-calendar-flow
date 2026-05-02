@@ -1,8 +1,10 @@
 import type { CalendarEvent } from "@/api/types";
-import { CalendarCheck2, Sparkles } from "lucide-react";
+import { CalendarCheck2, Sparkles, Users } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
+import { useAuth } from "@/contexts/AuthContext";
+import { getEventOwnership } from "@/lib/eventOwnership";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
