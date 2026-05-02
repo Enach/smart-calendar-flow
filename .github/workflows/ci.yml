@@ -1,0 +1,144 @@
+name: CI
+
+# Runs on every push and PR.
+# The trigger-backend job only fires on main pushes, after all quality gates pass.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+# ── Lint ─────────────────────────────────────────────────────────────────────
+
+  lint:
+    name: Frontend — Lint
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm run lint
+
+# ── Tests ────────────────────────────────────────────────────────────────────
+
+  test:
+    name: Frontend — Test
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+      - run: npm test
+
+# ── Code Quality ─────────────────────────────────────────────────────────────
+
+  quality:
+    name: Frontend — Code Quality
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+
+      # Informational — third-party dep vulns shouldn't gate our own deploys
+      - name: Dependency audit
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
+
+# ── SAST ─────────────────────────────────────────────────────────────────────
+
+  sast:
+    name: Frontend — SAST
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Semgrep
+        run: pip install semgrep
+
+      - name: Semgrep scan
+        run: |
+          semgrep scan \
+            --config "p/typescript" \
+            --config "p/react" \
+            --config "p/secrets" \
+            --error \
+            src/
+
+# ── DAST ─────────────────────────────────────────────────────────────────────
+
+  dast:
+    name: Frontend — DAST
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build
+        run: npm ci && npm run build
+
+      - name: Start preview server
+        run: |
+          nohup npm run preview -- --port 4173 > /tmp/preview.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:4173 && break || sleep 1
+          done
+
+      # host.docker.internal resolves to the Docker host from inside a container
+      - name: ZAP baseline scan
+        run: |
+          docker run --rm \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://host.docker.internal:4173 \
+            -I
+        continue-on-error: true
+
+      - name: Stop preview server
+        if: always()
+        run: pkill -f "vite preview" || true
+
+# ── Trigger backend CI (main only, after all gates pass) ─────────────────────
+
+  trigger-backend:
+    name: Trigger backend CI
+    needs: [lint, test, quality, sast, dast]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    steps:
+      - name: Dispatch frontend-push event to clockwise-like
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.BACKEND_REPO_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/Enach/clockwise-like/dispatches \
+            -d '{"event_type":"frontend-push","client_payload":{"sha":"${{ github.sha }}"}}'
