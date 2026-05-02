@@ -285,13 +285,12 @@ export default function Dashboard() {
           : isPersonal
             ? "#6B7280"
             : e.color || "#3B82F6";
-        const displayTitle = isFocus
-          ? `🎯 ${(e.title ?? "").replace(/^🎯\s*/, "")}`
-          : isPersonal
-            ? `🏠 ${(e.title ?? "").replace(/^🏠\s*/, "")}`
-            : (e.title ?? "");
+        const cleanTitle = (e.title ?? "").replace(/^(🎯|🏠)\s*/, "");
+        const displayTitle = isFocus ? `🎯 ${cleanTitle}` : isPersonal ? `🏠 ${cleanTitle}` : cleanTitle;
         // Soften the fill so the colored accent bar pops while keeping the chip readable
         const bg = `${color}26`; // ~15% alpha
+        const durationMin =
+          (new Date(e.end).getTime() - new Date(e.start).getTime()) / 60000;
         return {
           id: e.id,
           title: displayTitle,
@@ -301,7 +300,14 @@ export default function Dashboard() {
           borderColor: color,
           textColor: color,
           editable: !isFocus && !isPersonal,
-          extendedProps: { raw: e, isFocus, isPersonal, accent: color },
+          extendedProps: {
+            raw: e,
+            isFocus,
+            isPersonal,
+            accent: color,
+            durationMin,
+            cleanTitle,
+          },
         };
       }),
     [events, settings],
