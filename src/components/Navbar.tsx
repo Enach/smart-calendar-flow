@@ -128,6 +128,32 @@ export function Navbar({
               <span className="hidden sm:inline">Settings</span>
             </Link>
           )}
+          {signedIn && (
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="ml-1 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card text-xs font-semibold text-foreground transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Account menu"
+              >
+                {initials || "U"}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="flex flex-col gap-0.5">
+                  <span className="text-sm font-medium text-foreground">{displayName}</span>
+                  {user?.email && (
+                    <span className="text-xs font-normal text-muted-foreground">{user.email}</span>
+                  )}
+                  {isDemo && !user && (
+                    <span className="text-xs font-normal text-muted-foreground">Demo session</span>
+                  )}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={handleLogout} className="cursor-pointer text-foreground">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  {isDemo ? "Exit demo" : "Log out"}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
     </header>
