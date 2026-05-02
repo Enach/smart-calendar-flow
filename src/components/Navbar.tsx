@@ -1,7 +1,15 @@
-import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2, Users } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2, Users, LogOut } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 
 interface NavbarProps {
