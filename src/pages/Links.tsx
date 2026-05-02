@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity, Repeat, Zap } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -86,7 +86,7 @@ function UsageBadge({ link }: { link: SchedulingLink }) {
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-      <Infinity className="h-3 w-3" /> Reusable
+      <InfinityIcon className="h-3 w-3" /> Reusable
     </span>
   );
 }
