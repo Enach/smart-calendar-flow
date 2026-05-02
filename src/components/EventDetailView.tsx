@@ -219,17 +219,42 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
           </div>
         )}
 
-        {description && (
+        {hasDescriptionLines && parsedDescription && (
           <div>
             <p className="mb-1 text-xs font-medium text-muted-foreground">Description</p>
-            <p
+            <div
               className={
-                "whitespace-pre-wrap text-sm text-foreground " +
-                (showFullDescription ? "" : "line-clamp-3")
+                "space-y-1 text-sm leading-relaxed text-foreground " +
+                (showFullDescription || !longDescription
+                  ? ""
+                  : "max-h-[4.5rem] overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")
               }
             >
-              {description}
-            </p>
+              {parsedDescription.lines.map((line, i) =>
+                line.length === 0 ? (
+                  <div key={i} className="h-2" />
+                ) : (
+                  <p key={i} className="whitespace-pre-wrap break-words">
+                    {line.map((node, j) =>
+                      node.type === "text" ? (
+                        <span key={j}>{node.value}</span>
+                      ) : (
+                        <a
+                          key={j}
+                          href={node.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex max-w-full items-center gap-1 break-all text-primary hover:underline"
+                        >
+                          <Link2 className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{node.label}</span>
+                        </a>
+                      ),
+                    )}
+                  </p>
+                ),
+              )}
+            </div>
             {longDescription && (
               <button
                 type="button"
@@ -241,6 +266,7 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
             )}
           </div>
         )}
+
 
         {!isFocus && !isPersonal && (
           isParticipantOnly ? (
