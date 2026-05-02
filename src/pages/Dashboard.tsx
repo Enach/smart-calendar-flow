@@ -278,18 +278,18 @@ export default function Dashboard() {
       events.map((e) => {
         const isFocus =
           e.is_focus_block ||
-          (settings && e.title.toLowerCase().includes((settings.focus_label || "focus").toLowerCase()));
-        const isPersonal = !!e.is_personal_block || /personal time/i.test(e.title);
+          (settings && e.title?.toLowerCase().includes((settings.focus_label || "focus").toLowerCase()));
+        const isPersonal = !!e.is_personal_block || /personal time/i.test(e.title ?? "");
         const color = isFocus
           ? settings?.focus_color || e.color || "#7C3AED"
           : isPersonal
             ? "#6B7280"
             : e.color || "#3B82F6";
         const displayTitle = isFocus
-          ? `🎯 ${e.title.replace(/^🎯\s*/, "")}`
+          ? `🎯 ${(e.title ?? "").replace(/^🎯\s*/, "")}`
           : isPersonal
-            ? `🏠 ${e.title.replace(/^🏠\s*/, "")}`
-            : e.title;
+            ? `🏠 ${(e.title ?? "").replace(/^🏠\s*/, "")}`
+            : (e.title ?? "");
         // Soften the fill so the colored accent bar pops while keeping the chip readable
         const bg = `${color}26`; // ~15% alpha
         return {

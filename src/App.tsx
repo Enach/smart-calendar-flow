@@ -11,6 +11,7 @@ import Team from "./pages/Team";
 import Onboarding from "./pages/Onboarding";
 import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";
+import Logout from "./pages/Logout";
 import { ToastViewport } from "./components/Toast";
 import { AuthProvider } from "./contexts/AuthContext";
 import { RequireAuth } from "./components/RequireAuth";
@@ -71,6 +72,7 @@ const App = () => (
               </RequireAuth>
             }
           />
+          <Route path="/logout" element={<Logout />} />
           <Route path="/book/:slug" element={<PublicBooking />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
