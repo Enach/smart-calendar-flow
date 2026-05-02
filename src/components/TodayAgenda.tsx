@@ -1,8 +1,10 @@
 import type { CalendarEvent } from "@/api/types";
-import { CalendarCheck2, Sparkles } from "lucide-react";
+import { CalendarCheck2, Sparkles, Users } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
+import { useAuth } from "@/contexts/AuthContext";
+import { getEventOwnership } from "@/lib/eventOwnership";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
@@ -17,6 +19,7 @@ function fmt(iso: string) {
 }
 
 export function TodayAgenda({ events, loading, error, onRetry, retrying }: TodayAgendaProps) {
+  const { user } = useAuth();
   const today = new Date();
   const now = today.getTime();
   const todays = events
@@ -82,6 +85,7 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
           {todays.map((e) => {
             const isNext = e.id === nextUp?.id;
             const isPast = new Date(e.end).getTime() <= now;
+            const isGuest = getEventOwnership(e, user?.email) === "participant";
             return (
               <li
                 key={e.id}
@@ -95,9 +99,15 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {e.is_focus_block && <span className="mr-1">🎯</span>}
-                      {e.title}
+                    <p className="flex min-w-0 items-center gap-1.5 truncate text-sm font-medium text-foreground">
+                      {e.is_focus_block && <span className="mr-0.5">🎯</span>}
+                      <span className="truncate">{e.title}</span>
+                      {isGuest && (
+                        <Users
+                          className="h-3 w-3 shrink-0 text-[#9B7AE0]"
+                          aria-label="You're a guest on this meeting"
+                        />
+                      )}
                     </p>
                     {isNext && (
                       <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
