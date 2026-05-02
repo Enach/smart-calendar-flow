@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { CalendarClock, Crown, ExternalLink, MapPin, Pencil, Users, Video, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CalendarClock, Crown, ExternalLink, Link2, MapPin, Pencil, Users, Video, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RescheduleSuggestions } from "@/components/RescheduleSuggestions";
 import { OwnershipPill, ParticipantNotice } from "@/components/EventOwnership";
 import { useAuth } from "@/contexts/AuthContext";
 import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
+import { parseDescription } from "@/lib/eventDescription";
 import type { Attendee, CalendarEvent } from "@/api/types";
 
 const RSVP_LABEL: Record<string, string> = {
