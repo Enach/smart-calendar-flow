@@ -340,10 +340,10 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
           {/* Calendar */}
-          <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+          <section className="overflow-hidden rounded-2xl border border-border bg-card">
             {/* Calendar toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card/60 px-4 py-3">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 sm:px-5">
+              <div className="flex items-center gap-3">
                 <div
                   role="group"
                   aria-label="Calendar navigation"
@@ -379,7 +379,9 @@ export default function Dashboard() {
                     Today
                   </button>
                 )}
-                <p className="ml-1 text-sm font-semibold text-foreground">{titleLabel || "Calendar"}</p>
+                <h2 className="font-serif text-xl leading-none tracking-tight text-foreground sm:text-[22px]">
+                  {titleLabel || "Calendar"}
+                </h2>
               </div>
               <div
                 role="group"
@@ -402,7 +404,7 @@ export default function Dashboard() {
                       className={
                         "rounded-md px-3 py-1 text-xs font-medium transition " +
                         (active
-                          ? "bg-primary text-primary-foreground shadow-sm"
+                          ? "bg-foreground text-background shadow-sm"
                           : "text-muted-foreground hover:bg-muted hover:text-foreground")
                       }
                     >

@@ -1,4 +1,5 @@
 import type { CalendarEvent } from "@/api/types";
+import { CalendarCheck2, Sparkles } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
@@ -17,6 +18,7 @@ function fmt(iso: string) {
 
 export function TodayAgenda({ events, loading, error, onRetry, retrying }: TodayAgendaProps) {
   const today = new Date();
+  const now = today.getTime();
   const todays = events
     .filter((e) => {
       const d = new Date(e.start);
@@ -29,14 +31,21 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
     .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   const showSkeleton = useDebouncedFlag(!!loading && events.length === 0 && !error);
 
+  const nextUp = todays.find((e) => new Date(e.end).getTime() > now);
+
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-      <h3 className="mb-3 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        <span>Today</span>
-        <span className="text-[11px] font-medium normal-case tracking-normal text-muted-foreground/70">
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <CalendarCheck2 className="h-3.5 w-3.5 text-muted-foreground" />
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Today
+          </h3>
+        </div>
+        <span className="text-[11px] font-medium text-muted-foreground/80">
           {today.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
         </span>
-      </h3>
+      </div>
 
       {error && events.length === 0 ? (
         <InlineError
@@ -63,30 +72,46 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
           <div className="h-[88px]" aria-busy="true" aria-live="polite" />
         )
       ) : todays.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border p-4 text-center">
-          <p className="text-sm text-muted-foreground">
-            No meetings today — enjoy your focus time! 🎉
-          </p>
+        <div className="rounded-lg border border-dashed border-border bg-background/50 px-4 py-6 text-center">
+          <Sparkles className="mx-auto mb-2 h-4 w-4 text-primary/70" aria-hidden="true" />
+          <p className="text-sm font-medium text-foreground">No meetings today</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">A clear runway for focus.</p>
         </div>
       ) : (
-        <ul className="space-y-2">
-          {todays.map((e) => (
-            <li key={e.id} className="flex items-start gap-3 rounded-lg p-2 transition hover:bg-muted/60">
-              <span
-                className="mt-1.5 h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: e.color || "#6366F1" }}
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {e.is_focus_block && <span className="mr-1">🎯</span>}
-                  {e.title}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {fmt(e.start)} – {fmt(e.end)}
-                </p>
-              </div>
-            </li>
-          ))}
+        <ul className="space-y-1">
+          {todays.map((e) => {
+            const isNext = e.id === nextUp?.id;
+            const isPast = new Date(e.end).getTime() <= now;
+            return (
+              <li
+                key={e.id}
+                className={`group relative flex items-start gap-3 rounded-lg px-2 py-1.5 transition hover:bg-muted/60 ${
+                  isPast ? "opacity-55" : ""
+                }`}
+              >
+                <span
+                  className="mt-1.5 h-2 w-2 shrink-0 rounded-full ring-2 ring-card"
+                  style={{ backgroundColor: e.color || "hsl(var(--primary))" }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline gap-2">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {e.is_focus_block && <span className="mr-1">🎯</span>}
+                      {e.title}
+                    </p>
+                    {isNext && (
+                      <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
+                        Next
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {fmt(e.start)} – {fmt(e.end)}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
