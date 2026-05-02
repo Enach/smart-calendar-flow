@@ -461,6 +461,38 @@ export default function Dashboard() {
                   expandRows
                   height="auto"
                   contentHeight={680}
+                  slotEventOverlap={false}
+                  eventMinHeight={22}
+                  eventShortHeight={30}
+                  eventContent={(arg) => {
+                    const ext = arg.event.extendedProps as {
+                      durationMin?: number;
+                      cleanTitle?: string;
+                      isFocus?: boolean;
+                      isPersonal?: boolean;
+                    };
+                    const isShort = (ext.durationMin ?? 60) <= 30;
+                    const startStr = arg.event.start
+                      ? arg.event.start.toLocaleTimeString(undefined, {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "";
+                    return (
+                      <div className="pd-event">
+                        <div className="pd-event-title" title={arg.event.title}>
+                          {arg.event.title}
+                        </div>
+                        {!isShort && (
+                          <div className="pd-event-time">{startStr}</div>
+                        )}
+                      </div>
+                    );
+                  }}
+                  eventDidMount={(info) => {
+                    // Native browser tooltip — guarantees full title is always reachable.
+                    info.el.setAttribute("title", info.event.title);
+                  }}
                   views={{
                     timeGridDay: {
                       titleFormat: { weekday: "long", month: "long", day: "numeric", year: "numeric" },
