@@ -49,12 +49,12 @@ export function setMockMode(v: boolean) {
   usingMocks = v;
   try {
     sessionStorage.setItem(PROVIDER_KEY, v ? "1" : "0");
-  } catch {}
+  } catch { /* storage unavailable */ }
   mockListeners.forEach((cb) => cb(v));
 }
 try {
   usingMocks = sessionStorage.getItem(PROVIDER_KEY) === "1";
-} catch {}
+} catch { /* storage unavailable */ }
 
 const DEFAULT_SETTINGS: Settings = {
   work_start: "09:00",
