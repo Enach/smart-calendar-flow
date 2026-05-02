@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { CalendarClock, Crown, ExternalLink, MapPin, Pencil, Users, Video, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { CalendarClock, Crown, ExternalLink, Link2, MapPin, Pencil, Users, Video, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RescheduleSuggestions } from "@/components/RescheduleSuggestions";
 import { OwnershipPill, ParticipantNotice } from "@/components/EventOwnership";
 import { useAuth } from "@/contexts/AuthContext";
 import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
+import { parseDescription } from "@/lib/eventDescription";
 import type { Attendee, CalendarEvent } from "@/api/types";
 
 const RSVP_LABEL: Record<string, string> = {
@@ -57,7 +58,18 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
   const isPersonal = !!event.is_personal_block;
   const participants = attendeesToDetails(event);
   const description = event.description?.trim() ?? "";
-  const longDescription = description.split(/\r?\n/).length > 3 || description.length > 220;
+  const parsedDescription = useMemo(
+    () => (description ? parseDescription(description, event.conference?.url) : null),
+    [description, event.conference?.url],
+  );
+  const hasDescriptionLines = !!parsedDescription && parsedDescription.lines.length > 0;
+  const longDescription =
+    !!parsedDescription &&
+    (parsedDescription.lines.length > 3 ||
+      parsedDescription.lines.reduce(
+        (acc, l) => acc + l.reduce((a, n) => a + (n.type === "text" ? n.value.length : n.label.length), 0),
+        0,
+      ) > 220);
   const ownership = getEventOwnership(event, user?.email);
   const organizer = getEventOrganizer(event);
   const isParticipantOnly = ownership === "participant";
@@ -207,17 +219,42 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
           </div>
         )}
 
-        {description && (
+        {hasDescriptionLines && parsedDescription && (
           <div>
             <p className="mb-1 text-xs font-medium text-muted-foreground">Description</p>
-            <p
+            <div
               className={
-                "whitespace-pre-wrap text-sm text-foreground " +
-                (showFullDescription ? "" : "line-clamp-3")
+                "space-y-1 text-sm leading-relaxed text-foreground " +
+                (showFullDescription || !longDescription
+                  ? ""
+                  : "max-h-[4.5rem] overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")
               }
             >
-              {description}
-            </p>
+              {parsedDescription.lines.map((line, i) =>
+                line.length === 0 ? (
+                  <div key={i} className="h-2" />
+                ) : (
+                  <p key={i} className="whitespace-pre-wrap break-words">
+                    {line.map((node, j) =>
+                      node.type === "text" ? (
+                        <span key={j}>{node.value}</span>
+                      ) : (
+                        <a
+                          key={j}
+                          href={node.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex max-w-full items-center gap-1 break-all text-primary hover:underline"
+                        >
+                          <Link2 className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{node.label}</span>
+                        </a>
+                      ),
+                    )}
+                  </p>
+                ),
+              )}
+            </div>
             {longDescription && (
               <button
                 type="button"
@@ -229,6 +266,7 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
             )}
           </div>
         )}
+
 
         {!isFocus && !isPersonal && (
           isParticipantOnly ? (
