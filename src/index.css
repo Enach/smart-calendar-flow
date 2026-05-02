@@ -182,19 +182,79 @@
   .fc .fc-timegrid-event {
     box-shadow: 0 1px 2px hsl(var(--foreground) / 0.06);
     border-left: 3px solid currentColor !important;
+    /* Tighter inner padding so titles get more horizontal room */
+    padding: 0;
+    overflow: hidden;
   }
   .fc .fc-timegrid-event .fc-event-main {
-    @apply px-2 py-1;
+    padding: 0;
+    overflow: hidden;
   }
-  .fc .fc-event-title {
-    @apply text-[12px] font-semibold leading-tight;
+
+  /* Custom chip layout: title is the priority, time is secondary */
+  .fc .fc-timegrid-event .pd-event {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 3px 6px 3px 7px;
+    height: 100%;
+    overflow: hidden;
+    min-width: 0;
   }
-  .fc .fc-event-time {
-    @apply text-[10px] font-medium opacity-80;
+  .fc .fc-timegrid-event .pd-event-title {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    /* Allow up to 2 lines, then ellipsize — keeps title visible on packed weeks */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    word-break: break-word;
   }
+  .fc .fc-timegrid-event .pd-event-time {
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 1.1;
+    opacity: 0.75;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Very short events (≤30min): single line, no time, full chip is title */
+  .fc .fc-timegrid-event.fc-timegrid-event-short .pd-event {
+    flex-direction: row;
+    align-items: center;
+    padding: 1px 6px 1px 7px;
+  }
+  .fc .fc-timegrid-event.fc-timegrid-event-short .pd-event-title {
+    -webkit-line-clamp: 1;
+    font-size: 11.5px;
+  }
+  .fc .fc-timegrid-event.fc-timegrid-event-short .pd-event-time {
+    display: none;
+  }
+
+  /* Narrow chips (overlapping events): clamp title to 1 line so it stays readable */
+  @container (max-width: 110px) {
+    .fc .fc-timegrid-event .pd-event-title {
+      -webkit-line-clamp: 1;
+      font-size: 11px;
+    }
+    .fc .fc-timegrid-event .pd-event-time {
+      display: none;
+    }
+  }
+  .fc .fc-timegrid-event {
+    container-type: inline-size;
+  }
+
   .fc .fc-event:hover {
     @apply shadow-md;
     transform: translateY(-1px);
+    z-index: 5;
   }
 
   /* Now indicator */
