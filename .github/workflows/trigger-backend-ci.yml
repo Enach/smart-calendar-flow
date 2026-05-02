@@ -1,0 +1,26 @@
+name: Trigger backend CI
+
+# On every push to main, dispatch a repository_dispatch event to clockwise-like
+# so the frontend build/scan/push pipeline runs there with the latest source.
+#
+# Required secret in this repo: BACKEND_REPO_TOKEN
+# A GitHub PAT (classic: repo scope, or fine-grained: Actions write on
+# Enach/clockwise-like) stored under Settings → Secrets → Actions.
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  trigger:
+    name: Dispatch frontend-push to clockwise-like
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send repository_dispatch event
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.BACKEND_REPO_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/Enach/clockwise-like/dispatches \
+            -d '{"event_type":"frontend-push","client_payload":{"sha":"${{ github.sha }}"}}'
