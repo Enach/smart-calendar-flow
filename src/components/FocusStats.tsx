@@ -45,17 +45,20 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
   const dayMax = Math.max(dailyTargetMinutes, ...perDay, 1);
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+    <div className="rounded-xl border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Focus This Week
-        </h3>
-        <div
-          className="flex h-6 w-6 items-center justify-center rounded-md text-white"
-          style={{ backgroundColor: focusColor }}
-        >
-          <Target className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          <Target className="h-3.5 w-3.5" style={{ color: focusColor }} />
+          <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            Focus this week
+          </h3>
         </div>
+        <span
+          className="rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums"
+          style={{ backgroundColor: `${focusColor}1A`, color: focusColor }}
+        >
+          {pct}%
+        </span>
       </div>
 
       {isError && blocks.length === 0 ? (
