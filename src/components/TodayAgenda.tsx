@@ -19,6 +19,7 @@ function fmt(iso: string) {
 }
 
 export function TodayAgenda({ events, loading, error, onRetry, retrying }: TodayAgendaProps) {
+  const { user } = useAuth();
   const today = new Date();
   const now = today.getTime();
   const todays = events
