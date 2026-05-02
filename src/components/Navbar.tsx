@@ -48,9 +48,22 @@ export function Navbar({
   todayInRange = true,
   showSettingsLink = true,
 }: NavbarProps) {
-  const { user, isDemo } = useAuth();
+  const { user, isDemo, logout } = useAuth();
+  const navigate = useNavigate();
   const homeHref = user || isDemo ? "/app" : "/";
   const signedIn = Boolean(user || isDemo);
+  const displayName = user?.name || (isDemo ? "Demo" : "");
+  const initials = displayName
+    .split(" ")
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const handleLogout = async () => {
+    await logout();
+    navigate("/", { replace: true });
+  };
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">
       <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
