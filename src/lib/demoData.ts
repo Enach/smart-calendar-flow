@@ -98,6 +98,13 @@ export function seedDemoEvents() {
       end: end.toISOString(),
       color: ev.color,
       is_focus_block: isFocus || undefined,
+      attendees: ev.attendees?.map((a) => a.email),
+      attendee_details: ev.attendees?.map((a) => ({
+        email: a.email,
+        name: a.name,
+        organizer: a.organizer,
+        rsvp: "accepted" as const,
+      })),
     });
   }
 }
