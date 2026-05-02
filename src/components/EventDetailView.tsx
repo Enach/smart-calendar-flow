@@ -52,11 +52,15 @@ interface Props {
 
 export function EventDetailView({ event, events, workStart, workEnd, onEdit, onClose }: Props) {
   const [showFullDescription, setShowFullDescription] = useState(false);
+  const { user } = useAuth();
   const isFocus = !!event.is_focus_block;
   const isPersonal = !!event.is_personal_block;
   const participants = attendeesToDetails(event);
   const description = event.description?.trim() ?? "";
   const longDescription = description.split(/\r?\n/).length > 3 || description.length > 220;
+  const ownership = getEventOwnership(event, user?.email);
+  const organizer = getEventOrganizer(event);
+  const isParticipantOnly = ownership === "participant";
 
   return (
     <div className="flex h-full flex-col">
@@ -67,13 +71,16 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
             {isFocus ? "🎯 " : isPersonal ? "🏠 " : ""}
             {event.title}
           </h2>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarClock className="h-3.5 w-3.5" />
-            {formatRange(event.start, event.end)}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CalendarClock className="h-3.5 w-3.5" />
+              {formatRange(event.start, event.end)}
+            </p>
+            <OwnershipPill ownership={ownership} event={event} organizer={organizer} />
+          </div>
         </div>
         <div className="flex items-center gap-1">
-          {!isFocus && !isPersonal && (
+          {!isFocus && !isPersonal && !isParticipantOnly && (
             <button
               type="button"
               onClick={onEdit}
