@@ -19,16 +19,54 @@ interface DemoEventSpec {
   endM: number;
   title: string;
   color: string;
+  /**
+   * Attendees with explicit organizer flag. The string "me" is replaced with
+   * the demo user's email at seed time so ownership detection works.
+   */
+  attendees?: Array<{ email: string; name?: string; organizer?: boolean }>;
 }
 
+const ME = "alex@demo.paceday.com";
+
 const DEMO_EVENTS: DemoEventSpec[] = [
-  { id: "d1", dayOffset: 0, startH: 9, startM: 0, endH: 9, endM: 15, title: "Team standup", color: "#E9B949" },
+  {
+    id: "d1", dayOffset: 0, startH: 9, startM: 0, endH: 9, endM: 15,
+    title: "Team standup", color: "#E9B949",
+    attendees: [
+      { email: "priya@demo.paceday.com", name: "Priya Shah", organizer: true },
+      { email: ME, name: "Alex Demo" },
+      { email: "sarah@demo.paceday.com", name: "Sarah Chen" },
+      { email: "marcus@demo.paceday.com", name: "Marcus Lee" },
+    ],
+  },
   { id: "d2", dayOffset: 0, startH: 10, startM: 0, endH: 12, endM: 0, title: "Focus block — spec", color: "#5B7FFF" },
-  { id: "d3", dayOffset: 1, startH: 14, startM: 0, endH: 14, endM: 30, title: "1:1 with Sarah", color: "#E9B949" },
+  {
+    id: "d3", dayOffset: 1, startH: 14, startM: 0, endH: 14, endM: 30,
+    title: "1:1 with Sarah", color: "#E9B949",
+    attendees: [
+      { email: ME, name: "Alex Demo", organizer: true },
+      { email: "sarah@demo.paceday.com", name: "Sarah Chen" },
+    ],
+  },
   { id: "d4", dayOffset: 2, startH: 9, startM: 0, endH: 11, endM: 30, title: "Deep work — feature", color: "#5B7FFF" },
-  { id: "d5", dayOffset: 2, startH: 15, startM: 0, endH: 16, endM: 0, title: "Design review", color: "#E9B949" },
+  {
+    id: "d5", dayOffset: 2, startH: 15, startM: 0, endH: 16, endM: 0,
+    title: "Design review", color: "#E9B949",
+    attendees: [
+      { email: "jordan@demo.paceday.com", name: "Jordan Park", organizer: true },
+      { email: ME, name: "Alex Demo" },
+      { email: "sarah@demo.paceday.com", name: "Sarah Chen" },
+    ],
+  },
   { id: "d6", dayOffset: 3, startH: 10, startM: 0, endH: 12, endM: 0, title: "Focus block — writing", color: "#5B7FFF" },
-  { id: "d7", dayOffset: 4, startH: 10, startM: 0, endH: 11, endM: 0, title: "All-hands", color: "#9B7AE0" },
+  {
+    id: "d7", dayOffset: 4, startH: 10, startM: 0, endH: 11, endM: 0,
+    title: "All-hands", color: "#9B7AE0",
+    attendees: [
+      { email: "ceo@demo.paceday.com", name: "Dana Rivera", organizer: true },
+      { email: ME, name: "Alex Demo" },
+    ],
+  },
 ];
 
 function startOfWeek(d: Date) {
