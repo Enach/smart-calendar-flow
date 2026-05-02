@@ -14,7 +14,7 @@ on:
 jobs:
   trigger:
     name: Dispatch frontend-push to clockwise-like
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Send repository_dispatch event
         run: |
