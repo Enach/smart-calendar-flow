@@ -58,7 +58,18 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
   const isPersonal = !!event.is_personal_block;
   const participants = attendeesToDetails(event);
   const description = event.description?.trim() ?? "";
-  const longDescription = description.split(/\r?\n/).length > 3 || description.length > 220;
+  const parsedDescription = useMemo(
+    () => (description ? parseDescription(description, event.conference?.url) : null),
+    [description, event.conference?.url],
+  );
+  const hasDescriptionLines = !!parsedDescription && parsedDescription.lines.length > 0;
+  const longDescription =
+    !!parsedDescription &&
+    (parsedDescription.lines.length > 3 ||
+      parsedDescription.lines.reduce(
+        (acc, l) => acc + l.reduce((a, n) => a + (n.type === "text" ? n.value.length : n.label.length), 0),
+        0,
+      ) > 220);
   const ownership = getEventOwnership(event, user?.email);
   const organizer = getEventOrganizer(event);
   const isParticipantOnly = ownership === "participant";
