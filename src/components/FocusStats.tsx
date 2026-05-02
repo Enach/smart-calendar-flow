@@ -89,12 +89,12 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         )
       ) : (
         <>
-          <p className="text-2xl font-semibold tracking-tight text-foreground">{fmtHM(totalMin)}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            of {fmtHM(weeklyTarget)} target ({pct}%)
+          <p className="font-serif text-[28px] leading-none tracking-tight text-foreground">{fmtHM(totalMin)}</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            of {fmtHM(weeklyTarget)} weekly target
           </p>
 
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
             <div
               className="h-full rounded-full transition-all"
               style={{ width: `${pct}%`, backgroundColor: focusColor }}
