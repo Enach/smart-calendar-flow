@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { CalendarClock, ExternalLink, MapPin, Pencil, Users, Video, X } from "lucide-react";
+import { CalendarClock, Crown, ExternalLink, MapPin, Pencil, Users, Video, X } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RescheduleSuggestions } from "@/components/RescheduleSuggestions";
+import { OwnershipPill, ParticipantNotice } from "@/components/EventOwnership";
+import { useAuth } from "@/contexts/AuthContext";
+import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
 import type { Attendee, CalendarEvent } from "@/api/types";
 
 const RSVP_LABEL: Record<string, string> = {
@@ -49,11 +52,15 @@ interface Props {
 
 export function EventDetailView({ event, events, workStart, workEnd, onEdit, onClose }: Props) {
   const [showFullDescription, setShowFullDescription] = useState(false);
+  const { user } = useAuth();
   const isFocus = !!event.is_focus_block;
   const isPersonal = !!event.is_personal_block;
   const participants = attendeesToDetails(event);
   const description = event.description?.trim() ?? "";
   const longDescription = description.split(/\r?\n/).length > 3 || description.length > 220;
+  const ownership = getEventOwnership(event, user?.email);
+  const organizer = getEventOrganizer(event);
+  const isParticipantOnly = ownership === "participant";
 
   return (
     <div className="flex h-full flex-col">
@@ -64,13 +71,16 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
             {isFocus ? "🎯 " : isPersonal ? "🏠 " : ""}
             {event.title}
           </h2>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarClock className="h-3.5 w-3.5" />
-            {formatRange(event.start, event.end)}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CalendarClock className="h-3.5 w-3.5" />
+              {formatRange(event.start, event.end)}
+            </p>
+            <OwnershipPill ownership={ownership} event={event} organizer={organizer} />
+          </div>
         </div>
         <div className="flex items-center gap-1">
-          {!isFocus && !isPersonal && (
+          {!isFocus && !isPersonal && !isParticipantOnly && (
             <button
               type="button"
               onClick={onEdit}
@@ -155,27 +165,44 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
               {participants.length} participant{participants.length === 1 ? "" : "s"}
             </p>
             <ul className="space-y-1.5">
-              {participants.map((p) => (
-                <li
-                  key={p.email}
-                  className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-muted/50"
-                >
-                  <Avatar className="h-7 w-7">
-                    <AvatarFallback className="bg-primary-muted text-[10px] font-semibold text-accent-foreground">
-                      {initials(p)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm text-foreground">{p.name || p.email}</p>
-                    {p.name && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
-                  </div>
-                  {p.rsvp && (
-                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RSVP_COLOR[p.rsvp]}`}>
-                      {RSVP_LABEL[p.rsvp]}
-                    </span>
-                  )}
-                </li>
-              ))}
+              {participants.map((p) => {
+                const isMe = user?.email && p.email.toLowerCase() === user.email.toLowerCase();
+                return (
+                  <li
+                    key={p.email}
+                    className="flex items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-muted/50"
+                  >
+                    <Avatar className="h-7 w-7">
+                      <AvatarFallback className="bg-primary-muted text-[10px] font-semibold text-accent-foreground">
+                        {initials(p)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate text-sm text-foreground">
+                          {p.name || p.email}
+                          {isMe && <span className="ml-1 text-muted-foreground">(you)</span>}
+                        </p>
+                        {p.organizer && (
+                          <span
+                            className="inline-flex items-center gap-0.5 rounded bg-[#E9B949]/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#8A6A14]"
+                            title="Meeting organizer"
+                          >
+                            <Crown className="h-2.5 w-2.5" />
+                            Host
+                          </span>
+                        )}
+                      </div>
+                      {p.name && <p className="truncate text-[11px] text-muted-foreground">{p.email}</p>}
+                    </div>
+                    {p.rsvp && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${RSVP_COLOR[p.rsvp]}`}>
+                        {RSVP_LABEL[p.rsvp]}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -204,13 +231,17 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
         )}
 
         {!isFocus && !isPersonal && (
-          <RescheduleSuggestions
-            event={event}
-            events={events}
-            workStart={workStart}
-            workEnd={workEnd}
-            onMoved={onClose}
-          />
+          isParticipantOnly ? (
+            <ParticipantNotice event={event} organizer={organizer} />
+          ) : (
+            <RescheduleSuggestions
+              event={event}
+              events={events}
+              workStart={workStart}
+              workEnd={workEnd}
+              onMoved={onClose}
+            />
+          )
         )}
       </div>
     </div>
