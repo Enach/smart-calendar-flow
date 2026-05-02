@@ -231,13 +231,17 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
         )}
 
         {!isFocus && !isPersonal && (
-          <RescheduleSuggestions
-            event={event}
-            events={events}
-            workStart={workStart}
-            workEnd={workEnd}
-            onMoved={onClose}
-          />
+          isParticipantOnly ? (
+            <ParticipantNotice event={event} organizer={organizer} />
+          ) : (
+            <RescheduleSuggestions
+              event={event}
+              events={events}
+              workStart={workStart}
+              workEnd={workEnd}
+              onMoved={onClose}
+            />
+          )
         )}
       </div>
     </div>
