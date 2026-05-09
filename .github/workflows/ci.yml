@@ -1,7 +1,8 @@
 name: CI
 
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -38,7 +39,9 @@ jobs:
       - run: bun add -d @vitest/coverage-v8
       - run: bunx vitest run --shard=${{ matrix.shard }}/3 --coverage --coverage.reportsDirectory=coverage-${{ matrix.shard }} --coverage.reporter=json-summary --coverage.reporter=text
       - uses: actions/upload-artifact@v4
-        with: { name: coverage-${{ matrix.shard }}, path: coverage-${{ matrix.shard }} }
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: coverage-${{ matrix.shard }}
 
   coverage:
     runs-on: [self-hosted, linux, x64]
@@ -46,27 +49,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { pattern: coverage-*, merge-multiple: true, path: coverage-merged }
-      - name: Enforce >=70% lines coverage
+        with:
+          pattern: coverage-*
+          merge-multiple: true
+          path: coverage-merged
+      - name: Enforce coverage gate
         shell: bash
         run: |
-          python3 - <<'PY'
-          import json, glob, sys
-          totals = {"lines": {"covered": 0, "total": 0}}
-          for f in glob.glob("coverage-merged/**/coverage-summary.json", recursive=True) + glob.glob("coverage-merged/coverage-summary.json"):
-              with open(f) as fh:
-                  data = json.load(fh)
-              t = data.get("total", {}).get("lines", {})
-              totals["lines"]["covered"] += t.get("covered", 0)
-              totals["lines"]["total"] += t.get("total", 0)
-          if totals["lines"]["total"] == 0:
-              print("No coverage summary found; skipping (no tests yet).")
-              sys.exit(0)
-          pct = 100 * totals["lines"]["covered"] / totals["lines"]["total"]
-          print(f"Line coverage: {pct:.2f}% ({totals['lines']['covered']}/{totals['lines']['total']})")
-          if pct < 70:
-              sys.exit(1)
-          PY
+          if [ ! -f coverage-merged/coverage-summary.json ]; then
+            echo "No coverage-summary.json found; skipping (no tests yet)."
+            exit 0
+          fi
+          PCT=$(node -e "const d=require('./coverage-merged/coverage-summary.json'); console.log(d.total.lines.pct)")
+          echo "Lines coverage: ${PCT}%"
+          awk -v p="$PCT" 'BEGIN{ exit (p+0 < 70) }'
 
   build:
     runs-on: [self-hosted, linux, x64]

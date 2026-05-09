@@ -1,7 +1,8 @@
 name: Security
 
 on:
-  push: { branches: [main] }
+  push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "0 6 * * 1"
@@ -27,7 +28,8 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,4 +68,6 @@ jobs:
           format: cyclonedx-json
           output-file: sbom.cdx.json
       - uses: actions/upload-artifact@v4
-        with: { name: sbom, path: sbom.cdx.json }
+        with:
+          name: sbom
+          path: sbom.cdx.json
