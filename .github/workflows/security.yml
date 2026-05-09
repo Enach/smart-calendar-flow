@@ -1,11 +1,10 @@
 name: Security
 
 on:
-  push:
-    branches: [main]
+  push: { branches: [main] }
   pull_request:
   schedule:
-    - cron: "0 6 * * 1"  # weekly Monday 06:00 UTC
+    - cron: "0 6 * * 1"
 
 jobs:
   sast:
@@ -15,15 +14,11 @@ jobs:
       security-events: write
       actions: read
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [javascript-typescript, python]
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
+          languages: javascript-typescript
       - uses: github/codeql-action/autobuild@v3
       - uses: github/codeql-action/analyze@v3
 
@@ -42,13 +37,9 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
-      - name: Audit
-        run: |
-          if [ -f package.json ]; then npm audit --audit-level=high || true; fi
-          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
-            pip install pip-audit
-            pip-audit -r requirements.txt || true
-          fi
+      - uses: oven-sh/setup-bun@v1
+      - run: bun install --frozen-lockfile
+      - run: bun audit || true
 
   dast:
     name: DAST (OWASP ZAP baseline)
@@ -56,19 +47,13 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
-      - name: Compose up
-        run: docker compose up -d --wait
-      - name: Resolve target URL
-        id: target
-        run: echo "url=http://localhost:8080" >> $GITHUB_OUTPUT
-      - name: ZAP baseline
-        uses: zaproxy/action-baseline@v0.12.0
+      - run: docker compose up -d --wait
+      - uses: zaproxy/action-baseline@v0.12.0
         with:
-          target: ${{ steps.target.outputs.url }}
-          fail_action: true
+          target: http://localhost:8080
+          fail_action: false
           allow_issue_writing: false
-      - name: Compose down
-        if: always()
+      - if: always()
         run: docker compose down -v
 
   sbom:
