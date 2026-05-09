@@ -1,0 +1,84 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly Monday 06:00 UTC
+
+jobs:
+  sast:
+    name: SAST (CodeQL)
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, python]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/analyze@v3
+
+  secrets:
+    name: Secret scan (gitleaks)
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deps:
+    name: Dependency audit
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit
+        run: |
+          if [ -f package.json ]; then npm audit --audit-level=high || true; fi
+          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+            pip install pip-audit
+            pip-audit -r requirements.txt || true
+          fi
+
+  dast:
+    name: DAST (OWASP ZAP baseline)
+    runs-on: [self-hosted, linux, x64]
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose up
+        run: docker compose up -d --wait
+      - name: Resolve target URL
+        id: target
+        run: echo "url=http://localhost:8080" >> $GITHUB_OUTPUT
+      - name: ZAP baseline
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ steps.target.outputs.url }}
+          fail_action: true
+          allow_issue_writing: false
+      - name: Compose down
+        if: always()
+        run: docker compose down -v
+
+  sbom:
+    name: SBOM
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: sbom.cdx.json }

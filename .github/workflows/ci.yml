@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+
+  typecheck:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+
+  unit:
+    runs-on: [self-hosted, linux, x64]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx vitest run --shard=${{ matrix.shard }}/3 --coverage --coverage.reportsDirectory=coverage-${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with: { name: coverage-${{ matrix.shard }}, path: coverage-${{ matrix.shard }} }
+
+  coverage:
+    runs-on: [self-hosted, linux, x64]
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/download-artifact@v4
+        with: { pattern: coverage-*, merge-multiple: true, path: coverage-merged }
+      - name: Enforce ≥70% coverage
+        run: |
+          bun add -d nyc
+          bunx nyc merge coverage-merged .nyc/out.json
+          bunx nyc report --temp-dir .nyc --reporter=text --check-coverage --lines 70
+
+  build:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build -t smart-calendar-flow:${{ github.sha }} .
+
+  integration:
+    runs-on: [self-hosted, linux, x64]
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --wait
+      - name: Smoke
+        run: curl -fsS http://localhost:8080/ > /dev/null
+      - if: always()
+        run: docker compose down -v
