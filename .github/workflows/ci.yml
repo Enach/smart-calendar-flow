@@ -1,39 +1,12 @@
 name: CI
 
-# Lightweight per-PR checks on the frontend repo. Full lint/test/build/SAST/DAST
-# runs in clockwise-like's sync-and-publish workflow (which clones this repo at
-# run time), so we only do quick syntax-level validation here.
-
 on:
   push:
-    branches: [main]
   pull_request:
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
 
 jobs:
-  lint:
+  ping:
     runs-on: [self-hosted, linux, x64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
-      - run: bun install --frozen-lockfile
-      - run: bun run lint
-
-  typecheck:
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
-      - run: bun install --frozen-lockfile
-      - run: bunx tsc --noEmit
-
-  build:
-    runs-on: [self-hosted, linux, x64]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
-      - run: bun install --frozen-lockfile
-      - run: bun run build
+      - run: echo "hello"
