@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Agent-team additions
+.env
+.env.*
+!.env.example
+coverage*/
+.nyc_output/
+*.cdx.json
+sbom.cdx.json
