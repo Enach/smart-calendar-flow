@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ArrowDownRight, Minus, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -34,8 +35,13 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
   const [sub, setSub] = useState<SubTab>("week");
 
   // Data source preference: formal team if available, else manager team
+  const teamAnalyticsQ = useQuery({
+    queryKey: ["formal-team-analytics", activeTeam?.id],
+    queryFn: () => teamsApi.remote.teamAnalytics(activeTeam!.id),
+    enabled: !!activeTeam,
+  });
   const teamData = useMemo(() => {
-    if (activeTeam) return teamsApi.teamAnalytics(activeTeam.id);
+    if (activeTeam) return teamAnalyticsQ.data ?? [];
     return managerApi.listTeam().map((m) => {
       const a = managerApi.analytics(m.email);
       return {
@@ -45,7 +51,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
         weeks: a?.weeks ?? [],
       };
     });
-  }, [activeTeam]);
+  }, [activeTeam, teamAnalyticsQ.data]);
 
   const sourceLabel = activeTeam ? activeTeam.name : "your manager team";
 
@@ -228,7 +234,7 @@ function Trends({ data }: { data: RowData[] }) {
 
   // Trend arrows: compare last week vs avg of prior weeks per member
   const trends = data.map((d, idx) => {
-    const last = (metric === "focus" ? d.weeks.at(-1)?.focus_minutes : d.weeks.at(-1)?.meeting_minutes) ?? 0;
+    const last = (metric === "focus" ? d.weeks[d.weeks.length - 1]?.focus_minutes : d.weeks[d.weeks.length - 1]?.meeting_minutes) ?? 0;
     const prior = d.weeks.slice(-8, -1);
     const avg = prior.length
       ? prior.reduce((s, w) => s + (metric === "focus" ? w.focus_minutes : w.meeting_minutes), 0) / prior.length

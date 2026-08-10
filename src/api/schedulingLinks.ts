@@ -7,7 +7,7 @@
  * fully exercisable.
  */
 
-import { isUsingMocks, setMockMode } from "./client";
+import { requestApi, withFallback } from "./client";
 import type {
   BookingConfirmation,
   BookingSlot,
@@ -19,60 +19,111 @@ import type {
   Weekday,
 } from "./types";
 
-const API_BASE = "/api";
-const NETWORK_TIMEOUT_MS = 4000;
+type BackendSchedulingLink = {
+  id: string;
+  owner_id?: string;
+  owner_user_id?: string;
+  slug: string;
+  title: string;
+  durations?: number[];
+  duration_options?: number[];
+  days?: string[];
+  days_of_week?: number[];
+  window_start?: string;
+  window_start_time?: string;
+  window_end?: string;
+  window_end_time?: string;
+  buffer_before?: number;
+  buffer_after?: number;
+  min_notice_minutes?: number;
+  usage_type?: LinkUsageType;
+  max_uses?: number;
+  uses_count?: number;
+  active?: boolean;
+  created_at?: string;
+  is_owner?: boolean;
+  my_status?: "accepted" | "pending" | "declined";
+  hosts?: Array<{
+    user_id?: string;
+    email: string;
+    name?: string;
+    avatar_url?: string;
+    is_owner?: boolean;
+    status: string;
+  }>;
+};
 
-async function realFetch<T>(
-  method: string,
-  path: string,
-  body?: unknown,
-  query?: Record<string, string | undefined>,
-): Promise<T> {
-  const url = new URL(API_BASE + path, window.location.origin);
-  if (query) {
-    for (const [k, v] of Object.entries(query)) {
-      if (v != null && v !== "") url.searchParams.set(k, v);
-    }
-  }
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), NETWORK_TIMEOUT_MS);
-  try {
-    const res = await fetch(url.toString(), {
-      method,
-      signal: ctrl.signal,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-      credentials: "include",
-    });
-    // Surface a few client-side errors as real, typed errors so the UI can react.
-    if (res.status === 409 || res.status === 410 || res.status === 422) {
-      const err = new Error(`http_${res.status}`) as Error & { status: number };
-      err.status = res.status;
-      throw err;
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    if (res.status === 204) return undefined as T;
-    const ct = res.headers.get("content-type") || "";
-    if (!ct.includes("application/json")) throw new Error("Non-JSON response");
-    return (await res.json()) as T;
-  } finally {
-    clearTimeout(t);
-  }
+type BackendUser = { id: string; email: string; name?: string };
+type BackendPublicLink = {
+  slug: string; title: string; durations?: number[]; duration_options?: number[];
+  hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
+  min_notice_minutes?: number; usage_type?: LinkUsageType;
+  coverage?: { total: number; checked: number };
+};
+type BackendBooking = {
+  id: string; link_slug?: string; title?: string; start: string; end: string;
+  duration_minutes?: number; hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
+  booker_name: string; booker_email: string; notes?: string;
+};
+type BackendHostInvite = { link_id: string; link_title: string; owner_name: string; owner_email: string; invited_at: string };
+
+const WEEKDAY_BY_NUMBER: Record<number, Weekday> = { 0: "sun", 1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat" };
+const WEEKDAY_TO_NUMBER: Record<Weekday, number> = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
+
+function ownerHost(user: BackendUser): SchedulingHost {
+  return { user_id: user.id, email: user.email, name: user.name, is_owner: true, status: "accepted" };
 }
 
-async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
-  if (isUsingMocks()) return mock();
-  try {
-    const v = await real();
-    return v;
-  } catch (e) {
-    // Surface meaningful client errors (race / gone / unprocessable) — never mask with mock.
-    const status = (e as { status?: number })?.status;
-    if (status === 409 || status === 410 || status === 422) throw e;
-    setMockMode(true);
-    return mock();
-  }
+function normalizeSchedulingLink(raw: BackendSchedulingLink, user?: BackendUser): SchedulingLink {
+  const ownerID = raw.owner_id ?? raw.owner_user_id ?? "";
+  const owner = user && ownerID === user.id ? ownerHost(user) : undefined;
+  const hosts: SchedulingHost[] = (raw.hosts ?? []).map((host): SchedulingHost => ({
+    user_id: host.user_id,
+    email: host.email,
+    name: host.name,
+    avatar_url: host.avatar_url,
+    is_owner: host.is_owner ?? host.user_id === ownerID,
+    status: host.status === "accepted" ? "accepted" : host.status === "declined" ? "declined" : "pending",
+  }));
+  if (owner && !hosts.some((host) => host.user_id === user.id)) hosts.unshift(owner);
+  const durations = raw.durations ?? raw.duration_options ?? [30];
+  const days = raw.days ?? (raw.days_of_week ?? [1, 2, 3, 4, 5]).map((day) => WEEKDAY_BY_NUMBER[day]).filter(Boolean);
+  return {
+    id: raw.id, owner_id: ownerID, title: raw.title, slug: raw.slug,
+    durations: durations.length ? durations : [30],
+    days: days as Weekday[],
+    window_start: raw.window_start ?? raw.window_start_time ?? "09:00",
+    window_end: raw.window_end ?? raw.window_end_time ?? "17:00",
+    buffer_before: raw.buffer_before ?? 0, buffer_after: raw.buffer_after ?? 0,
+    min_notice_minutes: raw.min_notice_minutes ?? 0,
+    usage_type: raw.usage_type ?? "reusable",
+    max_uses: raw.max_uses,
+    uses_count: raw.uses_count ?? 0,
+    active: raw.active ?? true,
+    hosts, created_at: raw.created_at || new Date(0).toISOString(),
+    is_owner: raw.is_owner ?? owner != null,
+    my_status: raw.my_status ?? (owner ? "accepted" : undefined),
+  };
 }
+
+function backendLinkBody(input: {
+  title: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
+  buffer_before: number; buffer_after: number; min_notice_minutes?: number; usage_type?: LinkUsageType;
+  max_uses?: number; active?: boolean;
+}) {
+  return {
+    title: input.title, duration_options: input.durations, days_of_week: input.days.map((day) => WEEKDAY_TO_NUMBER[day]),
+    window_start_time: input.window_start, window_end_time: input.window_end,
+    buffer_before: input.buffer_before, buffer_after: input.buffer_after,
+    min_notice_minutes: input.min_notice_minutes ?? 0,
+    usage_type: input.usage_type ?? "reusable",
+    max_uses: input.max_uses,
+    ...(input.active === undefined ? {} : { active: input.active }),
+  };
+}
+
+
+const publicLinkCache = new Map<string, PublicLinkInfo>();
 
 // ---------- Mock state ----------
 
@@ -302,7 +353,14 @@ export const schedulingLinksApi = {
 
   listLinks: () =>
     withFallback<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(
-      () => realFetch("GET", "/scheduling-links"),
+      async () => {
+        const [raw, user] = await Promise.all([
+          requestApi<{ owned?: BackendSchedulingLink[]; shared?: BackendSchedulingLink[] }>("GET", "/scheduling-links/"),
+          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
+        ]);
+        const links = [...(raw.owned ?? []), ...(raw.shared ?? [])].map((link) => normalizeSchedulingLink(link, user));
+        return { owned: links.filter((link) => link.is_owner), shared: links.filter((link) => !link.is_owner) };
+      },
       () => ({
         owned: mockState.links.filter((l) => l.is_owner).map((l) => ({ ...l, hosts: [...l.hosts] })),
         shared: mockState.links.filter((l) => !l.is_owner).map((l) => ({ ...l, hosts: [...l.hosts] })),
@@ -311,13 +369,24 @@ export const schedulingLinksApi = {
 
   listInvites: () =>
     withFallback<CoHostInvite[]>(
-      () => realFetch("GET", "/scheduling-links/invites"),
+      async () => {
+        const [rawInvites] = await Promise.all([
+          requestApi<BackendHostInvite[]>("GET", "/scheduling-links/host-invites"),
+        ]);
+        return (rawInvites ?? []).map((invite) => ({
+          link_id: invite.link_id,
+          link_title: invite.link_title,
+          owner_name: invite.owner_name,
+          owner_email: invite.owner_email,
+          invited_at: invite.invited_at,
+        }));
+      },
       () => [...mockState.invites],
     ),
 
   acceptInvite: (linkId: string) =>
     withFallback<void>(
-      () => realFetch("POST", `/scheduling-links/${linkId}/accept`),
+      () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/accept`),
       () => {
         mockState.invites = mockState.invites.filter((i) => i.link_id !== linkId);
       },
@@ -325,94 +394,93 @@ export const schedulingLinksApi = {
 
   declineInvite: (linkId: string) =>
     withFallback<void>(
-      () => realFetch("POST", `/scheduling-links/${linkId}/decline`),
+      () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/decline`),
       () => {
         mockState.invites = mockState.invites.filter((i) => i.link_id !== linkId);
       },
     ),
 
   createLink: (input: {
-    title: string;
-    slug: string;
-    durations: number[];
-    days: Weekday[];
-    window_start: string;
-    window_end: string;
-    buffer_before: number;
-    buffer_after: number;
-    min_notice_minutes: number;
-    usage_type: LinkUsageType;
-    max_uses?: number;
-    co_host_emails: string[];
+    title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
+    buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
+    max_uses?: number; co_host_emails: string[];
   }) =>
     withFallback<SchedulingLink>(
-      () => realFetch("POST", "/scheduling-links", input),
+      async () => {
+        const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", backendLinkBody(input));
+        await Promise.allSettled(input.co_host_emails.map((email) =>
+          requestApi("POST", `/scheduling-links/${raw.id}/hosts`, { email }),
+        ));
+        const [user, detail] = await Promise.all([
+          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
+          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${raw.id}`),
+        ]);
+        const link = normalizeSchedulingLink(detail, user);
+        const existing = new Set(link.hosts.map((host) => host.email.toLowerCase()));
+        link.hosts.push(...input.co_host_emails.filter((email) => !existing.has(email.toLowerCase())).map((email) => buildHostFromEmail(email)));
+        return link;
+      },
       () => {
         const link: SchedulingLink = {
-          id: `lnk_${++mockState.nextId}`,
-          owner_id: ME_USER.id,
-          title: input.title,
-          slug: input.slug,
-          durations: input.durations,
-          days: input.days,
-          window_start: input.window_start,
-          window_end: input.window_end,
-          buffer_before: input.buffer_before,
-          buffer_after: input.buffer_after,
-          min_notice_minutes: input.min_notice_minutes,
-          usage_type: input.usage_type,
-          max_uses: input.usage_type === "recurring" ? input.max_uses : undefined,
-          uses_count: 0,
-          active: true,
-          hosts: [
-            makeOwnerHost(),
-            ...input.co_host_emails.map((e) => buildHostFromEmail(e, "pending")),
-          ],
-          created_at: new Date().toISOString(),
-          is_owner: true,
+          id: `lnk_${++mockState.nextId}`, owner_id: ME_USER.id, title: input.title, slug: input.slug,
+          durations: input.durations, days: input.days, window_start: input.window_start, window_end: input.window_end,
+          buffer_before: input.buffer_before, buffer_after: input.buffer_after, min_notice_minutes: input.min_notice_minutes,
+          usage_type: input.usage_type, max_uses: input.usage_type === "recurring" ? input.max_uses : undefined, uses_count: 0,
+          active: true, hosts: [makeOwnerHost(), ...input.co_host_emails.map((e) => buildHostFromEmail(e, "pending"))],
+          created_at: new Date().toISOString(), is_owner: true,
         };
         mockState.links.unshift(link);
         return { ...link, hosts: [...link.hosts] };
       },
     ),
 
-  updateLink: (
-    id: string,
-    input: Partial<{
-      title: string;
-      slug: string;
-      durations: number[];
-      days: Weekday[];
-      window_start: string;
-      window_end: string;
-      buffer_before: number;
-      buffer_after: number;
-      min_notice_minutes: number;
-      usage_type: LinkUsageType;
-      max_uses: number | undefined;
-      active: boolean;
-      co_host_emails: string[];
-    }>,
-  ) =>
+  updateLink: (id: string, input: Partial<{
+    title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
+    buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
+    max_uses: number | undefined; active: boolean; co_host_emails: string[];
+  }>) =>
     withFallback<SchedulingLink>(
-      () => realFetch("PATCH", `/scheduling-links/${id}`, input),
+      async () => {
+        const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
+        const body = backendLinkBody({
+          title: input.title ?? current.title,
+          durations: input.durations ?? current.durations ?? current.duration_options ?? [30],
+          days: (input.days ?? current.days ?? current.days_of_week?.map((day) => WEEKDAY_BY_NUMBER[day]).filter(Boolean) ?? ["mon", "tue", "wed", "thu", "fri"]) as Weekday[],
+          window_start: input.window_start ?? current.window_start ?? current.window_start_time ?? "09:00",
+          window_end: input.window_end ?? current.window_end ?? current.window_end_time ?? "17:00",
+          buffer_before: input.buffer_before ?? current.buffer_before ?? 0,
+          buffer_after: input.buffer_after ?? current.buffer_after ?? 0,
+          min_notice_minutes: input.min_notice_minutes ?? current.min_notice_minutes ?? 0,
+          usage_type: input.usage_type ?? current.usage_type ?? "reusable",
+          max_uses: input.max_uses ?? current.max_uses,
+          active: input.active,
+        });
+        await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
+        if (input.co_host_emails) {
+          await Promise.allSettled(input.co_host_emails.map((email) =>
+            requestApi("POST", `/scheduling-links/${id}/hosts`, { email }),
+          ));
+        }
+        const [user, detail] = await Promise.all([
+          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
+          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`),
+        ]);
+        const link = normalizeSchedulingLink(detail, user);
+        for (const email of input.co_host_emails ?? []) {
+          if (!link.hosts.some((host) => host.email.toLowerCase() === email.toLowerCase())) link.hosts.push(buildHostFromEmail(email));
+        }
+        return link;
+      },
       () => {
         const idx = mockState.links.findIndex((l) => l.id === id);
         if (idx < 0) throw new Error("not found");
         const current = mockState.links[idx];
         const updated: SchedulingLink = { ...current, ...input } as SchedulingLink;
-        // Drop max_uses when no longer recurring.
         if (input.usage_type && input.usage_type !== "recurring") updated.max_uses = undefined;
         if (input.co_host_emails) {
-          // Preserve already-known hosts (keep statuses) and add new pending ones.
           const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
           const byEmail = new Map(current.hosts.filter((h) => !h.is_owner).map((h) => [h.email.toLowerCase(), h]));
-          const nextHosts: SchedulingHost[] = [owner];
-          for (const e of input.co_host_emails) {
-            const existing = byEmail.get(e.toLowerCase());
-            nextHosts.push(existing ?? buildHostFromEmail(e, "pending"));
-          }
-          updated.hosts = nextHosts;
+          updated.hosts = [owner, ...input.co_host_emails.map((e) => byEmail.get(e.toLowerCase()) ?? buildHostFromEmail(e, "pending"))];
         }
         mockState.links[idx] = updated;
         return { ...updated, hosts: [...updated.hosts] };
@@ -421,7 +489,7 @@ export const schedulingLinksApi = {
 
   deleteLink: (id: string) =>
     withFallback<void>(
-      () => realFetch("DELETE", `/scheduling-links/${id}`),
+      () => requestApi("DELETE", `/scheduling-links/${id}`),
       () => {
         mockState.links = mockState.links.filter((l) => l.id !== id);
       },
@@ -429,7 +497,7 @@ export const schedulingLinksApi = {
 
   leaveLink: (id: string) =>
     withFallback<void>(
-      () => realFetch("POST", `/scheduling-links/${id}/leave`),
+      () => requestApi("POST", `/scheduling-links/${id}/leave`),
       () => {
         mockState.links = mockState.links.filter((l) => l.id !== id);
       },
@@ -439,7 +507,19 @@ export const schedulingLinksApi = {
 
   getPublicLink: (slug: string) =>
     withFallback<PublicLinkInfo>(
-      () => realFetch("GET", `/book/${slug}`),
+      async () => {
+        const raw = await requestApi<BackendPublicLink>("GET", `/book/${slug}`);
+        const info: PublicLinkInfo = {
+          slug: raw.slug, title: raw.title,
+          durations: (raw.durations ?? raw.duration_options ?? [30]).slice(),
+          hosts: raw.hosts ?? [],
+          min_notice_minutes: raw.min_notice_minutes,
+          usage_type: raw.usage_type,
+          coverage: raw.coverage,
+        };
+        publicLinkCache.set(slug, info);
+        return info;
+      },
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");
@@ -448,65 +528,58 @@ export const schedulingLinksApi = {
           err.status = 410;
           throw err;
         }
-        // Mock coverage: hosts on co.com / paceday domains are "checked".
-        // Personal-mail co-hosts (e.g. gmail.com) are not — surfaces the
-        // "Partial availability" pill on the public page.
         const checked = link.hosts.filter((h) => {
           const d = h.email.toLowerCase().split("@")[1] ?? "";
           return /^(co\.com|paceday\.com|demo\.paceday\.com|acme\.com)$/.test(d) || d.endsWith(".com") && !/^(gmail|yahoo|hotmail|outlook|icloud|proton)/.test(d.split(".")[0]);
         }).length;
-        return {
-          slug: link.slug,
-          title: link.title,
-          durations: link.durations,
+        const info: PublicLinkInfo = {
+          slug: link.slug, title: link.title, durations: link.durations,
           hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
-          min_notice_minutes: link.min_notice_minutes,
-          usage_type: link.usage_type,
+          min_notice_minutes: link.min_notice_minutes, usage_type: link.usage_type,
           coverage: { total: link.hosts.length, checked },
         };
+        publicLinkCache.set(slug, info);
+        return info;
       },
     ),
 
-  getPublicSlots: (slug: string, params: { date?: string; duration?: number }) =>
-    withFallback<{ available_dates?: string[]; slots?: BookingSlot[] }>(
-      () =>
-        realFetch("GET", `/book/${slug}/slots`, undefined, {
-          date: params.date,
-          duration: params.duration ? String(params.duration) : undefined,
-        }),
+  getPublicSlots: (slug: string, params: { date?: string; duration?: number }) => {
+    // The backend requires a date and returns a bare [] of slots. The UI no
+    // longer probes an unsupported summary endpoint; it asks per selected day.
+    if (!params.date) return Promise.resolve({ available_dates: [] as string[], slots: [] as BookingSlot[] });
+    return withFallback<{ available_dates: string[]; slots?: BookingSlot[] }>(
+      async () => {
+        const raw = await requestApi<{ slots?: BookingSlot[]; available_dates?: string[] }>("GET", `/book/${slug}/slots`, undefined, {
+          date: params.date, duration: params.duration ? String(params.duration) : undefined,
+        });
+        return { slots: raw.slots ?? [], available_dates: raw.available_dates ?? [] };
+      },
       () => {
         const link = publicLinkBySlug(slug);
-        if (!link || !link.active || isLinkExhausted(link)) {
-          return { available_dates: [], slots: [] };
-        }
-
-        if (params.date) {
-          const duration = params.duration ?? link.durations[0] ?? 30;
-          return { slots: generateSlotsForDate(link, params.date, duration) };
-        }
-
-        // Summary call: which days in the next 60 days have any availability?
-        const now = new Date();
-        now.setHours(0, 0, 0, 0);
-        const days: string[] = [];
-        const probeDuration = link.durations[0] ?? 30;
-        for (let i = 0; i < 60; i++) {
-          const d = new Date(now);
-          d.setDate(d.getDate() + i);
-          const ds = dateOnly(d);
-          const slots = generateSlotsForDate(link, ds, probeDuration);
-          if (slots.length > 0) days.push(ds);
-        }
-        return { available_dates: days };
+        if (!link || !link.active || isLinkExhausted(link)) return { available_dates: [], slots: [] };
+        return { available_dates: [], slots: generateSlotsForDate(link, params.date!, params.duration ?? link.durations[0] ?? 30) };
       },
-    ),
+    );
+  },
 
   bookSlot: (
     slug: string,
     input: { start: string; duration_minutes: number; name: string; email: string; notes?: string },
   ) =>
     withFallback<BookingConfirmation>(
-      () => realFetch("POST", `/book/${slug}`, input),
+      async () => {
+        const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
+        const raw = await requestApi<BackendBooking>("POST", `/book/${slug}`, {
+          name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes,
+        });
+        const link = publicLinkCache.get(slug);
+        return {
+          id: raw.id, link_slug: raw.link_slug ?? slug, title: raw.title ?? link?.title ?? slug,
+          start: raw.start, end: raw.end,
+          duration_minutes: raw.duration_minutes ?? Math.round((new Date(raw.end).getTime() - new Date(raw.start).getTime()) / 60_000),
+          hosts: raw.hosts ?? link?.hosts ?? [], booker_name: raw.booker_name, booker_email: raw.booker_email, notes: raw.notes,
+        };
+      },
       () => {
         const link = publicLinkBySlug(slug);
         if (!link) throw new Error("not_found");

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactElement } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Loader2,
@@ -116,7 +117,7 @@ export default function Team() {
   };
 
   // Formal teams
-  const teamsQ = useQuery({ queryKey: ["formal-teams"], queryFn: () => teamsApi.list() });
+  const teamsQ = useQuery({ queryKey: ["formal-teams"], queryFn: () => teamsApi.remote.list() });
   const teams = teamsQ.data ?? [];
   const [activeTeamId, setActiveTeamIdState] = useState<string | null>(() => teamsApi.activeTeamId());
   useEffect(() => {
@@ -160,9 +161,9 @@ export default function Team() {
             <div className="mt-6 flex flex-col items-center justify-center gap-2 sm:flex-row">
               <Button
                 onClick={() => {
-                  managerApi.setProfile({ is_manager: true, onboarding_profile_selected: true });
+                  void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
                   setProfile(managerApi.getProfile());
-                  void managerApi.detect().then(() => {
+                  void managerApi.remote.detect().then(() => {
                     qc.invalidateQueries({ queryKey: ["manager-team"] });
                     toast.success("Manager mode enabled. Detecting your team…");
                   });
@@ -339,7 +340,7 @@ function RequireFormalTeam({
 }: {
   team: ReturnType<typeof teamsApi.list>[number] | null;
   onCreateTeam: () => void;
-  children: (t: NonNullable<typeof team>) => JSX.Element;
+  children: (t: NonNullable<typeof team>) => ReactElement;
 }) {
   if (!team) {
     return (
@@ -384,11 +385,11 @@ function TeamTab({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [autoBannerDismissed, setAutoBannerDismissed] = useState(false);
 
-  const teamQ = useQuery({ queryKey: ["manager-team"], queryFn: () => managerApi.listTeam() });
+  const teamQ = useQuery({ queryKey: ["manager-team"], queryFn: () => managerApi.remote.listTeam() });
   const team = teamQ.data ?? [];
 
   const detectMut = useMutation({
-    mutationFn: () => managerApi.detect(),
+    mutationFn: () => managerApi.remote.detect(),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["manager-team"] });
       toast.success(r.added > 0 ? `${r.added} new team member${r.added === 1 ? "" : "s"} found.` : "No new members found.");
@@ -396,13 +397,13 @@ function TeamTab({
   });
 
   const removeMut = useMutation({
-    mutationFn: (email: string) => Promise.resolve(managerApi.removeMember(email)),
+    mutationFn: (email: string) => managerApi.remote.removeMember(email),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
   });
 
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
-      Promise.resolve(managerApi.updateMember(input.email, input.patch)),
+      managerApi.remote.updateMember(input.email, input.patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
   });
 
@@ -948,12 +949,12 @@ function AddPersonDialog({
     setNote(null);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!email.trim() || !/.+@.+\..+/.test(email)) {
       toast.error("Please enter a valid email");
       return;
     }
-    const { alreadyAuto } = managerApi.addMember({
+    const { alreadyAuto } = await managerApi.remote.addMember({
       email: email.trim(),
       display_name: name.trim() || undefined,
       cadence,
@@ -1038,12 +1039,12 @@ function CreateTeamDialog({
 }) {
   const [name, setName] = useState("");
 
-  const submit = () => {
+  const submit = async () => {
     if (!name.trim()) {
       toast.error("Please enter a team name");
       return;
     }
-    const t = teamsApi.createTeam(name);
+    const t = await teamsApi.remote.createTeam(name);
     toast.success(`Team "${t.name}" created.`);
     setName("");
     onOpenChange(false);

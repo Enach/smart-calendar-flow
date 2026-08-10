@@ -81,13 +81,13 @@ export default function Onboarding() {
     if (!role) return;
     setBusy(true);
     try {
-      managerApi.setProfile({
+      void managerApi.remote.setProfile({
         is_manager: role === "manager",
         onboarding_profile_selected: true,
       });
       if (role === "manager") {
         // Fire-and-forget detection so the dashboard is populated when arrived.
-        managerApi.detect().then((r) => {
+        managerApi.remote.detect().then((r) => {
           if (r.added > 0) toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s.`);
         }).catch(() => undefined);
         navigate("/app/team", { replace: true });

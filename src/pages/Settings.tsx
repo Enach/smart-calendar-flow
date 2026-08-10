@@ -571,6 +571,7 @@ function ProfileSection() {
         is_manager: true,
         onboarding_profile_selected: true,
       });
+      void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
       setProfile(next);
       toast.success("Manager mode enabled. Detecting your team from calendar…");
       managerApi
@@ -586,6 +587,7 @@ function ProfileSection() {
 
   const confirmSwitchToIC = () => {
     const next = managerApi.setProfile({ is_manager: false });
+    void managerApi.remote.setProfile({ is_manager: false });
     setProfile(next);
     setConfirmSwitch(false);
     toast.success("Switched to Individual contributor.");
@@ -595,7 +597,7 @@ function ProfileSection() {
     setScanning(true);
     setScanLabel(null);
     try {
-      const r = await managerApi.detect();
+      const r = await managerApi.remote.detect();
       setScanLabel(r.added > 0 ? `${r.added} new member${r.added === 1 ? "" : "s"} found` : "No new members found");
     } finally {
       setScanning(false);

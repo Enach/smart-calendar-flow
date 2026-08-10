@@ -52,16 +52,16 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
 
   const addMut = useMutation({
     mutationFn: (input: Omit<NoMeetingZone, "id" | "created_at">) =>
-      Promise.resolve(teamsApi.addZone(team.id, input)),
+      teamsApi.remote.addZone(team.id, input),
     onSuccess: () => refresh(),
   });
   const updateMut = useMutation({
     mutationFn: (input: { id: string; patch: Partial<NoMeetingZone> }) =>
-      Promise.resolve(teamsApi.updateZone(team.id, input.id, input.patch)),
+      teamsApi.remote.updateZone(team.id, input.id, input.patch),
     onSuccess: () => refresh(),
   });
   const removeMut = useMutation({
-    mutationFn: (id: string) => Promise.resolve(teamsApi.removeZone(team.id, id)),
+    mutationFn: (id: string) => teamsApi.remote.removeZone(team.id, id),
     onSuccess: () => refresh(),
   });
 
@@ -356,7 +356,9 @@ function Grid({
             <div key={day} className="flex flex-1 flex-col">
               <div className="mb-1 text-center text-xs font-semibold text-foreground">{label}</div>
               <div
-                ref={(el) => (columnRefs.current[idx] = el)}
+                ref={(el) => {
+                  columnRefs.current[idx] = el;
+                }}
                 onMouseDown={(e) => onMouseDown(day, e)}
                 className="relative cursor-crosshair rounded border border-dashed border-border bg-background/40"
                 style={{ height: totalH * PX_PER_HOUR }}
@@ -550,12 +552,12 @@ function InviteDialog({
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
 
-  const submit = () => {
+  const submit = async () => {
     if (!/.+@.+\..+/.test(email)) {
       toast.error("Please enter a valid email");
       return;
     }
-    teamsApi.inviteMember(teamId, email, name);
+    await teamsApi.remote.inviteMember(teamId, email, name);
     toast.success(`Invite sent to ${email}.`);
     setEmail("");
     setName("");
@@ -653,7 +655,7 @@ function ManageMembersSheet({
               {isOwner && m.email !== me && (
                 <button
                   onClick={() => {
-                    teamsApi.removeMember(team.id, m.email);
+                    void teamsApi.remote.removeMember(team.id, m.email);
                     onChanged();
                   }}
                   className="rounded p-1.5 text-muted-foreground hover:bg-[#EF4444]/10 hover:text-[#EF4444]"

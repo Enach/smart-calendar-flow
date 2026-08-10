@@ -6,7 +6,7 @@
  */
 
 import type { Attendee } from "./types";
-import { api } from "./client";
+import { api, requestApi, withFallback } from "./client";
 
 // ---------- Types ----------
 
@@ -247,7 +247,158 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
 
 // ---------- Public API ----------
 
+
+type BackendManagerMember = {
+  email: string;
+  display_name?: string;
+  source?: "auto" | "manual";
+  cadence?: Cadence;
+  cadence_custom_days?: number;
+  last_one_on_one_at?: string | null;
+  is_paceday_user?: boolean;
+  this_week?: { data_available?: boolean };
+};
+
+function normalizeRemoteMember(raw: BackendManagerMember): TeamMember {
+  return {
+    email: raw.email,
+    display_name: raw.display_name || raw.email.split("@")[0],
+    cadence: raw.cadence ?? "none",
+    custom_cadence_days: raw.cadence_custom_days,
+    last_one_on_one: raw.last_one_on_one_at ?? null,
+    source: raw.source ?? "manual",
+    is_paceday_user: raw.is_paceday_user ?? false,
+    data_available: raw.this_week?.data_available ?? false,
+    added_at: new Date().toISOString(),
+  };
+}
+
+const managerRemote = {
+  getProfile: () =>
+    withFallback<ManagerProfile>(
+      async () => {
+        const raw = await requestApi<{ is_manager?: boolean; detected_at?: string | null }>("GET", "/manager/profile");
+        const state = load();
+        state.profile = {
+          is_manager: raw.is_manager ?? false,
+          onboarding_profile_selected: Boolean(raw.detected_at) || state.profile.onboarding_profile_selected,
+        };
+        save(state);
+        return { ...state.profile };
+      },
+      () => managerApi.getProfile(),
+    ),
+
+  setProfile: (patch: Partial<ManagerProfile>) =>
+    withFallback<ManagerProfile>(
+      async () => {
+        if (patch.is_manager !== undefined) {
+          await requestApi("POST", "/manager/profile", { is_manager: patch.is_manager });
+        }
+        const state = load();
+        state.profile = { ...state.profile, ...patch };
+        save(state);
+        return { ...state.profile };
+      },
+      () => managerApi.setProfile(patch),
+    ),
+
+  listTeam: () =>
+    withFallback<TeamMember[]>(
+      async () => {
+        const raw = await requestApi<{ members?: BackendManagerMember[] }>("GET", "/manager/team");
+        const members = (raw.members ?? []).map(normalizeRemoteMember);
+        const state = load();
+        state.members = members;
+        save(state);
+        return members.slice().sort((a, b) => a.display_name.localeCompare(b.display_name));
+      },
+      () => managerApi.listTeam(),
+    ),
+
+  addMember: (input: {
+    email: string;
+    display_name?: string;
+    cadence: Cadence;
+    custom_cadence_days?: number;
+  }) =>
+    withFallback<{ member: TeamMember; alreadyAuto: boolean }>(
+      async () => {
+        await requestApi("POST", "/manager/team/members", {
+          email: input.email,
+          display_name: input.display_name ?? "",
+          cadence: input.cadence,
+          cadence_custom_days: input.custom_cadence_days,
+        });
+        const members = await managerRemote.listTeam();
+        const member = members.find((m) => m.email === input.email.trim().toLowerCase());
+        if (!member) throw new Error("backend did not return the new team member");
+        return { member, alreadyAuto: false };
+      },
+      () => managerApi.addMember(input),
+    ),
+
+  updateMember: (email: string, patch: Partial<TeamMember>) =>
+    withFallback<TeamMember | null>(
+      async () => {
+        const body = {
+          ...(patch.display_name === undefined ? {} : { display_name: patch.display_name }),
+          ...(patch.cadence === undefined ? {} : { cadence: patch.cadence }),
+          ...(patch.custom_cadence_days === undefined ? {} : { cadence_custom_days: patch.custom_cadence_days }),
+        };
+        await requestApi("PATCH", "/manager/team/members/" + encodeURIComponent(email), body);
+        const members = await managerRemote.listTeam();
+        return members.find((m) => m.email === email.toLowerCase()) ?? null;
+      },
+      () => managerApi.updateMember(email, patch),
+    ),
+
+  removeMember: (email: string) =>
+    withFallback<void>(
+      async () => {
+        await requestApi("DELETE", "/manager/team/members/" + encodeURIComponent(email));
+        const state = load();
+        state.members = state.members.filter((m) => m.email !== email.toLowerCase());
+        save(state);
+      },
+      () => managerApi.removeMember(email),
+    ),
+
+  detect: () =>
+    withFallback<DetectionResult>(
+      async () => {
+        const raw = await requestApi<{ MembersAdded?: number; members_added?: number }>("POST", "/manager/detect");
+        const members = await managerRemote.listTeam();
+        return {
+          scanned_at: new Date().toISOString(),
+          added: raw.MembersAdded ?? raw.members_added ?? 0,
+          total: members.length,
+        };
+      },
+      () => managerApi.detect(),
+    ),
+
+  gaps: () =>
+    withFallback<OneOnOneGap[]>(
+      async () => {
+        const raw = await requestApi<{ gaps?: Array<{
+          member_email: string; display_name: string; cadence: Cadence;
+          last_one_on_one_at?: string | null; days_overdue: number;
+        }> }>("GET", "/manager/gaps");
+        return (raw.gaps ?? []).map((gap) => ({
+          email: gap.member_email,
+          display_name: gap.display_name,
+          cadence: gap.cadence,
+          last_one_on_one: gap.last_one_on_one_at ?? null,
+          days_overdue: gap.days_overdue,
+        }));
+      },
+      () => managerApi.gaps(),
+    ),
+};
+
 export const managerApi = {
+  remote: managerRemote,
   getProfile(): ManagerProfile {
     return { ...load().profile };
   },

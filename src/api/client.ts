@@ -1,3 +1,5 @@
+import type { ApiPort, CompressionApplyResponse } from "./contract";
+
 import type {
   AuditEntry,
   AuthStatus,
@@ -246,7 +248,7 @@ const API_BASE =
   "/api";
 const NETWORK_TIMEOUT_MS = 4000;
 
-async function realFetch<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
+export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -278,7 +280,32 @@ async function realFetch<T>(method: string, path: string, body?: unknown, query?
   }
 }
 
-async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
+
+type BackendPersonalCalendar = {
+  id: string | number;
+  provider?: string;
+  type?: PersonalCalendarType;
+  name?: string;
+  label?: string;
+  url?: string;
+  enabled?: boolean;
+  last_synced_at?: string;
+};
+
+function normalizePersonalCalendar(raw: BackendPersonalCalendar): PersonalCalendar {
+  const type = (raw.type ?? raw.provider ?? "webcal") as PersonalCalendarType;
+  const label = raw.label ?? raw.name ?? "Personal";
+  return {
+    id: String(raw.id),
+    label,
+    type,
+    url: raw.url,
+    enabled: raw.enabled ?? true,
+    last_synced_at: raw.last_synced_at,
+  };
+}
+
+export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (usingMocks) return mock();
   try {
     return await real();
@@ -407,7 +434,7 @@ export const api = {
   // because we want to control the mock-mode flag directly here.
   health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
     try {
-      const r = await realFetch<{ status: string; version: string }>("GET", "/health");
+      const r = await requestApi<{ status: string; version: string }>("GET", "/health");
       setMockMode(false);
       return { ...r, reachable: true };
     } catch {
@@ -429,19 +456,19 @@ export const api = {
    */
   freebusy: (input: { emails: string[]; start_time: string; end_time: string }) =>
     withFallback<FreeBusyResponse>(
-      () => realFetch("POST", "/freebusy", input),
+      () => requestApi<FreeBusyResponse>("POST", "/freebusy", input),
       () => mockFreebusy(input),
     ),
   authStatus: () =>
     withFallback(
-      () => realFetch<AuthStatus>("GET", "/auth/status"),
+      () => requestApi<AuthStatus>("GET", "/auth/status"),
       () => ({ ...mockState.auth }),
     ),
   authConnectUrl: (provider: CalendarProvider = "google") =>
     `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
   authDisconnect: () =>
     withFallback(
-      () => realFetch<void>("POST", "/auth/logout"),
+      () => requestApi<void>("DELETE", "/auth/disconnect"),
       () => {
         mockState.auth = { connected: false, email: "", provider: undefined };
         logAudit("auth.disconnect", "Disconnected calendar (mock)");
@@ -451,12 +478,12 @@ export const api = {
   // Settings
   getSettings: () =>
     withFallback(
-      () => realFetch<Settings>("GET", "/settings"),
+      () => requestApi<Settings>("GET", "/settings"),
       () => ({ ...mockState.settings }),
     ),
   updateSettings: (s: Settings) =>
     withFallback(
-      () => realFetch<Settings>("PUT", "/settings", s),
+      () => requestApi<Settings>("PUT", "/settings", s),
       () => {
         mockState.settings = { ...s };
         // keep focus block colors in sync
@@ -474,7 +501,7 @@ export const api = {
   // Calendar
   getEvents: (start: string, end: string) =>
     withFallback(
-      () => realFetch<CalendarEvent[]>("GET", "/calendar/events", undefined, { start, end }),
+      () => requestApi<CalendarEvent[]>("GET", "/calendar/events", undefined, { start, end }),
       () => {
         const s = new Date(start).getTime();
         const e = new Date(end).getTime();
@@ -489,7 +516,7 @@ export const api = {
   // Focus
   runFocus: (week?: string) =>
     withFallback(
-      () => realFetch<FocusRunResult>("POST", "/focus/run", { week }),
+      () => requestApi<FocusRunResult>("POST", "/focus/run", { week }),
       () => {
         const monday = week ? new Date(week) : startOfWeek(new Date());
         const created: FocusBlock[] = [];
@@ -546,7 +573,7 @@ export const api = {
     ),
   getFocusBlocks: (week: string) =>
     withFallback(
-      () => realFetch<FocusBlock[]>("GET", "/focus/blocks", undefined, { week }),
+      () => requestApi<FocusBlock[]>("GET", "/focus/blocks", undefined, { week }),
       () => {
         const monday = startOfWeek(new Date(week));
         const sunday = new Date(monday);
@@ -559,7 +586,7 @@ export const api = {
     ),
   clearFocusBlocks: (week: string) =>
     withFallback(
-      () => realFetch<{ deleted: number }>("DELETE", "/focus/blocks", undefined, { week }),
+      () => requestApi<{ deleted: number }>("DELETE", "/focus/blocks", undefined, { week }),
       () => {
         const monday = startOfWeek(new Date(week));
         const sunday = new Date(monday);
@@ -590,7 +617,7 @@ export const api = {
     title: string;
   }) =>
     withFallback(
-      () => realFetch<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body),
+      () => requestApi<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body),
       () => {
         const cov = coverageFromAttendees(body.attendees);
         const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end).map(
@@ -607,7 +634,7 @@ export const api = {
     description?: string;
   }) =>
     withFallback(
-      () => realFetch<CalendarEvent>("POST", "/schedule/create", body),
+      () => requestApi<CalendarEvent>("POST", "/schedule/create", body),
       () => {
         const ev: CalendarEvent = {
           id: String(mockState.nextEventId++),
@@ -625,19 +652,22 @@ export const api = {
     ),
   compressionPreview: (body: { date?: string; week?: string }) =>
     withFallback(
-      () => realFetch<CompressionResult[]>("POST", "/schedule/compress", body),
+      () => requestApi<CompressionResult[]>("POST", "/schedule/compress", body),
       () => [],
     ),
   compressionApply: (body: { proposals: MoveProposal[] }) =>
     withFallback(
-      () => realFetch<{ applied: number; failed: number }>("POST", "/schedule/compress/apply", body),
-      () => ({ applied: body.proposals.length, failed: 0 }),
+      () => requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", body),
+      () => ({
+        applied: body.proposals.map((proposal) => proposal.event_id),
+        failed: [],
+      }),
     ),
 
   // NLP
   nlpParse: (text: string) =>
     withFallback(
-      () => realFetch<ParseResult>("POST", "/nlp/parse", { text }),
+      () => requestApi<ParseResult>("POST", "/nlp/parse", { text }),
       () => {
         const t = text.trim().toLowerCase();
         if (!t) return { intent: "unknown", error: "Please type a request." } as ParseResult;
@@ -675,7 +705,7 @@ export const api = {
     ),
   nlpConfirm: (parse_result: ParseResult, selected_slot_index: number) =>
     withFallback(
-      () => realFetch<CalendarEvent>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
+      () => requestApi<CalendarEvent>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
       () => {
         const slot = parse_result.suggested_slots?.[selected_slot_index];
         if (!slot) throw new Error("No slot selected");
@@ -697,24 +727,27 @@ export const api = {
   // Audit
   getAudit: () =>
     withFallback(
-      () => realFetch<AuditEntry[]>("GET", "/audit"),
+      () => requestApi<AuditEntry[]>("GET", "/audit"),
       () => [...mockState.audit],
     ),
 
   // Personal calendars
   listPersonalCalendars: () =>
     withFallback(
-      () => realFetch<PersonalCalendar[]>("GET", "/personal-calendars"),
+      async () => {
+        const raw = await requestApi<BackendPersonalCalendar[]>("GET", "/personal-calendars");
+        return (raw ?? []).map(normalizePersonalCalendar);
+      },
       () => [...mockState.personalCalendars],
     ),
   addPersonalCalendar: (body: { type: PersonalCalendarType; label: string; url?: string }) =>
     withFallback(
       () =>
-        realFetch<PersonalCalendar & { auth_url?: string }>(
+        requestApi<BackendPersonalCalendar>(
           "POST",
           "/personal-calendars",
-          body,
-        ),
+          { provider: body.type, name: body.label, url: body.url, enabled: true },
+        ).then(normalizePersonalCalendar),
       () => {
         const id = String(mockState.nextPersonalId++);
         const cal: PersonalCalendar = {
@@ -735,7 +768,11 @@ export const api = {
     ),
   updatePersonalCalendar: (id: string, patch: Partial<Pick<PersonalCalendar, "enabled" | "label">>) =>
     withFallback(
-      () => realFetch<PersonalCalendar>("PATCH", `/personal-calendars/${id}`, patch),
+      () =>
+        requestApi<BackendPersonalCalendar>("PATCH", `/personal-calendars/${id}`, {
+          ...(patch.label === undefined ? {} : { name: patch.label }),
+          ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
+        }).then(normalizePersonalCalendar),
       () => {
         const cal = mockState.personalCalendars.find((c) => c.id === id);
         if (!cal) throw new Error("Not found");
@@ -746,7 +783,7 @@ export const api = {
     ),
   deletePersonalCalendar: (id: string) =>
     withFallback(
-      () => realFetch<void>("DELETE", `/personal-calendars/${id}`),
+      () => requestApi<void>("DELETE", `/personal-calendars/${id}`),
       () => {
         mockState.personalCalendars = mockState.personalCalendars.filter((c) => c.id !== id);
         logAudit("personal.delete", `Removed personal calendar (mock)`);
@@ -754,7 +791,7 @@ export const api = {
     ),
   syncPersonalCalendar: (id: string) =>
     withFallback(
-      () => realFetch<PersonalCalendar>("POST", `/personal-calendars/${id}/sync`),
+      () => requestApi<BackendPersonalCalendar>("POST", `/personal-calendars/${id}/sync`).then(normalizePersonalCalendar),
       () => {
         const cal = mockState.personalCalendars.find((c) => c.id === id);
         if (!cal) throw new Error("Not found");
@@ -767,7 +804,7 @@ export const api = {
   // LLM
   llmTest: (s: Settings) =>
     withFallback(
-      () => realFetch<LLMTestResult>("POST", "/llm/test", s),
+      () => requestApi<LLMTestResult>("POST", "/llm/test", s),
       () => {
         const provider = s.llm_provider;
         const need = (...keys: Array<keyof Settings>) =>
@@ -795,7 +832,7 @@ export const api = {
   ) =>
     withFallback(
       () =>
-        realFetch<CalendarEvent>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
+        requestApi<CalendarEvent>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
       () => {
         const ev = mockState.events.find((e) => e.id === id);
         if (!ev) throw new Error("Not found");
@@ -811,7 +848,7 @@ export const api = {
 
   deleteEvent: (id: string, sendUpdates: "all" | "none" = "none") =>
     withFallback(
-      () => realFetch<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates }),
+      () => requestApi<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates }),
       () => {
         const ev = mockState.events.find((e) => e.id === id);
         mockState.events = mockState.events.filter((e) => e.id !== id);
@@ -822,7 +859,7 @@ export const api = {
   // ----- Rooms -----
   searchRooms: (q: string, start?: string, end?: string) =>
     withFallback(
-      () => realFetch<Room[]>("GET", "/rooms", undefined, { q, start, end }),
+      () => requestApi<Room[]>("GET", "/rooms", undefined, { q, start, end }),
       () => {
         const ql = q.trim().toLowerCase();
         const matches = ql
@@ -855,7 +892,7 @@ export const api = {
   // ----- Attendees -----
   suggestAttendees: (q: string) =>
     withFallback(
-      () => realFetch<Attendee[]>("GET", "/attendees/suggest", undefined, { q }),
+      () => requestApi<Attendee[]>("GET", "/attendees/suggest", undefined, { q }),
       () => {
         const ql = q.trim().toLowerCase();
         if (!ql) return MOCK_DIRECTORY.slice(0, 5);
@@ -870,7 +907,7 @@ export const api = {
   // ----- Conferencing -----
   addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
     withFallback(
-      () => realFetch<ConferenceLink>("POST", `/events/${eventId}/conference`, body),
+      () => requestApi<ConferenceLink>("POST", `/events/${eventId}/conference`, body),
       () => {
         const ev = mockState.events.find((e) => e.id === eventId);
         if (!ev) throw new Error("Not found");
@@ -882,7 +919,7 @@ export const api = {
     ),
   removeConference: (eventId: string) =>
     withFallback(
-      () => realFetch<void>("DELETE", `/events/${eventId}/conference`),
+      () => requestApi<void>("DELETE", `/events/${eventId}/conference`),
       () => {
         const ev = mockState.events.find((e) => e.id === eventId);
         if (!ev) return;
@@ -892,7 +929,7 @@ export const api = {
     ),
   conferenceProviders: () =>
     withFallback(
-      () => realFetch<ConferenceProviderStatus[]>("GET", "/conference/providers"),
+      () => requestApi<ConferenceProviderStatus[]>("GET", "/conference/providers"),
       () => {
         const calProvider = mockState.settings.calendar_provider ?? "google";
         return [
@@ -918,13 +955,13 @@ export const api = {
   zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
   zoomDisconnect: () =>
     withFallback(
-      () => realFetch<void>("POST", "/conference/zoom/disconnect"),
+      () => requestApi<void>("POST", "/conference/zoom/disconnect"),
       () => {
         mockState.conference.zoom = { connected: false, email: undefined };
         logAudit("conference.zoom.disconnect", "Disconnected Zoom (mock)");
       },
     ),
-};
+} satisfies ApiPort;
 
 // Mock-only conferencing link generator
 function mockGenerateConferenceLink(provider: ConferenceProvider, custom?: string): ConferenceLink {

@@ -115,12 +115,12 @@ export default function Manager() {
 
   const teamQ = useQuery({
     queryKey: ["manager-team"],
-    queryFn: () => managerApi.listTeam(),
+    queryFn: () => managerApi.remote.listTeam(),
   });
   const team = teamQ.data ?? [];
 
   const detectMut = useMutation({
-    mutationFn: () => managerApi.detect(),
+    mutationFn: () => managerApi.remote.detect(),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["manager-team"] });
       toast.success(
@@ -130,13 +130,13 @@ export default function Manager() {
   });
 
   const removeMut = useMutation({
-    mutationFn: (email: string) => Promise.resolve(managerApi.removeMember(email)),
+    mutationFn: (email: string) => managerApi.remote.removeMember(email),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
   });
 
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
-      Promise.resolve(managerApi.updateMember(input.email, input.patch)),
+      managerApi.remote.updateMember(input.email, input.patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
   });
 
@@ -203,10 +203,10 @@ export default function Manager() {
             <div className="mt-6 flex flex-col items-center justify-center gap-2 sm:flex-row">
               <Button
                 onClick={() => {
-                  managerApi.setProfile({ is_manager: true, onboarding_profile_selected: true });
+                  void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
                   setProfile(managerApi.getProfile());
                   // Seed team in the background so the page is useful right away.
-                  void managerApi.detect().then(() => {
+                  void managerApi.remote.detect().then(() => {
                     qc.invalidateQueries({ queryKey: ["manager-team"] });
                     toast.success("Manager mode enabled. Detecting your team…");
                   });
@@ -920,12 +920,12 @@ function AddPersonDialog({
     setNote(null);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!email.trim() || !/.+@.+\..+/.test(email)) {
       toast.error("Please enter a valid email");
       return;
     }
-    const { alreadyAuto } = managerApi.addMember({
+    const { alreadyAuto } = await managerApi.remote.addMember({
       email: email.trim(),
       display_name: name.trim() || undefined,
       cadence,

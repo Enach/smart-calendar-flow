@@ -34,7 +34,7 @@ export function FindATimeTab({ team }: Props) {
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
 
   const findMut = useMutation({
-    mutationFn: () => teamsApi.findSlots(team.id, date, duration),
+    mutationFn: () => teamsApi.remote.findSlots(team.id, date, duration),
     onSuccess: (s) => setSlots(s),
   });
 

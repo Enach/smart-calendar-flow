@@ -9,6 +9,7 @@
 
 import { managerApi, type TeamMember as ManagerTeamMember } from "./manager";
 import { getFreebusy } from "./coverageCache";
+import { requestApi, withFallback } from "./client";
 
 // ---------- Types ----------
 
@@ -98,7 +99,250 @@ function deriveName(email: string): string {
 
 // ---------- Public API ----------
 
+
+type BackendTeam = { id: string; name: string; createdAt?: string };
+type BackendTeamMember = {
+  userId?: string;
+  email?: string;
+  name?: string;
+  role?: string;
+  joinedAt?: string;
+};
+type BackendZone = {
+  id: string;
+  dayOfWeek?: number;
+  startTime?: string;
+  endTime?: string;
+  label?: string;
+  createdAt?: string;
+};
+
+function minutesFromTime(value?: string): number {
+  if (!value) return 0;
+  const parts = value.split(":").map((part) => Number(part));
+  return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+
+function timeFromMinutes(value: number): string {
+  const hours = Math.floor(value / 60).toString().padStart(2, "0");
+  const minutes = (value % 60).toString().padStart(2, "0");
+  return hours + ":" + minutes;
+}
+
+function normalizeTeam(raw: BackendTeam, members: BackendTeamMember[], zones: BackendZone[]): FormalTeam {
+  const owner = members.find((member) => member.role === "owner");
+  const ownerEmail = owner?.email ?? load().current_user_email;
+  const normalizedMembers: FormalTeamMember[] = members.map((member) => ({
+    email: member.email ?? "",
+    display_name: member.name ?? deriveName(member.email ?? ""),
+    role: member.role === "owner" ? "owner" : "member",
+    status: "active",
+    is_paceday_user: Boolean(member.userId),
+    joined_at: member.joinedAt,
+  }));
+  return {
+    id: raw.id,
+    name: raw.name,
+    created_at: raw.createdAt ?? new Date().toISOString(),
+    owner_email: ownerEmail,
+    members: normalizedMembers,
+    no_meeting_zones: zones.map((zone) => ({
+      id: zone.id,
+      day_of_week: zone.dayOfWeek ?? 1,
+      start_min: minutesFromTime(zone.startTime),
+      end_min: minutesFromTime(zone.endTime),
+      label: zone.label ?? "Protected hours",
+      created_at: zone.createdAt ?? new Date().toISOString(),
+    })),
+  };
+}
+
+async function remoteTeam(id: string): Promise<FormalTeam> {
+  const [detail, zones] = await Promise.all([
+    requestApi<{ team?: BackendTeam; members?: BackendTeamMember[] }>("GET", "/teams/" + id),
+    requestApi<BackendZone[]>("GET", "/teams/" + id + "/no-meeting-zones"),
+  ]);
+  return normalizeTeam(detail.team ?? { id, name: "Team" }, detail.members ?? [], zones ?? []);
+}
+
+const teamsRemote = {
+  list: () =>
+    withFallback<FormalTeam[]>(
+      async () => {
+        const raw = await requestApi<BackendTeam[]>("GET", "/teams/");
+        const teams = await Promise.all((raw ?? []).map((team) => remoteTeam(team.id)));
+        const state = load();
+        state.teams = teams;
+        if (state.active_team_id && !teams.some((team) => team.id === state.active_team_id)) {
+          state.active_team_id = teams[0]?.id ?? null;
+        }
+        if (!state.active_team_id && teams[0]) state.active_team_id = teams[0].id;
+        const ownerEmail = teams[0]?.owner_email;
+        if (ownerEmail) state.current_user_email = ownerEmail;
+        save(state);
+        return teams.slice().sort((a, b) => a.name.localeCompare(b.name));
+      },
+      () => teamsApi.list(),
+    ),
+
+  get: (id: string) =>
+    withFallback<FormalTeam | null>(
+      async () => remoteTeam(id),
+      () => teamsApi.get(id),
+    ),
+
+  createTeam: (name: string) =>
+    withFallback<FormalTeam>(
+      async () => {
+        const raw = await requestApi<BackendTeam>("POST", "/teams/", { name: name.trim() });
+        const team = await remoteTeam(raw.id);
+        const state = load();
+        state.teams = state.teams.filter((item) => item.id !== team.id).concat(team);
+        state.active_team_id = team.id;
+        save(state);
+        return team;
+      },
+      () => teamsApi.createTeam(name),
+    ),
+
+  renameTeam: (id: string, name: string) =>
+    withFallback<FormalTeam | null>(
+      async () => {
+        await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
+        return remoteTeam(id);
+      },
+      () => teamsApi.renameTeam(id, name),
+    ),
+
+  deleteTeam: (id: string) =>
+    withFallback<void>(
+      async () => {
+        await requestApi("DELETE", "/teams/" + id);
+        const state = load();
+        state.teams = state.teams.filter((team) => team.id !== id);
+        if (state.active_team_id === id) state.active_team_id = state.teams[0]?.id ?? null;
+        save(state);
+      },
+      () => teamsApi.deleteTeam(id),
+    ),
+
+  inviteMember: (teamId: string, email: string, displayName?: string) =>
+    withFallback<FormalTeamMember | null>(
+      async () => {
+        await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
+        const team = await remoteTeam(teamId);
+        return team.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
+          email: email.trim().toLowerCase(),
+          display_name: displayName?.trim() || deriveName(email),
+          role: "member",
+          status: "pending",
+          is_paceday_user: false,
+          invited_at: new Date().toISOString(),
+        };
+      },
+      () => teamsApi.inviteMember(teamId, email, displayName),
+    ),
+
+  removeMember: (teamId: string, email: string) =>
+    withFallback<void>(
+      async () => {
+        const team = await remoteTeam(teamId);
+        const member = team.members.find((item) => item.email === email.toLowerCase());
+        if (!member) return;
+        const userID = (await requestApi<{ members?: BackendTeamMember[] }>("GET", "/teams/" + teamId)).members?.find((item) => item.email?.toLowerCase() === email.toLowerCase())?.userId;
+        if (!userID) throw new Error("team member has no user id");
+        await requestApi("DELETE", "/teams/" + teamId + "/members/" + userID);
+      },
+      () => teamsApi.removeMember(teamId, email),
+    ),
+
+  addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
+    withFallback<NoMeetingZone | null>(
+      async () => {
+        const raw = await requestApi<BackendZone>("POST", "/teams/" + teamId + "/no-meeting-zones", {
+          dayOfWeek: input.day_of_week,
+          startTime: timeFromMinutes(input.start_min),
+          endTime: timeFromMinutes(input.end_min),
+          label: input.label,
+        });
+        return {
+          id: raw.id, day_of_week: raw.dayOfWeek ?? input.day_of_week,
+          start_min: minutesFromTime(raw.startTime) || input.start_min,
+          end_min: minutesFromTime(raw.endTime) || input.end_min,
+          label: raw.label ?? input.label, created_at: raw.createdAt ?? new Date().toISOString(),
+        };
+      },
+      () => teamsApi.addZone(teamId, input),
+    ),
+
+  updateZone: (teamId: string, zoneId: string, patch: Partial<NoMeetingZone>) =>
+    withFallback<void>(
+      async () => {
+        const current = (await remoteTeam(teamId)).no_meeting_zones.find((zone) => zone.id === zoneId);
+        if (!current) throw new Error("zone not found");
+        await requestApi("PATCH", "/teams/" + teamId + "/no-meeting-zones/" + zoneId, {
+          dayOfWeek: patch.day_of_week ?? current.day_of_week,
+          startTime: timeFromMinutes(patch.start_min ?? current.start_min),
+          endTime: timeFromMinutes(patch.end_min ?? current.end_min),
+          label: patch.label ?? current.label,
+        });
+      },
+      () => teamsApi.updateZone(teamId, zoneId, patch),
+    ),
+
+  removeZone: (teamId: string, zoneId: string) =>
+    withFallback<void>(
+      () => requestApi("DELETE", "/teams/" + teamId + "/no-meeting-zones/" + zoneId),
+      () => teamsApi.removeZone(teamId, zoneId),
+    ),
+
+  findSlots: (teamId: string, dateISO: string, durationMin: number) =>
+    withFallback<AvailabilitySlot[]>(
+      async () => {
+        const raw = await requestApi<{ slots?: Array<{ start: string; end: string; quality_score?: number }> }>(
+          "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
+        );
+        const team = await remoteTeam(teamId);
+        const total = team.members.filter((member) => member.status === "active").length;
+        return (raw.slots ?? []).map((slot) => ({
+          start: slot.start, end: slot.end, score: slot.quality_score ?? 0,
+          free_count: total, total_count: total,
+        }));
+      },
+      () => teamsApi.findSlots(teamId, dateISO, durationMin),
+    ),
+
+  teamAnalytics: (teamId: string) =>
+    withFallback<ReturnType<typeof teamsApi.teamAnalytics>>(
+      async () => {
+        const raw = await requestApi<{
+          member_breakdown?: Array<{ name?: string; meeting_minutes: number; focus_minutes: number }>;
+        }>("GET", "/teams/" + teamId + "/analytics");
+        const team = await remoteTeam(teamId);
+        const weekStart = new Date();
+        const day = weekStart.getDay();
+        weekStart.setDate(weekStart.getDate() + (day === 0 ? -6 : 1 - day));
+        const week = weekStart.toISOString().slice(0, 10);
+        return team.members
+          .filter((member) => member.status === "active" && member.email !== team.owner_email)
+          .map((member, index) => {
+            const summary = raw.member_breakdown?.find((item) => item.name === member.display_name) ?? raw.member_breakdown?.[index];
+            const meeting = summary?.meeting_minutes ?? 0;
+            const focus = summary?.focus_minutes ?? 0;
+            return {
+              email: member.email,
+              display_name: member.display_name,
+              is_paceday_user: member.is_paceday_user,
+              weeks: [{ week_start: week, meeting_minutes: meeting, focus_minutes: focus, free_minutes: Math.max(0, 2400 - meeting - focus) }],
+            };
+          });
+      },
+      () => teamsApi.teamAnalytics(teamId),
+    ),
+};
+
 export const teamsApi = {
+  remote: teamsRemote,
   currentUserEmail(): string {
     return load().current_user_email;
   },
