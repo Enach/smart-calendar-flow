@@ -395,10 +395,16 @@ export default function LinksPage() {
           <InviteBanner
             onAccept={(id) => acceptInvite.mutate(id)}
             onDecline={(id) => declineInvite.mutate(id)}
+            pendingId={pendingInviteId}
           />
         </div>
 
+        {listError && (
+          <ErrorBanner message={apiErrorMessage(listError)} onRetry={() => refetch()} busy={isFetching} />
+        )}
+
         {isLoading ? (
+
           <div className="space-y-3">
             {[0, 1].map((i) => (
               <div key={i} className="h-32 animate-pulse rounded-xl border border-border bg-card" />
