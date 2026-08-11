@@ -153,9 +153,15 @@ function LinkCard({
           <div className="flex items-center gap-1">
             {link.is_owner ? (
               <>
+                {onViewBookings && (
+                  <Button size="sm" variant="ghost" onClick={() => onViewBookings(link)} aria-label="Bookings">
+                    <CalendarDays className="h-3.5 w-3.5" /> Bookings
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => onEdit?.(link)} aria-label="Edit">
                   <Pencil className="h-3.5 w-3.5" /> Edit
                 </Button>
+
                 <Button
                   size="sm"
                   variant="ghost"
