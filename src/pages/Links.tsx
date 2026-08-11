@@ -180,19 +180,47 @@ function LinkCard({
   );
 }
 
+function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      <p className="min-w-0 flex-1 text-sm text-destructive/90">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="shrink-0">
+        <RotateCcw className="h-3.5 w-3.5" /> Retry
+      </Button>
+    </div>
+  );
+}
+
 function InviteBanner({
   onAccept,
   onDecline,
+  pendingId,
 }: {
   onAccept: (linkId: string) => void;
   onDecline: (linkId: string) => void;
+  pendingId?: string | null;
 }) {
-  const { data: invites = [] } = useQuery({
-    queryKey: ["scheduling-link-invites"],
+  const {
+    data: invites = [],
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: schedulingLinkKeys.invites,
     queryFn: () => schedulingLinksApi.listInvites(),
+    // Keep the last successful list visible if a refetch fails.
+    placeholderData: (prev) => prev,
   });
 
+  if (error && !invites.length) {
+    return <ErrorBanner message={apiErrorMessage(error)} onRetry={() => refetch()} busy={isFetching} />;
+  }
   if (!invites.length) return null;
+
 
   return (
     <div className="space-y-2">
