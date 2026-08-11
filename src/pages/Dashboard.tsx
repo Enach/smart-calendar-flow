@@ -25,7 +25,7 @@ import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent, ParseResult } from "@/api/types";
 
@@ -100,6 +100,7 @@ export default function Dashboard() {
     isLoading: eventsLoading,
     isFetching: eventsFetching,
     isError: eventsError,
+    error: eventsErrorObj,
     refetch: refetchEvents,
   } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
   const events = Array.isArray(eventsRaw) ? eventsRaw : [];
@@ -429,7 +430,7 @@ export default function Dashboard() {
             {eventsError && events.length === 0 ? (
               <InlineError
                 title="Couldn't load your calendar"
-                message="We couldn't reach the calendar service. Check your connection and try again."
+                message={apiErrorMessage(eventsErrorObj)}
                 onRetry={() => refetchEvents()}
                 retrying={eventsFetching}
                 className="my-8"
@@ -440,7 +441,7 @@ export default function Dashboard() {
                   <InlineError
                     compact
                     title="Calendar may be out of date"
-                    message="Latest changes failed to load."
+                    message={apiErrorMessage(eventsErrorObj)}
                     onRetry={() => refetchEvents()}
                     retrying={eventsFetching}
                     className="mb-3"
@@ -558,6 +559,7 @@ export default function Dashboard() {
               events={events}
               loading={eventsLoading}
               error={eventsError}
+              errorMessage={apiErrorMessage(eventsErrorObj)}
               onRetry={() => refetchEvents()}
               retrying={eventsFetching}
             />

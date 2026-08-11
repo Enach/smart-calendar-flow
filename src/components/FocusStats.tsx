@@ -2,6 +2,7 @@ import { useFocusBlocks } from "@/hooks/useFocusBlocks";
 import { Target } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { apiErrorMessage } from "@/api/client";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 interface FocusStatsProps {
@@ -21,7 +22,7 @@ function fmtHM(min: number) {
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusStatsProps) {
-  const { data, isLoading, isError, isFetching, refetch } = useFocusBlocks(weekISO);
+  const { data, isLoading, isError, error, isFetching, refetch } = useFocusBlocks(weekISO);
   const blocks = Array.isArray(data) ? data : [];
   const showSkeleton = useDebouncedFlag(isLoading && blocks.length === 0 && !isError);
 
@@ -65,7 +66,7 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         <InlineError
           compact
           title="Couldn't load focus data"
-          message="Check your connection and try again."
+          message={apiErrorMessage(error)}
           onRetry={() => refetch()}
           retrying={isFetching}
         />

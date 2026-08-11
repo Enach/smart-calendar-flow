@@ -10,6 +10,7 @@ interface TodayAgendaProps {
   events: CalendarEvent[];
   loading?: boolean;
   error?: boolean;
+  errorMessage?: string;
   onRetry?: () => void;
   retrying?: boolean;
 }
@@ -18,7 +19,7 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-export function TodayAgenda({ events, loading, error, onRetry, retrying }: TodayAgendaProps) {
+export function TodayAgenda({ events, loading, error, errorMessage, onRetry, retrying }: TodayAgendaProps) {
   const { user } = useAuth();
   const today = new Date();
   const now = today.getTime();
@@ -54,7 +55,7 @@ export function TodayAgenda({ events, loading, error, onRetry, retrying }: Today
         <InlineError
           compact
           title="Couldn't load today's agenda"
-          message="Check your connection and try again."
+          message={errorMessage ?? "Check your connection and try again."}
           onRetry={onRetry}
           retrying={retrying}
         />
