@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { CoveragePill } from "@/components/CoveragePill";
+import { apiErrorMessage, isApiHttpError, isApiUnreachableError } from "@/api/client";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
@@ -159,7 +160,7 @@ export default function PublicBooking() {
       setSubmitError(null);
     },
     onError: (e: unknown) => {
-      const status = isApiHttpError(e) ? e.status : (e as { status?: number })?.status;
+      const status = isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
       const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
       if (status === 409) {
         setSubmitError(detail ?? "This slot was just taken — please pick another time.");
