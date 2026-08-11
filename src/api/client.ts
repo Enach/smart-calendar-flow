@@ -377,14 +377,26 @@ function normalizePersonalCalendar(raw: BackendPersonalCalendar): PersonalCalend
   };
 }
 
+/**
+ * Run the real network call, falling back to local preview data ONLY when the
+ * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
+ * rethrown so the UI can surface an actionable error instead of fake success.
+ */
 export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (usingMocks) return mock();
   try {
-    return await real();
-  } catch {
-    return mock();
+    const out = await real();
+    setMockMode(false);
+    return out;
+  } catch (e) {
+    if (isApiUnreachableError(e)) {
+      setMockMode(true);
+      return mock();
+    }
+    throw e;
   }
 }
+
 
 // ---------- Mock implementations ----------
 
