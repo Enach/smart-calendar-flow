@@ -504,7 +504,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
                 {coHosts.map((email) => (
@@ -530,11 +530,22 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           </div>
         </div>
 
+        {error && (
+          <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+
         <div className="mt-8 flex justify-end gap-2 border-t border-border pt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={() => mutation.mutate()} disabled={!canSave || mutation.isPending}>
+          <Button onClick={submit} disabled={!canSave || mutation.isPending}>
+            {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isEdit ? "Save changes" : "Create link"}
+          </Button>
+        </div>
+
             {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? "Save changes" : "Create link"}
           </Button>
