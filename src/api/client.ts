@@ -248,6 +248,65 @@ const API_BASE =
   "/api";
 const NETWORK_TIMEOUT_MS = 4000;
 
+/**
+ * The backend answered with a non-success status (401/403/409/410/422/500…).
+ * This is NEVER replaced with demo data — the UI must surface it.
+ */
+export class ApiHttpError extends Error {
+  readonly status: number;
+  readonly data: unknown;
+  constructor(status: number, data?: unknown, message?: string) {
+    super(message ?? `HTTP ${status}`);
+    this.name = "ApiHttpError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
+/**
+ * The backend could not be reached at all (network error, timeout, or a
+ * non-JSON response such as the SPA index.html when no backend is mounted).
+ * Only this class triggers the preview/offline mock fallback.
+ */
+export class ApiUnreachableError extends Error {
+  constructor(message = "Backend unreachable") {
+    super(message);
+    this.name = "ApiUnreachableError";
+  }
+}
+
+export function isApiHttpError(e: unknown): e is ApiHttpError {
+  return e instanceof ApiHttpError;
+}
+export function isApiUnreachableError(e: unknown): e is ApiUnreachableError {
+  return e instanceof ApiUnreachableError;
+}
+
+/** Human-readable message for an API failure, usable directly in the UI. */
+export function apiErrorMessage(e: unknown): string {
+  if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
+  if (isApiHttpError(e)) {
+    const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
+    const detail = data?.error ?? data?.message ?? data?.detail;
+    if (detail) return detail;
+    switch (e.status) {
+      case 401:
+        return "Your session expired. Please sign in again.";
+      case 403:
+        return "You don't have permission to do this.";
+      case 409:
+        return "This conflicts with the current state. Refresh and try again.";
+      case 410:
+        return "This resource is no longer available.";
+      case 422:
+        return "Some of the submitted data is invalid.";
+      default:
+        return e.status >= 500 ? "The server had a problem. Try again shortly." : `Request failed (${e.status}).`;
+    }
+  }
+  return e instanceof Error ? e.message : "Unexpected error.";
+}
+
 export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin);
   if (query) {
@@ -257,28 +316,41 @@ export async function requestApi<T>(method: string, path: string, body?: unknown
   }
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), NETWORK_TIMEOUT_MS);
+  let res: Response;
   try {
-    const res = await fetch(url.toString(), {
+    res = await fetch(url.toString(), {
       method,
       signal: ctrl.signal,
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include",
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    if (res.status === 204) return undefined as T;
-    const ct = res.headers.get("content-type") || "";
-    // Strict: only accept JSON. If the dev server returns HTML
-    // (e.g. SPA index.html when no real backend exists), treat as failure
-    // so the mock fallback engages.
-    if (!ct.includes("application/json")) {
-      throw new Error("Non-JSON response");
-    }
-    return (await res.json()) as T;
+  } catch {
+    throw new ApiUnreachableError();
   } finally {
     clearTimeout(t);
   }
+
+  if (!res.ok) {
+    let data: unknown;
+    try {
+      data = await res.json();
+    } catch {
+      /* body is not JSON — keep undefined */
+    }
+    throw new ApiHttpError(res.status, data);
+  }
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get("content-type") || "";
+  // Strict: only accept JSON. If the dev server returns HTML
+  // (e.g. SPA index.html when no real backend exists), the backend is not
+  // actually mounted → treat as unreachable so the preview fallback engages.
+  if (!ct.includes("application/json")) {
+    throw new ApiUnreachableError("Non-JSON response");
+  }
+  return (await res.json()) as T;
 }
+
 
 
 type BackendPersonalCalendar = {
@@ -305,14 +377,26 @@ function normalizePersonalCalendar(raw: BackendPersonalCalendar): PersonalCalend
   };
 }
 
+/**
+ * Run the real network call, falling back to local preview data ONLY when the
+ * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
+ * rethrown so the UI can surface an actionable error instead of fake success.
+ */
 export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (usingMocks) return mock();
   try {
-    return await real();
-  } catch {
-    return mock();
+    const out = await real();
+    setMockMode(false);
+    return out;
+  } catch (e) {
+    if (isApiUnreachableError(e)) {
+      setMockMode(true);
+      return mock();
+    }
+    throw e;
   }
 }
+
 
 // ---------- Mock implementations ----------
 
