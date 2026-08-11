@@ -237,15 +237,17 @@ function InviteBanner({
             <Button
               size="sm"
               variant="outline"
+              disabled={pendingId === inv.link_id}
               onClick={() => onDecline(inv.link_id)}
               className="border-[#3a2e0a]/20 bg-transparent text-[#3a2e0a] hover:bg-[#3a2e0a]/5"
             >
               Decline
             </Button>
-            <Button size="sm" onClick={() => onAccept(inv.link_id)}>
+            <Button size="sm" disabled={pendingId === inv.link_id} onClick={() => onAccept(inv.link_id)}>
               Accept
             </Button>
           </div>
+
         </div>
       ))}
     </div>
