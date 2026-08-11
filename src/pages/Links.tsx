@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
+import { LinkBookingsDialog } from "@/components/links/LinkBookingsDialog";
 import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl } from "@/api/schedulingLinks";
 import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
@@ -285,6 +286,7 @@ export default function LinksPage() {
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<SchedulingLink | null>(null);
+  const [bookingsLink, setBookingsLink] = useState<SchedulingLink | null>(null);
 
   const {
     data,
@@ -437,6 +439,7 @@ export default function LinksPage() {
                       onEdit={openEdit}
                       onDelete={handleDelete}
                       onToggleActive={(link, active) => updateLink.mutate({ id: link.id, active })}
+                      onViewBookings={setBookingsLink}
                     />
                   ))}
                 </div>
@@ -459,6 +462,11 @@ export default function LinksPage() {
       </main>
 
       <LinkEditDrawer open={drawerOpen} onOpenChange={setDrawerOpen} link={editingLink} />
+      <LinkBookingsDialog
+        open={!!bookingsLink}
+        onOpenChange={(o) => !o && setBookingsLink(null)}
+        link={bookingsLink}
+      />
     </div>
   );
 }
