@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -8,13 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
-import { schedulingLinksApi } from "@/api/schedulingLinks";
+import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl } from "@/api/schedulingLinks";
+import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { SchedulingLink } from "@/api/types";
 
 function publicUrlFor(slug: string) {
-  return `${window.location.origin}/book/${slug}`;
+  return publicBookingUrl(slug);
 }
+
 
 function CopyButton({ slug }: { slug: string }) {
   const [copied, setCopied] = useState(false);
