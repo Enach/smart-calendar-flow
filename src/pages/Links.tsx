@@ -411,6 +411,8 @@ export default function LinksPage() {
             ))}
           </div>
         ) : owned.length === 0 && shared.length === 0 ? (
+          listError ? null : (
+
           <EmptyState onCreate={openCreate} />
         ) : (
           <div className="space-y-8">
