@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -8,13 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
-import { schedulingLinksApi } from "@/api/schedulingLinks";
+import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl } from "@/api/schedulingLinks";
+import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { SchedulingLink } from "@/api/types";
 
 function publicUrlFor(slug: string) {
-  return `${window.location.origin}/book/${slug}`;
+  return publicBookingUrl(slug);
 }
+
 
 function CopyButton({ slug }: { slug: string }) {
   const [copied, setCopied] = useState(false);
@@ -178,19 +180,47 @@ function LinkCard({
   );
 }
 
+function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+      <p className="min-w-0 flex-1 text-sm text-destructive/90">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="shrink-0">
+        <RotateCcw className="h-3.5 w-3.5" /> Retry
+      </Button>
+    </div>
+  );
+}
+
 function InviteBanner({
   onAccept,
   onDecline,
+  pendingId,
 }: {
   onAccept: (linkId: string) => void;
   onDecline: (linkId: string) => void;
+  pendingId?: string | null;
 }) {
-  const { data: invites = [] } = useQuery({
-    queryKey: ["scheduling-link-invites"],
+  const {
+    data: invites = [],
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: schedulingLinkKeys.invites,
     queryFn: () => schedulingLinksApi.listInvites(),
+    // Keep the last successful list visible if a refetch fails.
+    placeholderData: (prev) => prev,
   });
 
+  if (error && !invites.length) {
+    return <ErrorBanner message={apiErrorMessage(error)} onRetry={() => refetch()} busy={isFetching} />;
+  }
   if (!invites.length) return null;
+
 
   return (
     <div className="space-y-2">
@@ -207,15 +237,17 @@ function InviteBanner({
             <Button
               size="sm"
               variant="outline"
+              disabled={pendingId === inv.link_id}
               onClick={() => onDecline(inv.link_id)}
               className="border-[#3a2e0a]/20 bg-transparent text-[#3a2e0a] hover:bg-[#3a2e0a]/5"
             >
               Decline
             </Button>
-            <Button size="sm" onClick={() => onAccept(inv.link_id)}>
+            <Button size="sm" disabled={pendingId === inv.link_id} onClick={() => onAccept(inv.link_id)}>
               Accept
             </Button>
           </div>
+
         </div>
       ))}
     </div>
@@ -245,59 +277,78 @@ export default function LinksPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<SchedulingLink | null>(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["scheduling-links"],
+  const {
+    data,
+    isLoading,
+    error: listError,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: schedulingLinkKeys.links,
     queryFn: () => schedulingLinksApi.listLinks(),
+    // Keep the last successful list on screen when a refetch fails.
+    placeholderData: (prev) => prev,
   });
 
   const owned = useMemo(() => data?.owned ?? [], [data]);
   const shared = useMemo(() => data?.shared ?? [], [data]);
 
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
+    qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+  };
+
   const acceptInvite = useMutation({
     mutationFn: (linkId: string) => schedulingLinksApi.acceptInvite(linkId),
     onSuccess: () => {
       toast.success("Invite accepted");
-      qc.invalidateQueries({ queryKey: ["scheduling-link-invites"] });
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not accept invite"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const declineInvite = useMutation({
     mutationFn: (linkId: string) => schedulingLinksApi.declineInvite(linkId),
     onSuccess: () => {
       toast.info("Invite declined");
-      qc.invalidateQueries({ queryKey: ["scheduling-link-invites"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not decline invite"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const deleteLink = useMutation({
     mutationFn: (id: string) => schedulingLinksApi.deleteLink(id),
     onSuccess: () => {
       toast.info("Link deleted");
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not delete link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const leaveLink = useMutation({
     mutationFn: (id: string) => schedulingLinksApi.leaveLink(id),
     onSuccess: () => {
       toast.info("You left the link");
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not leave the link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const updateLink = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       schedulingLinksApi.updateLink(id, { active }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+    onSuccess: (link) => {
+      toast.success(link.active ? "Link activated" : "Link paused");
+      invalidateAll();
     },
-    onError: () => toast.error("Could not update the link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
+
+  const pendingInviteId =
+    (acceptInvite.isPending ? acceptInvite.variables : undefined) ??
+    (declineInvite.isPending ? declineInvite.variables : undefined) ??
+    null;
+
 
   function openCreate() {
     setEditingLink(null);
@@ -344,18 +395,25 @@ export default function LinksPage() {
           <InviteBanner
             onAccept={(id) => acceptInvite.mutate(id)}
             onDecline={(id) => declineInvite.mutate(id)}
+            pendingId={pendingInviteId}
           />
         </div>
 
+        {listError && (
+          <ErrorBanner message={apiErrorMessage(listError)} onRetry={() => refetch()} busy={isFetching} />
+        )}
+
         {isLoading ? (
+
           <div className="space-y-3">
             {[0, 1].map((i) => (
               <div key={i} className="h-32 animate-pulse rounded-xl border border-border bg-card" />
             ))}
           </div>
         ) : owned.length === 0 && shared.length === 0 ? (
-          <EmptyState onCreate={openCreate} />
+          listError ? null : <EmptyState onCreate={openCreate} />
         ) : (
+
           <div className="space-y-8">
             {owned.length > 0 && (
               <section>

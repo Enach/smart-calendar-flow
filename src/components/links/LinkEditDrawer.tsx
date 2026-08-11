@@ -7,8 +7,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { schedulingLinksApi } from "@/api/schedulingLinks";
-import { api } from "@/api/client";
+import {
+  schedulingLinkKeys,
+  schedulingLinksApi,
+  publicBookingUrl,
+  validateLinkForm,
+  type LinkFormValues,
+} from "@/api/schedulingLinks";
+import { api, apiErrorMessage } from "@/api/client";
+
 import { getFreebusy } from "@/api/coverageCache";
 import type { LinkUsageType, ParticipantCoverage, SchedulingLink, Weekday } from "@/api/types";
 import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
@@ -188,20 +195,28 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     return { kind: "unknown" };
   }
 
+  const formValues = useMemo<LinkFormValues>(
+    () => ({
+      title,
+      durations,
+      days,
+      window_start: windowStart,
+      window_end: windowEnd,
+      buffer_before: bufferBefore,
+      buffer_after: bufferAfter,
+      min_notice_minutes: minNotice,
+      usage_type: usageType,
+      max_uses: usageType === "recurring" ? maxUses : undefined,
+    }),
+    [title, durations, days, windowStart, windowEnd, bufferBefore, bufferAfter, minNotice, usageType, maxUses],
+  );
+
   const mutation = useMutation({
     mutationFn: async () => {
       const payload = {
+        ...formValues,
         title: title.trim(),
         slug: slug.trim(),
-        durations,
-        days,
-        window_start: windowStart,
-        window_end: windowEnd,
-        buffer_before: bufferBefore,
-        buffer_after: bufferAfter,
-        min_notice_minutes: minNotice,
-        usage_type: usageType,
-        max_uses: usageType === "recurring" ? Math.max(1, maxUses) : undefined,
         co_host_emails: coHosts,
       };
       if (link) return schedulingLinksApi.updateLink(link.id, payload);
@@ -209,7 +224,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     },
     onSuccess: () => {
       const newCount = coHosts.filter((e) => !initialEmails.includes(e)).length;
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      setError(null);
+      qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+      qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
       if (newCount > 0) {
         toast.success(`Invites sent to ${newCount} co-host${newCount === 1 ? "" : "s"}`);
       } else {
@@ -217,10 +234,23 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       }
       onOpenChange(false);
     },
-    onError: () => {
-      toast.error(isEdit ? "Could not update the link" : "Could not create the link");
+    onError: (e) => {
+      // 409 / 422 and friends keep the drawer open with an actionable message.
+      const message = apiErrorMessage(e);
+      setError(message);
+      toast.error(message);
     },
   });
+
+  function submit() {
+    const problem = validateLinkForm(formValues);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    setError(null);
+    mutation.mutate();
+  }
 
   function toggleDuration(d: number) {
     setDurations((prev) => (prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)));
@@ -253,7 +283,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     setCoHosts((prev) => prev.filter((e) => e !== email));
   }
 
-  const canSave = title.trim().length > 0 && slug.trim().length > 0 && durations.length > 0 && days.length > 0;
+  const canSave = validateLinkForm(formValues) === null;
+
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -436,21 +467,17 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="link-slug">Slug</Label>
-            <Input
-              id="link-slug"
-              value={slug}
-              onChange={(e) => {
-                setSlugDirty(true);
-                setSlug(slugify(e.target.value));
-              }}
-              placeholder="intro-chat"
-              maxLength={60}
-            />
+            <Label>Public URL</Label>
+            <p className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
+              {publicBookingUrl(slug || "your-link")}
+            </p>
             <p className="text-xs text-muted-foreground">
-              paceday.com/book/<span className="font-medium text-foreground">{slug || "your-slug"}</span>
+              {isEdit
+                ? "The address is fixed once the link exists."
+                : "The address is generated from the title when the link is created."}
             </p>
           </div>
+
 
           {/* Co-hosts */}
           <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-4">
@@ -477,7 +504,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>
-            {error && <p className="text-xs text-destructive">{error}</p>}
+            
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
                 {coHosts.map((email) => (
@@ -503,11 +530,17 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           </div>
         </div>
 
+        {error && (
+          <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+
         <div className="mt-8 flex justify-end gap-2 border-t border-border pt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={() => mutation.mutate()} disabled={!canSave || mutation.isPending}>
+          <Button onClick={submit} disabled={!canSave || mutation.isPending}>
             {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? "Save changes" : "Create link"}
           </Button>
