@@ -583,6 +583,37 @@ export const schedulingLinksApi = {
       },
     ),
 
+  /** GET /scheduling-links/:id/bookings — bookings already made on a link. */
+  listBookings: (id: string) =>
+    withFallback<BookingConfirmation[]>(
+      async () => {
+        const raw = await requestApi<BackendBooking[] | { bookings?: BackendBooking[] }>(
+          "GET",
+          `/scheduling-links/${id}/bookings`,
+        );
+        const items = Array.isArray(raw) ? raw : raw?.bookings ?? [];
+        return items.map((b) => ({
+          id: b.id,
+          link_slug: b.link_slug ?? "",
+          title: b.title ?? "Booking",
+          start: b.start,
+          end: b.end,
+          duration_minutes:
+            b.duration_minutes ?? Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60_000),
+          hosts: b.hosts ?? [],
+          booker_name: b.booker_name,
+          booker_email: b.booker_email,
+          notes: b.notes,
+        }));
+      },
+      () => {
+        const link = mockState.links.find((l) => l.id === id);
+        if (!link) return [];
+        return mockState.bookings.filter((b) => b.link_slug === link.slug);
+      },
+    ),
+
+
   // ----- public: booking flow -----
 
   getPublicLink: (slug: string) =>
