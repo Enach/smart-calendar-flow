@@ -520,7 +520,7 @@ export const schedulingLinksApi = {
     withFallback<SchedulingLink>(
       async () => {
         const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
-        const body = backendLinkBody({
+        const merged: LinkFormValues = {
           title: input.title ?? current.title,
           durations: input.durations ?? current.durations ?? current.duration_options ?? [30],
           days: (input.days ?? current.days ?? current.days_of_week?.map((day) => WEEKDAY_BY_NUMBER[day]).filter(Boolean) ?? ["mon", "tue", "wed", "thu", "fri"]) as Weekday[],
@@ -531,9 +531,11 @@ export const schedulingLinksApi = {
           min_notice_minutes: input.min_notice_minutes ?? current.min_notice_minutes ?? 0,
           usage_type: input.usage_type ?? current.usage_type ?? "reusable",
           max_uses: input.max_uses ?? current.max_uses,
-          active: input.active,
-        });
+        };
+        assertValidLinkBody(merged);
+        const body = backendLinkBody({ ...merged, active: input.active });
         await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
+
         if (input.co_host_emails) {
           await Promise.allSettled(input.co_host_emails.map((email) =>
             requestApi("POST", `/scheduling-links/${id}/hosts`, { email }),
