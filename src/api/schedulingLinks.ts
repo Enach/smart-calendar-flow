@@ -655,14 +655,18 @@ export const schedulingLinksApi = {
     ),
 
   getPublicSlots: (slug: string, params: { date?: string; duration?: number }) => {
-    // The backend requires a date and returns a bare [] of slots. The UI no
-    // longer probes an unsupported summary endpoint; it asks per selected day.
+    // The backend requires a date and may answer with either a bare array of
+    // slots or an envelope. Without a date there is nothing to ask for.
     if (!params.date) return Promise.resolve({ available_dates: [] as string[], slots: [] as BookingSlot[] });
-    return withFallback<{ available_dates: string[]; slots?: BookingSlot[] }>(
+    return withFallback<{ available_dates: string[]; slots: BookingSlot[] }>(
       async () => {
-        const raw = await requestApi<{ slots?: BookingSlot[]; available_dates?: string[] }>("GET", `/book/${slug}/slots`, undefined, {
-          date: params.date, duration: params.duration ? String(params.duration) : undefined,
-        });
+        const raw = await requestApi<BookingSlot[] | { slots?: BookingSlot[]; available_dates?: string[] }>(
+          "GET",
+          `/book/${slug}/slots`,
+          undefined,
+          { date: params.date, duration: params.duration ? String(params.duration) : undefined },
+        );
+        if (Array.isArray(raw)) return { slots: raw, available_dates: [] };
         return { slots: raw.slots ?? [], available_dates: raw.available_dates ?? [] };
       },
       () => {
@@ -672,6 +676,7 @@ export const schedulingLinksApi = {
       },
     );
   },
+
 
   bookSlot: (
     slug: string,

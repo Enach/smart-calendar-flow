@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { CoveragePill } from "@/components/CoveragePill";
+import { apiErrorMessage, isApiHttpError, isApiUnreachableError } from "@/api/client";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
@@ -116,26 +117,27 @@ export default function PublicBooking() {
     }
   }, [link, duration]);
 
-  // Available dates (for greying the calendar).
-  const availableDatesQuery = useQuery({
-    queryKey: ["public-slots-summary", slug],
-    queryFn: () => schedulingLinksApi.getPublicSlots(slug, {}),
-    enabled: !!link,
-  });
-  const availableDates = useMemo(() => {
-    const s = new Set<string>();
-    (availableDatesQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
-    return s;
-  }, [availableDatesQuery.data]);
-
-  // Slots for the selected day.
+  // Slots for the selected day. The backend answers per date; `available_dates`
+  // is only used when the backend actually returns it.
   const dateStr = selectedDate ? dateOnlyStr(selectedDate) : undefined;
   const slotsQuery = useQuery({
     queryKey: ["public-slots", slug, dateStr, duration],
     queryFn: () => schedulingLinksApi.getPublicSlots(slug, { date: dateStr!, duration: duration! }),
     enabled: !!dateStr && !!duration,
+    placeholderData: (prev) => prev,
+    retry: false,
   });
   const slots = slotsQuery.data?.slots ?? [];
+  const availableDates = useMemo(() => {
+    const s = new Set<string>();
+    (slotsQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
+    return s;
+  }, [slotsQuery.data]);
+  const slotsErrorMessage = slotsQuery.error
+    ? isApiUnreachableError(slotsQuery.error)
+      ? "We can't reach the scheduling service right now."
+      : apiErrorMessage(slotsQuery.error)
+    : null;
 
   // Reset slot selection when date / duration change.
   useEffect(() => {
@@ -152,44 +154,61 @@ export default function PublicBooking() {
         email: email.trim(),
         notes: notes.trim() || undefined,
       }),
+    retry: false,
     onSuccess: (conf) => {
       setConfirmation(conf);
       setSubmitError(null);
     },
     onError: (e: unknown) => {
-      const status = (e as { status?: number })?.status;
+      const status = isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
+      const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
       if (status === 409) {
-        setSubmitError("This slot was just taken — please pick another time.");
+        setSubmitError(detail ?? "This slot was just taken — please pick another time.");
         setSelectedSlot(null);
         slotsQuery.refetch();
       } else if (status === 422) {
-        setSubmitError("This time is too soon — the host requires more advance notice.");
-        setSelectedSlot(null);
+        setSubmitError(detail ?? "This time can't be booked — the host requires more advance notice.");
         slotsQuery.refetch();
+      } else if (status === 400) {
+        setSubmitError(detail ?? "Please check your details and try again.");
       } else if (status === 410) {
-        setSubmitError("This link is no longer accepting bookings.");
+        setSubmitError(detail ?? "This link is no longer accepting bookings.");
+      } else if (isApiUnreachableError(e)) {
+        setSubmitError("We can't reach the scheduling service. Check your connection and try again.");
       } else {
-        setSubmitError("Could not complete the booking. Please try again.");
+        setSubmitError(apiErrorMessage(e));
         toast.error("Booking failed");
       }
     },
   });
 
+
   // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
-    const status = (linkQuery.error as { status?: number } | null)?.status;
+    const err = linkQuery.error as unknown;
+    const status = isApiHttpError(err) ? err.status : (err as { status?: number } | null)?.status;
     const gone = status === 410;
+    const notFound = status === 404 || (err as Error | null)?.message === "not_found";
+    const heading = gone ? "Link no longer available" : notFound ? "Link not found" : "We couldn't load this link";
+    const body = gone
+      ? "This booking link has been used up or paused. Reach out to the host for another time."
+      : notFound
+        ? "This booking link doesn't exist or is no longer active."
+        : isApiUnreachableError(err)
+          ? "We can't reach the scheduling service right now. Check your connection and try again."
+          : apiErrorMessage(err);
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="font-serif text-3xl text-foreground">
-            {gone ? "Link no longer available" : "Link not found"}
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {gone
-              ? "This booking link has been used up or paused. Reach out to the host for another time."
-              : "This booking link doesn't exist or is no longer active."}
-          </p>
+          <h1 className="font-serif text-3xl text-foreground">{heading}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{body}</p>
+          {!gone && !notFound && (
+            <div className="mt-5">
+              <Button variant="outline" size="sm" onClick={() => linkQuery.refetch()} disabled={linkQuery.isFetching}>
+                {linkQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin" />} Try again
+              </Button>
+            </div>
+          )}
           <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
             ← Back to Paceday
           </Link>
@@ -197,6 +216,7 @@ export default function PublicBooking() {
       </div>
     );
   }
+
 
   // ---------- Render: confirmation ----------
   if (confirmation) {
@@ -369,6 +389,10 @@ export default function PublicBooking() {
                     onSelect={setSelectedDate}
                     disabled={(date) => {
                       if (date < today) return true;
+                      // Only grey out days when the backend actually told us
+                      // which dates are open; otherwise every future day is
+                      // selectable and availability is resolved per-day.
+                      if (availableDates.size === 0) return false;
                       return !availableDates.has(dateOnlyStr(date));
                     }}
                     className="pointer-events-auto rounded-md border border-border bg-background p-3"
@@ -380,18 +404,28 @@ export default function PublicBooking() {
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {selectedDate ? fmtDateLong(selectedDate.toISOString()) : "Available times"}
                   </p>
+                  {slotsErrorMessage && (
+                    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      <span>{slotsErrorMessage}</span>
+                      <Button variant="outline" size="sm" onClick={() => slotsQuery.refetch()} disabled={slotsQuery.isFetching}>
+                        {slotsQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin" />} Retry
+                      </Button>
+                    </div>
+                  )}
                   {!selectedDate ? (
                     <p className="text-sm text-muted-foreground">Select a date to see available times.</p>
-                  ) : slotsQuery.isLoading ? (
+                  ) : slotsQuery.isLoading || (slotsQuery.isFetching && slots.length === 0 && !slotsErrorMessage) ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" /> Finding times…
                     </div>
                   ) : slots.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-                      {isCollective
-                        ? "No time available for all hosts on this day — try another date."
-                        : "No time available on this day — try another date."}
-                    </p>
+                    !slotsErrorMessage && (
+                      <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {isCollective
+                          ? "No time available for all hosts on this day — try another date."
+                          : "No time available on this day — try another date."}
+                      </p>
+                    )
                   ) : (
                     <div className="grid max-h-[360px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
                       {slots.map((s) => (
@@ -407,6 +441,7 @@ export default function PublicBooking() {
                     </div>
                   )}
                 </div>
+
               </div>
             ) : (
               /* Step 3 — Booker details */
