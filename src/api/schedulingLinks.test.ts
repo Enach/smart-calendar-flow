@@ -310,3 +310,112 @@ describe("link bookings", () => {
     expect(res[0].duration_minutes).toBe(60);
   });
 });
+
+describe("public booking contract", () => {
+  beforeEach(() => {
+    setMockMode(false);
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("maps GET /book/:slug metadata including duration_options and coverage", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      expect(requestPath(input)).toBe("/api/book/intro");
+      return jsonResponse({
+        slug: "intro",
+        title: "Intro",
+        duration_options: [15, 45],
+        hosts: [{ email: "owner@co.com", name: "Owner" }],
+        min_notice_minutes: 120,
+        usage_type: "single_use",
+        coverage: { total: 2, checked: 1 },
+      });
+    });
+    const info = await schedulingLinksApi.getPublicLink("intro");
+    expect(info).toMatchObject({
+      slug: "intro",
+      durations: [15, 45],
+      min_notice_minutes: 120,
+      usage_type: "single_use",
+      coverage: { total: 2, checked: 1 },
+    });
+    expect(info.hosts[0].email).toBe("owner@co.com");
+  });
+
+  it("sends date and duration query params and accepts a bare slot array", async () => {
+    let url = "";
+    fetchMock.mockImplementation(async (input) => {
+      url = String(input);
+      return jsonResponse([{ start: "2026-03-02T09:00:00Z", end: "2026-03-02T09:30:00Z" }]);
+    });
+    const res = await schedulingLinksApi.getPublicSlots("intro", { date: "2026-03-02", duration: 30 });
+    expect(url).toContain("/api/book/intro/slots");
+    expect(url).toContain("date=2026-03-02");
+    expect(url).toContain("duration=30");
+    expect(res.slots).toHaveLength(1);
+    expect(res.available_dates).toEqual([]);
+  });
+
+  it("accepts the envelope form of the slots response", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({ slots: [{ start: "2026-03-02T09:00:00Z", end: "2026-03-02T09:30:00Z" }], available_dates: ["2026-03-02"] }),
+    );
+    const res = await schedulingLinksApi.getPublicSlots("intro", { date: "2026-03-02", duration: 30 });
+    expect(res.available_dates).toEqual(["2026-03-02"]);
+    expect(res.slots).toHaveLength(1);
+  });
+
+  it("does not call the backend without a date", async () => {
+    const res = await schedulingLinksApi.getPublicSlots("intro", {});
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(res.slots).toEqual([]);
+  });
+
+  it("posts the frozen booking body names", async () => {
+    let body: Record<string, unknown> = {};
+    fetchMock.mockImplementation(async (input, init) => {
+      expect(requestPath(input)).toBe("/api/book/intro");
+      body = JSON.parse(String(init?.body));
+      return jsonResponse({
+        id: "b1",
+        link_slug: "intro",
+        title: "Intro",
+        start: "2026-03-02T09:00:00Z",
+        end: "2026-03-02T09:30:00Z",
+        booker_name: "Zoe",
+        booker_email: "zoe@co.com",
+      });
+    });
+    const conf = await schedulingLinksApi.bookSlot("intro", {
+      start: "2026-03-02T09:00:00Z",
+      duration_minutes: 30,
+      name: "Zoe",
+      email: "zoe@co.com",
+      notes: "hi",
+    });
+    expect(Object.keys(body).sort()).toEqual(["duration", "email", "end", "name", "notes", "start"]);
+    expect(body).toMatchObject({ name: "Zoe", email: "zoe@co.com", duration: 30, end: "2026-03-02T09:30:00.000Z" });
+    expect(conf.duration_minutes).toBe(30);
+  });
+
+  it.each([404, 409, 410, 422, 400])("surfaces HTTP %i instead of falling back to mocks", async (status) => {
+    fetchMock.mockImplementation(async () => jsonResponse({ error: `boom ${status}` }, status));
+    const err = await schedulingLinksApi
+      .bookSlot("intro", { start: "2026-03-02T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" })
+      .catch((e) => e);
+    expect(isApiHttpError(err)).toBe(true);
+    expect((err as { status: number }).status).toBe(status);
+    expect(isUsingMocks()).toBe(false);
+  });
+
+  it("falls back to preview data only when the backend is unreachable", async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const info = await schedulingLinksApi.getPublicLink("intro-chat");
+    expect(isUsingMocks()).toBe(true);
+    expect(info.slug).toBe("intro-chat");
+    setMockMode(false);
+  });
+});
