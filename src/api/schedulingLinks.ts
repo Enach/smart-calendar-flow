@@ -350,7 +350,9 @@ function isLinkExhausted(link: SchedulingLink): boolean {
 export const schedulingLinkKeys = {
   links: ["scheduling-links"] as const,
   invites: ["scheduling-link-invites"] as const,
+  bookings: (linkId: string) => ["scheduling-link-bookings", linkId] as const,
 };
+
 
 export interface LinkFormValues {
   title: string;
