@@ -185,19 +185,30 @@ export default function PublicBooking() {
 
   // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
-    const status = (linkQuery.error as { status?: number } | null)?.status;
+    const err = linkQuery.error as unknown;
+    const status = isApiHttpError(err) ? err.status : (err as { status?: number } | null)?.status;
     const gone = status === 410;
+    const notFound = status === 404 || (err as Error | null)?.message === "not_found";
+    const heading = gone ? "Link no longer available" : notFound ? "Link not found" : "We couldn't load this link";
+    const body = gone
+      ? "This booking link has been used up or paused. Reach out to the host for another time."
+      : notFound
+        ? "This booking link doesn't exist or is no longer active."
+        : isApiUnreachableError(err)
+          ? "We can't reach the scheduling service right now. Check your connection and try again."
+          : apiErrorMessage(err);
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
-          <h1 className="font-serif text-3xl text-foreground">
-            {gone ? "Link no longer available" : "Link not found"}
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            {gone
-              ? "This booking link has been used up or paused. Reach out to the host for another time."
-              : "This booking link doesn't exist or is no longer active."}
-          </p>
+          <h1 className="font-serif text-3xl text-foreground">{heading}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">{body}</p>
+          {!gone && !notFound && (
+            <div className="mt-5">
+              <Button variant="outline" size="sm" onClick={() => linkQuery.refetch()} disabled={linkQuery.isFetching}>
+                {linkQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin" />} Try again
+              </Button>
+            </div>
+          )}
           <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
             ← Back to Paceday
           </Link>
@@ -205,6 +216,7 @@ export default function PublicBooking() {
       </div>
     );
   }
+
 
   // ---------- Render: confirmation ----------
   if (confirmation) {
