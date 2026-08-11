@@ -478,10 +478,12 @@ export const schedulingLinksApi = {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses?: number; co_host_emails: string[];
-  }) =>
-    withFallback<SchedulingLink>(
+  }) => {
+    assertValidLinkBody(input);
+    return withFallback<SchedulingLink>(
       async () => {
         const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", backendLinkBody(input));
+
         await Promise.allSettled(input.co_host_emails.map((email) =>
           requestApi("POST", `/scheduling-links/${raw.id}/hosts`, { email }),
         ));
