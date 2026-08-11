@@ -396,7 +396,30 @@ export function publicBookingUrl(slug: string, origin: string = window.location.
   return `${origin.replace(/\/+$/, "")}/book/${slug}`;
 }
 
+/**
+ * Guard mirroring the backend's strict 422 validation. We never send a body the
+ * backend would reject (empty arrays, inverted window, negative buffers/notice,
+ * invalid usage_type, recurring without a positive max_uses).
+ */
+export class LinkValidationError extends Error {
+  readonly status = 422;
+  constructor(message: string) {
+    super(message);
+    this.name = "LinkValidationError";
+  }
+}
+
+function assertValidLinkBody(v: LinkFormValues): void {
+  const problem = validateLinkForm(v);
+  if (problem) throw new LinkValidationError(problem);
+  if (!["reusable", "recurring", "single_use"].includes(v.usage_type)) {
+    throw new LinkValidationError("Pick a valid link type.");
+  }
+}
+
 // ---------- Public API ----------
+
+
 
 
 export const schedulingLinksApi = {
