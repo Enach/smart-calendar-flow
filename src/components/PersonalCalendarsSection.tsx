@@ -1,5 +1,17 @@
 import { useState } from "react";
-import { Loader2, Plus, RefreshCw, Trash2, Calendar, Mail, Link as LinkIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  Calendar,
+  Check,
+  Link as LinkIcon,
+  Loader2,
+  Mail,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   usePersonalCalendars,
   useAddPersonalCalendar,
@@ -7,8 +19,9 @@ import {
   useDeletePersonalCalendar,
   useSyncPersonalCalendar,
 } from "@/hooks/usePersonalCalendars";
+import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import type { PersonalCalendarType } from "@/api/types";
+import type { PersonalCalendar, PersonalCalendarType } from "@/api/types";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -19,6 +32,17 @@ const TYPE_META: Record<PersonalCalendarType, { label: string; icon: React.Compo
   webcal: { label: "WebCal", icon: LinkIcon, badgeCls: "bg-muted text-muted-foreground" },
 };
 
+export function isValidWebcalUrl(value: string): boolean {
+  const v = value.trim();
+  if (!v) return false;
+  try {
+    const u = new URL(v);
+    return ["webcal:", "http:", "https:"].includes(u.protocol) && !!u.host;
+  } catch {
+    return false;
+  }
+}
+
 function formatRelative(iso?: string) {
   if (!iso) return "Never";
   const diff = Date.now() - new Date(iso).getTime();
@@ -28,14 +52,16 @@ function formatRelative(iso?: string) {
   return `${Math.floor(diff / 86_400_000)} d ago`;
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={checked ? "Disable calendar" : "Enable calendar"}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-primary" : "bg-muted"}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 ${checked ? "bg-primary" : "bg-muted"}`}
     >
       <span
         className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${
@@ -47,76 +73,52 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 }
 
 export function PersonalCalendarsSection() {
-  const { data: cals = [], isLoading } = usePersonalCalendars();
-  const update = useUpdatePersonalCalendar();
-  const remove = useDeletePersonalCalendar();
-  const sync = useSyncPersonalCalendar();
+  const { data: cals = [], isLoading, isError, error, isFetching, refetch } = usePersonalCalendars();
   const [modalOpen, setModalOpen] = useState(false);
+
+  const hasCachedData = cals.length > 0;
 
   return (
     <>
       <div className="space-y-3">
+        {isError && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium">Couldn't load personal calendars</p>
+              <p className="mt-0.5 text-destructive/80">{apiErrorMessage(error)}</p>
+              {hasCachedData && (
+                <p className="mt-0.5 text-destructive/70">Showing the last loaded list.</p>
+              )}
+            </div>
+            <button
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="shrink-0 rounded-md border border-destructive/30 px-2 py-1 text-[11px] font-semibold transition hover:bg-destructive/10 disabled:opacity-50"
+            >
+              {isFetching ? "Retrying…" : "Retry"}
+            </button>
+          </div>
+        )}
+
         {isLoading ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin" /> Loading…
           </div>
         ) : cals.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border bg-muted/30 p-4 text-center text-xs text-muted-foreground">
-            No personal calendars yet. Add one to block out personal time so it never gets scheduled over.
-          </p>
+          !isError && (
+            <p className="rounded-lg border border-dashed border-border bg-muted/30 p-4 text-center text-xs text-muted-foreground">
+              No personal calendars yet. Add one to block out personal time so it never gets scheduled over.
+            </p>
+          )
         ) : (
           <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {cals.map((c) => {
-              const meta = TYPE_META[c.type];
-              const Icon = meta.icon;
-              return (
-                <li key={c.id} className="flex items-center gap-3 bg-background p-3">
-                  <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium text-foreground">{c.label}</p>
-                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${meta.badgeCls}`}>
-                        {meta.label}
-                      </span>
-                    </div>
-                    <p className="truncate text-[11px] text-muted-foreground">
-                      {c.email || c.url || "—"} · last synced {formatRelative(c.last_synced_at)}
-                    </p>
-                  </div>
-                  <Toggle
-                    checked={c.enabled}
-                    onChange={(v) => update.mutate({ id: c.id, patch: { enabled: v } })}
-                  />
-                  <button
-                    onClick={() => {
-                      sync.mutate(c.id, {
-                        onSuccess: () => toast.success(`Synced ${c.label}`),
-                        onError: () => toast.error("Sync failed"),
-                      });
-                    }}
-                    disabled={sync.isPending}
-                    title="Sync now"
-                    className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Remove "${c.label}"?`)) {
-                        remove.mutate(c.id, {
-                          onSuccess: () => toast.success("Removed"),
-                          onError: () => toast.error("Failed to remove"),
-                        });
-                      }
-                    }}
-                    title="Delete"
-                    className="rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              );
-            })}
+            {cals.map((c) => (
+              <CalendarRow key={c.id} cal={c} />
+            ))}
           </ul>
         )}
 
@@ -133,43 +135,187 @@ export function PersonalCalendarsSection() {
   );
 }
 
+function CalendarRow({ cal }: { cal: PersonalCalendar }) {
+  const update = useUpdatePersonalCalendar();
+  const remove = useDeletePersonalCalendar();
+  const sync = useSyncPersonalCalendar();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(cal.label);
+
+  const meta = TYPE_META[cal.type] ?? TYPE_META.webcal;
+  const Icon = meta.icon;
+  const busy = update.isPending || remove.isPending || sync.isPending;
+
+  const saveLabel = () => {
+    const label = draft.trim();
+    if (!label) {
+      toast.error("Label is required");
+      return;
+    }
+    if (label === cal.label) {
+      setEditing(false);
+      return;
+    }
+    update.mutate(
+      { id: cal.id, patch: { label } },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          toast.success("Calendar renamed");
+        },
+        onError: (e) => toast.error(apiErrorMessage(e)),
+      },
+    );
+  };
+
+  return (
+    <li className="flex items-center gap-3 bg-background p-3">
+      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        {editing ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              aria-label="Calendar name"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") saveLabel();
+                if (e.key === "Escape") setEditing(false);
+              }}
+              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm text-foreground focus:border-primary focus:outline-none"
+            />
+            <button
+              onClick={saveLabel}
+              disabled={update.isPending}
+              aria-label="Save name"
+              className="rounded-md p-1.5 text-primary transition hover:bg-primary/10 disabled:opacity-50"
+            >
+              {update.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              onClick={() => {
+                setDraft(cal.label);
+                setEditing(false);
+              }}
+              aria-label="Cancel rename"
+              className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <p className={`truncate text-sm font-medium ${cal.enabled ? "text-foreground" : "text-muted-foreground line-through"}`}>
+                {cal.label}
+              </p>
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${meta.badgeCls}`}>
+                {meta.label}
+              </span>
+              <button
+                onClick={() => {
+                  setDraft(cal.label);
+                  setEditing(true);
+                }}
+                aria-label={`Rename ${cal.label}`}
+                className="rounded p-0.5 text-muted-foreground transition hover:text-foreground"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            </div>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {cal.email || cal.url || "—"} · last synced {formatRelative(cal.last_synced_at)}
+            </p>
+          </>
+        )}
+      </div>
+
+      <Toggle
+        checked={cal.enabled}
+        disabled={busy}
+        onChange={(v) =>
+          update.mutate(
+            { id: cal.id, patch: { enabled: v } },
+            {
+              onSuccess: () => toast.success(v ? "Calendar enabled" : "Calendar disabled"),
+              onError: (e) => toast.error(apiErrorMessage(e)),
+            },
+          )
+        }
+      />
+      <button
+        onClick={() =>
+          sync.mutate(cal.id, {
+            onSuccess: () => toast.success(`Synced ${cal.label}`),
+            onError: (e) => toast.error(apiErrorMessage(e)),
+          })
+        }
+        disabled={busy}
+        title="Sync now"
+        aria-label={`Sync ${cal.label}`}
+        className="rounded-md p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 ${sync.isPending ? "animate-spin" : ""}`} />
+      </button>
+      <button
+        onClick={() => {
+          if (confirm(`Remove "${cal.label}"?`)) {
+            remove.mutate(cal.id, {
+              onSuccess: () => toast.success("Removed"),
+              onError: (e) => toast.error(apiErrorMessage(e)),
+            });
+          }
+        }}
+        disabled={busy}
+        title="Delete"
+        aria-label={`Delete ${cal.label}`}
+        className="rounded-md p-1.5 text-muted-foreground transition hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+      >
+        {remove.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+      </button>
+    </li>
+  );
+}
+
 function AddPersonalCalendarModal({ onClose }: { onClose: () => void }) {
   const add = useAddPersonalCalendar();
   const [type, setType] = useState<PersonalCalendarType>("google");
   const [label, setLabel] = useState("Personal");
   const [url, setUrl] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
 
   const submit = async () => {
+    if (add.isPending) return;
+    setFormError(null);
     if (!label.trim()) {
-      toast.error("Label is required");
+      setFormError("Label is required");
       return;
     }
-    if (type === "webcal" && !url.trim()) {
-      toast.error("WebCal URL is required");
+    if (type === "webcal" && !isValidWebcalUrl(url)) {
+      setFormError("Enter a valid webcal:// or https:// .ics URL");
       return;
     }
+    const body: { type: PersonalCalendarType; label: string; url?: string } = {
+      type,
+      label: label.trim(),
+    };
+    if (type === "webcal") body.url = url.trim();
     try {
-      const body: { type: PersonalCalendarType; label: string; url?: string } = {
-        type,
-        label: label.trim(),
-      };
-      if (type === "webcal") body.url = url.trim();
-      const res = (await add.mutateAsync(body)) as { auth_url?: string };
-      if (res.auth_url) {
-        window.open(res.auth_url, "_blank", "noopener,noreferrer");
-        toast.success("Opening provider sign-in in a new tab…");
-      } else {
-        toast.success("Personal calendar added");
-      }
+      await add.mutateAsync(body);
+      toast.success("Personal calendar added");
       onClose();
-    } catch {
-      toast.error("Failed to add calendar");
+    } catch (e) {
+      setFormError(apiErrorMessage(e));
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add personal calendar"
         className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -216,7 +362,7 @@ function AddPersonalCalendarModal({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          {type === "webcal" && (
+          {type === "webcal" ? (
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-foreground">WebCal URL</span>
               <input
@@ -226,12 +372,21 @@ function AddPersonalCalendarModal({ onClose }: { onClose: () => void }) {
                 placeholder="webcal://example.com/calendar.ics"
                 className={inputCls}
               />
+              <span className="mt-1 block text-[11px] text-muted-foreground">
+                Anyone with this link can read the calendar's busy times. Paceday fetches it server-side to block
+                personal time — event titles are not shared with your team.
+              </span>
             </label>
+          ) : (
+            <p className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
+              This saves the {TYPE_META[type].label} calendar entry. Authorizing access to {TYPE_META[type].label} is a
+              separate step and is not completed here.
+            </p>
           )}
 
-          {type !== "webcal" && (
-            <p className="rounded-lg bg-muted/50 px-3 py-2 text-[11px] text-muted-foreground">
-              You'll be redirected to {TYPE_META[type].label} to authorize this calendar in a new tab.
+          {formError && (
+            <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[11px] text-destructive">
+              {formError}
             </p>
           )}
         </div>
