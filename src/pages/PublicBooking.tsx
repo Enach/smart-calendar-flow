@@ -389,6 +389,10 @@ export default function PublicBooking() {
                     onSelect={setSelectedDate}
                     disabled={(date) => {
                       if (date < today) return true;
+                      // Only grey out days when the backend actually told us
+                      // which dates are open; otherwise every future day is
+                      // selectable and availability is resolved per-day.
+                      if (availableDates.size === 0) return false;
                       return !availableDates.has(dateOnlyStr(date));
                     }}
                     className="pointer-events-auto rounded-md border border-border bg-background p-3"
@@ -400,18 +404,28 @@ export default function PublicBooking() {
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {selectedDate ? fmtDateLong(selectedDate.toISOString()) : "Available times"}
                   </p>
+                  {slotsErrorMessage && (
+                    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      <span>{slotsErrorMessage}</span>
+                      <Button variant="outline" size="sm" onClick={() => slotsQuery.refetch()} disabled={slotsQuery.isFetching}>
+                        {slotsQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin" />} Retry
+                      </Button>
+                    </div>
+                  )}
                   {!selectedDate ? (
                     <p className="text-sm text-muted-foreground">Select a date to see available times.</p>
-                  ) : slotsQuery.isLoading ? (
+                  ) : slotsQuery.isLoading || (slotsQuery.isFetching && slots.length === 0 && !slotsErrorMessage) ? (
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" /> Finding times…
                     </div>
                   ) : slots.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
-                      {isCollective
-                        ? "No time available for all hosts on this day — try another date."
-                        : "No time available on this day — try another date."}
-                    </p>
+                    !slotsErrorMessage && (
+                      <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+                        {isCollective
+                          ? "No time available for all hosts on this day — try another date."
+                          : "No time available on this day — try another date."}
+                      </p>
+                    )
                   ) : (
                     <div className="grid max-h-[360px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
                       {slots.map((s) => (
@@ -427,6 +441,7 @@ export default function PublicBooking() {
                     </div>
                   )}
                 </div>
+
               </div>
             ) : (
               /* Step 3 — Booker details */
