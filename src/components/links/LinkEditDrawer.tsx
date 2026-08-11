@@ -545,11 +545,6 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             {isEdit ? "Save changes" : "Create link"}
           </Button>
         </div>
-
-            {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-            {isEdit ? "Save changes" : "Create link"}
-          </Button>
-        </div>
       </SheetContent>
     </Sheet>
   );
