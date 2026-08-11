@@ -508,7 +508,9 @@ export const schedulingLinksApi = {
         mockState.links.unshift(link);
         return { ...link, hosts: [...link.hosts] };
       },
-    ),
+    );
+  },
+
 
   updateLink: (id: string, input: Partial<{
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
