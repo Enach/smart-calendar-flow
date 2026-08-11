@@ -86,4 +86,30 @@ describe("API error boundary", () => {
     await expect(api.health()).resolves.toMatchObject({ reachable: false });
     expect(isUsingMocks()).toBe(true);
   });
+
+  it("health treats a non-JSON SPA response as unreachable", async () => {
+    fetchMock.mockResolvedValueOnce(htmlResponse());
+    await expect(api.health()).resolves.toMatchObject({ reachable: false });
+    expect(isUsingMocks()).toBe(true);
+  });
+
+  it.each([500, 502, 503])(
+    "health surfaces HTTP %i as an unhealthy backend, not as offline",
+    async (status) => {
+      setMockMode(false);
+      fetchMock.mockResolvedValue(jsonResponse({ error: "upstream down" }, status));
+      await expect(api.health()).rejects.toBeInstanceOf(ApiHttpError);
+      // Backend answered → reachable, so we must NOT switch to preview data.
+      expect(isUsingMocks()).toBe(false);
+    },
+  );
+
+  it("health keeps preview mode off and reports the failure message", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: "database unavailable" }, 503));
+    const err = await api.health().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiHttpError);
+    expect((err as ApiHttpError).status).toBe(503);
+    expect(apiErrorMessage(err)).toBe("database unavailable");
+    expect(isUsingMocks()).toBe(false);
+  });
 });
