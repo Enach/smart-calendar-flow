@@ -516,12 +516,22 @@ seedMocks();
 export const api = {
   // Health — used by the polling probe. We don't go through withFallback
   // because we want to control the mock-mode flag directly here.
+  //
+  // Semantics:
+  //  - network failure / timeout / SPA HTML body → unreachable, switch to preview data.
+  //  - any HTTP status (500, 502, 503, ...) → backend IS reachable but unhealthy:
+  //    we throw the ApiHttpError so the UI can show an actionable error and keep
+  //    whatever real data is already cached. We never fake a healthy response.
   health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
     try {
       const r = await requestApi<{ status: string; version: string }>("GET", "/health");
       setMockMode(false);
       return { ...r, reachable: true };
-    } catch {
+    } catch (e) {
+      if (isApiHttpError(e)) {
+        setMockMode(false);
+        throw e;
+      }
       setMockMode(true);
       return { status: "ok", version: "mock-1.0.0", reachable: false };
     }
