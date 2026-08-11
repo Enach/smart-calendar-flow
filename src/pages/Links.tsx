@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { DemoBanner } from "@/components/DemoBanner";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
+import { LinkBookingsDialog } from "@/components/links/LinkBookingsDialog";
 import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl } from "@/api/schedulingLinks";
 import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
@@ -99,13 +100,16 @@ function LinkCard({
   onDelete,
   onLeave,
   onToggleActive,
+  onViewBookings,
 }: {
   link: SchedulingLink;
   onEdit?: (link: SchedulingLink) => void;
   onDelete?: (link: SchedulingLink) => void;
   onLeave?: (link: SchedulingLink) => void;
   onToggleActive?: (link: SchedulingLink, active: boolean) => void;
+  onViewBookings?: (link: SchedulingLink) => void;
 }) {
+
   return (
     <article className="rounded-xl border border-border bg-card p-5 shadow-sm transition hover:border-foreground/15">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -150,9 +154,15 @@ function LinkCard({
           <div className="flex items-center gap-1">
             {link.is_owner ? (
               <>
+                {onViewBookings && (
+                  <Button size="sm" variant="ghost" onClick={() => onViewBookings(link)} aria-label="Bookings">
+                    <CalendarDays className="h-3.5 w-3.5" /> Bookings
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => onEdit?.(link)} aria-label="Edit">
                   <Pencil className="h-3.5 w-3.5" /> Edit
                 </Button>
+
                 <Button
                   size="sm"
                   variant="ghost"
@@ -276,6 +286,7 @@ export default function LinksPage() {
   const qc = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<SchedulingLink | null>(null);
+  const [bookingsLink, setBookingsLink] = useState<SchedulingLink | null>(null);
 
   const {
     data,
@@ -428,6 +439,7 @@ export default function LinksPage() {
                       onEdit={openEdit}
                       onDelete={handleDelete}
                       onToggleActive={(link, active) => updateLink.mutate({ id: link.id, active })}
+                      onViewBookings={setBookingsLink}
                     />
                   ))}
                 </div>
@@ -450,6 +462,11 @@ export default function LinksPage() {
       </main>
 
       <LinkEditDrawer open={drawerOpen} onOpenChange={setDrawerOpen} link={editingLink} />
+      <LinkBookingsDialog
+        open={!!bookingsLink}
+        onOpenChange={(o) => !o && setBookingsLink(null)}
+        link={bookingsLink}
+      />
     </div>
   );
 }

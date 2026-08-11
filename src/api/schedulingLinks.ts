@@ -350,7 +350,9 @@ function isLinkExhausted(link: SchedulingLink): boolean {
 export const schedulingLinkKeys = {
   links: ["scheduling-links"] as const,
   invites: ["scheduling-link-invites"] as const,
+  bookings: (linkId: string) => ["scheduling-link-bookings", linkId] as const,
 };
+
 
 export interface LinkFormValues {
   title: string;
@@ -394,7 +396,30 @@ export function publicBookingUrl(slug: string, origin: string = window.location.
   return `${origin.replace(/\/+$/, "")}/book/${slug}`;
 }
 
+/**
+ * Guard mirroring the backend's strict 422 validation. We never send a body the
+ * backend would reject (empty arrays, inverted window, negative buffers/notice,
+ * invalid usage_type, recurring without a positive max_uses).
+ */
+export class LinkValidationError extends Error {
+  readonly status = 422;
+  constructor(message: string) {
+    super(message);
+    this.name = "LinkValidationError";
+  }
+}
+
+function assertValidLinkBody(v: LinkFormValues): void {
+  const problem = validateLinkForm(v);
+  if (problem) throw new LinkValidationError(problem);
+  if (!["reusable", "recurring", "single_use"].includes(v.usage_type)) {
+    throw new LinkValidationError("Pick a valid link type.");
+  }
+}
+
 // ---------- Public API ----------
+
+
 
 
 export const schedulingLinksApi = {
@@ -453,10 +478,12 @@ export const schedulingLinksApi = {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses?: number; co_host_emails: string[];
-  }) =>
-    withFallback<SchedulingLink>(
+  }) => {
+    assertValidLinkBody(input);
+    return withFallback<SchedulingLink>(
       async () => {
         const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", backendLinkBody(input));
+
         await Promise.allSettled(input.co_host_emails.map((email) =>
           requestApi("POST", `/scheduling-links/${raw.id}/hosts`, { email }),
         ));
@@ -481,7 +508,9 @@ export const schedulingLinksApi = {
         mockState.links.unshift(link);
         return { ...link, hosts: [...link.hosts] };
       },
-    ),
+    );
+  },
+
 
   updateLink: (id: string, input: Partial<{
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
@@ -491,7 +520,7 @@ export const schedulingLinksApi = {
     withFallback<SchedulingLink>(
       async () => {
         const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
-        const body = backendLinkBody({
+        const merged: LinkFormValues = {
           title: input.title ?? current.title,
           durations: input.durations ?? current.durations ?? current.duration_options ?? [30],
           days: (input.days ?? current.days ?? current.days_of_week?.map((day) => WEEKDAY_BY_NUMBER[day]).filter(Boolean) ?? ["mon", "tue", "wed", "thu", "fri"]) as Weekday[],
@@ -502,9 +531,11 @@ export const schedulingLinksApi = {
           min_notice_minutes: input.min_notice_minutes ?? current.min_notice_minutes ?? 0,
           usage_type: input.usage_type ?? current.usage_type ?? "reusable",
           max_uses: input.max_uses ?? current.max_uses,
-          active: input.active,
-        });
+        };
+        assertValidLinkBody(merged);
+        const body = backendLinkBody({ ...merged, active: input.active });
         await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
+
         if (input.co_host_emails) {
           await Promise.allSettled(input.co_host_emails.map((email) =>
             requestApi("POST", `/scheduling-links/${id}/hosts`, { email }),
@@ -551,6 +582,37 @@ export const schedulingLinksApi = {
         mockState.links = mockState.links.filter((l) => l.id !== id);
       },
     ),
+
+  /** GET /scheduling-links/:id/bookings — bookings already made on a link. */
+  listBookings: (id: string) =>
+    withFallback<BookingConfirmation[]>(
+      async () => {
+        const raw = await requestApi<BackendBooking[] | { bookings?: BackendBooking[] }>(
+          "GET",
+          `/scheduling-links/${id}/bookings`,
+        );
+        const items = Array.isArray(raw) ? raw : raw?.bookings ?? [];
+        return items.map((b) => ({
+          id: b.id,
+          link_slug: b.link_slug ?? "",
+          title: b.title ?? "Booking",
+          start: b.start,
+          end: b.end,
+          duration_minutes:
+            b.duration_minutes ?? Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60_000),
+          hosts: b.hosts ?? [],
+          booker_name: b.booker_name,
+          booker_email: b.booker_email,
+          notes: b.notes,
+        }));
+      },
+      () => {
+        const link = mockState.links.find((l) => l.id === id);
+        if (!link) return [];
+        return mockState.bookings.filter((b) => b.link_slug === link.slug);
+      },
+    ),
+
 
   // ----- public: booking flow -----
 
