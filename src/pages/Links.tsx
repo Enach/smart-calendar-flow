@@ -277,59 +277,78 @@ export default function LinksPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<SchedulingLink | null>(null);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["scheduling-links"],
+  const {
+    data,
+    isLoading,
+    error: listError,
+    refetch,
+    isFetching,
+  } = useQuery({
+    queryKey: schedulingLinkKeys.links,
     queryFn: () => schedulingLinksApi.listLinks(),
+    // Keep the last successful list on screen when a refetch fails.
+    placeholderData: (prev) => prev,
   });
 
   const owned = useMemo(() => data?.owned ?? [], [data]);
   const shared = useMemo(() => data?.shared ?? [], [data]);
 
+  const invalidateAll = () => {
+    qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
+    qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+  };
+
   const acceptInvite = useMutation({
     mutationFn: (linkId: string) => schedulingLinksApi.acceptInvite(linkId),
     onSuccess: () => {
       toast.success("Invite accepted");
-      qc.invalidateQueries({ queryKey: ["scheduling-link-invites"] });
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not accept invite"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const declineInvite = useMutation({
     mutationFn: (linkId: string) => schedulingLinksApi.declineInvite(linkId),
     onSuccess: () => {
       toast.info("Invite declined");
-      qc.invalidateQueries({ queryKey: ["scheduling-link-invites"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not decline invite"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const deleteLink = useMutation({
     mutationFn: (id: string) => schedulingLinksApi.deleteLink(id),
     onSuccess: () => {
       toast.info("Link deleted");
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not delete link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const leaveLink = useMutation({
     mutationFn: (id: string) => schedulingLinksApi.leaveLink(id),
     onSuccess: () => {
       toast.info("You left the link");
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+      invalidateAll();
     },
-    onError: () => toast.error("Could not leave the link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
 
   const updateLink = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       schedulingLinksApi.updateLink(id, { active }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["scheduling-links"] });
+    onSuccess: (link) => {
+      toast.success(link.active ? "Link activated" : "Link paused");
+      invalidateAll();
     },
-    onError: () => toast.error("Could not update the link"),
+    onError: (e) => toast.error(apiErrorMessage(e)),
   });
+
+  const pendingInviteId =
+    (acceptInvite.isPending ? acceptInvite.variables : undefined) ??
+    (declineInvite.isPending ? declineInvite.variables : undefined) ??
+    null;
+
 
   function openCreate() {
     setEditingLink(null);
