@@ -99,13 +99,16 @@ function LinkCard({
   onDelete,
   onLeave,
   onToggleActive,
+  onViewBookings,
 }: {
   link: SchedulingLink;
   onEdit?: (link: SchedulingLink) => void;
   onDelete?: (link: SchedulingLink) => void;
   onLeave?: (link: SchedulingLink) => void;
   onToggleActive?: (link: SchedulingLink, active: boolean) => void;
+  onViewBookings?: (link: SchedulingLink) => void;
 }) {
+
   return (
     <article className="rounded-xl border border-border bg-card p-5 shadow-sm transition hover:border-foreground/15">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
