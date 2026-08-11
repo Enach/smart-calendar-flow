@@ -116,26 +116,27 @@ export default function PublicBooking() {
     }
   }, [link, duration]);
 
-  // Available dates (for greying the calendar).
-  const availableDatesQuery = useQuery({
-    queryKey: ["public-slots-summary", slug],
-    queryFn: () => schedulingLinksApi.getPublicSlots(slug, {}),
-    enabled: !!link,
-  });
-  const availableDates = useMemo(() => {
-    const s = new Set<string>();
-    (availableDatesQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
-    return s;
-  }, [availableDatesQuery.data]);
-
-  // Slots for the selected day.
+  // Slots for the selected day. The backend answers per date; `available_dates`
+  // is only used when the backend actually returns it.
   const dateStr = selectedDate ? dateOnlyStr(selectedDate) : undefined;
   const slotsQuery = useQuery({
     queryKey: ["public-slots", slug, dateStr, duration],
     queryFn: () => schedulingLinksApi.getPublicSlots(slug, { date: dateStr!, duration: duration! }),
     enabled: !!dateStr && !!duration,
+    placeholderData: (prev) => prev,
+    retry: false,
   });
   const slots = slotsQuery.data?.slots ?? [];
+  const availableDates = useMemo(() => {
+    const s = new Set<string>();
+    (slotsQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
+    return s;
+  }, [slotsQuery.data]);
+  const slotsErrorMessage = slotsQuery.error
+    ? isApiUnreachableError(slotsQuery.error)
+      ? "We can't reach the scheduling service right now."
+      : apiErrorMessage(slotsQuery.error)
+    : null;
 
   // Reset slot selection when date / duration change.
   useEffect(() => {
@@ -152,28 +153,34 @@ export default function PublicBooking() {
         email: email.trim(),
         notes: notes.trim() || undefined,
       }),
+    retry: false,
     onSuccess: (conf) => {
       setConfirmation(conf);
       setSubmitError(null);
     },
     onError: (e: unknown) => {
-      const status = (e as { status?: number })?.status;
+      const status = isApiHttpError(e) ? e.status : (e as { status?: number })?.status;
+      const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
       if (status === 409) {
-        setSubmitError("This slot was just taken — please pick another time.");
+        setSubmitError(detail ?? "This slot was just taken — please pick another time.");
         setSelectedSlot(null);
         slotsQuery.refetch();
       } else if (status === 422) {
-        setSubmitError("This time is too soon — the host requires more advance notice.");
-        setSelectedSlot(null);
+        setSubmitError(detail ?? "This time can't be booked — the host requires more advance notice.");
         slotsQuery.refetch();
+      } else if (status === 400) {
+        setSubmitError(detail ?? "Please check your details and try again.");
       } else if (status === 410) {
-        setSubmitError("This link is no longer accepting bookings.");
+        setSubmitError(detail ?? "This link is no longer accepting bookings.");
+      } else if (isApiUnreachableError(e)) {
+        setSubmitError("We can't reach the scheduling service. Check your connection and try again.");
       } else {
-        setSubmitError("Could not complete the booking. Please try again.");
+        setSubmitError(apiErrorMessage(e));
         toast.error("Booking failed");
       }
     },
   });
+
 
   // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
