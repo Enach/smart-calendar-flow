@@ -346,7 +346,56 @@ function isLinkExhausted(link: SchedulingLink): boolean {
   return false;
 }
 
+/** Query keys shared by every scheduling-link consumer. */
+export const schedulingLinkKeys = {
+  links: ["scheduling-links"] as const,
+  invites: ["scheduling-link-invites"] as const,
+};
+
+export interface LinkFormValues {
+  title: string;
+  durations: number[];
+  days: Weekday[];
+  window_start: string;
+  window_end: string;
+  buffer_before: number;
+  buffer_after: number;
+  min_notice_minutes: number;
+  usage_type: LinkUsageType;
+  max_uses?: number;
+}
+
+/**
+ * Client-side validation mirroring the frozen backend constraints.
+ * Returns a human-readable message, or null when the payload is acceptable.
+ */
+export function validateLinkForm(v: LinkFormValues): string | null {
+  if (!v.title.trim()) return "Give the link a title.";
+  if (!v.durations.length) return "Pick at least one duration.";
+  if (v.durations.some((d) => !Number.isFinite(d) || d <= 0)) return "Durations must be positive.";
+  if (!v.days.length) return "Pick at least one available day.";
+  const [sh, sm] = v.window_start.split(":").map(Number);
+  const [eh, em] = v.window_end.split(":").map(Number);
+  if (!Number.isFinite(sh) || !Number.isFinite(eh)) return "Enter a valid time window.";
+  if (sh * 60 + (sm || 0) >= eh * 60 + (em || 0)) return "The start time must be before the end time.";
+  if (v.buffer_before < 0 || v.buffer_after < 0) return "Buffers can't be negative.";
+  if (v.min_notice_minutes < 0) return "Minimum notice can't be negative.";
+  if (v.usage_type === "recurring" && (!v.max_uses || v.max_uses < 1)) {
+    return "Recurring links need a maximum number of bookings (1 or more).";
+  }
+  const shortest = Math.min(...v.durations);
+  const windowMinutes = eh * 60 + (em || 0) - (sh * 60 + (sm || 0));
+  if (shortest > windowMinutes) return "The shortest duration doesn't fit inside the availability window.";
+  return null;
+}
+
+/** Deterministic public URL for a link slug returned by the backend. */
+export function publicBookingUrl(slug: string, origin: string = window.location.origin): string {
+  return `${origin.replace(/\/+$/, "")}/book/${slug}`;
+}
+
 // ---------- Public API ----------
+
 
 export const schedulingLinksApi = {
   // ----- authenticated: links management -----
