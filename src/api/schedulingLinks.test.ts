@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { isApiHttpError, isUsingMocks, setMockMode } from "./client";
 import { publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
-import type { Weekday } from "./types";
+import type { LinkUsageType, Weekday } from "./types";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -216,7 +216,8 @@ describe("strict backend validation alignment (422)", () => {
     buffer_before: 0,
     buffer_after: 0,
     min_notice_minutes: 0,
-    usage_type: "reusable" as const,
+    usage_type: "reusable" as LinkUsageType,
+    max_uses: undefined as number | undefined,
     co_host_emails: [] as string[],
   };
 
@@ -235,7 +236,7 @@ describe("strict backend validation alignment (422)", () => {
     ["negative buffer_after", { buffer_after: -5 }],
     ["negative min_notice_minutes", { min_notice_minutes: -1 }],
     ["invalid usage_type", { usage_type: "weird" as never }],
-    ["recurring without max_uses", { usage_type: "recurring" as const, max_uses: 0 }],
+    ["recurring without max_uses", { usage_type: "recurring" as LinkUsageType, max_uses: 0 }],
   ];
 
   for (const [name, patch] of cases) {
