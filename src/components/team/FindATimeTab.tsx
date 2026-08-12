@@ -4,7 +4,8 @@ import { useMutation } from "@tanstack/react-query";
 import { Sparkles, CalendarPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { teamsApi, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
+import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
+import { apiErrorMessage } from "@/api/client";
 
 interface Props {
   team: FormalTeam;
@@ -32,11 +33,28 @@ export function FindATimeTab({ team }: Props) {
   const [date, setDate] = useState(todayISO());
   const [duration, setDuration] = useState(30);
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const findMut = useMutation({
+    mutationKey: teamKeys.availability(team.id, date, duration),
     mutationFn: () => teamsApi.remote.findSlots(team.id, date, duration),
-    onSuccess: (s) => setSlots(s),
+    // Previously loaded slots are kept visible when a refetch fails.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: (s) => {
+      setError(null);
+      setSlots(s);
+    },
   });
+
+  const run = () => {
+    const invalid = validateAvailabilityQuery(date, duration);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    setError(null);
+    findMut.mutate();
+  };
 
   const onSchedule = (slot: AvailabilitySlot) => {
     const attendees = team.members
@@ -87,13 +105,22 @@ export function FindATimeTab({ team }: Props) {
           </select>
         </label>
         <Button
-          onClick={() => findMut.mutate()}
+          onClick={run}
           disabled={findMut.isPending}
           className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
         >
           {findMut.isPending ? "Finding…" : "Find slots"}
         </Button>
       </div>
+
+      {error && (
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">{error}</p>
+          <Button size="sm" variant="outline" onClick={run} disabled={findMut.isPending}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       {/* Results */}
       {findMut.isPending && (

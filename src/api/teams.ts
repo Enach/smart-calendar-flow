@@ -165,7 +165,66 @@ async function remoteTeam(id: string): Promise<FormalTeam> {
   return normalizeTeam(detail.team ?? { id, name: "Team" }, detail.members ?? [], zones ?? []);
 }
 
+// ---------- Query keys ----------
+
+export const teamKeys = {
+  all: ["formal-teams"] as const,
+  detail: (id: string) => ["formal-teams", id] as const,
+  availability: (id: string, date: string, duration: number) =>
+    ["formal-teams", id, "availability", date, duration] as const,
+  analytics: (id: string, date: string) => ["formal-team-analytics", id, date] as const,
+};
+
+// ---------- Validation ----------
+
+export class TeamValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TeamValidationError";
+  }
+}
+
+const TEAM_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DURATIONS_ALLOWED = [15, 30, 45, 60, 90, 120];
+
+export function validateTeamName(name: string): string | null {
+  const trimmed = name?.trim() ?? "";
+  if (!trimmed) return "Team name is required.";
+  if (trimmed.length > 80) return "Team name must be 80 characters or fewer.";
+  return null;
+}
+
+export function validateTeamEmail(email: string): string | null {
+  const trimmed = email?.trim() ?? "";
+  if (!trimmed) return "Email is required.";
+  if (!TEAM_EMAIL_RE.test(trimmed)) return "Enter a valid email address.";
+  return null;
+}
+
+/** Weekday convention is Monday=1 … Sunday=7. */
+export function validateZoneInput(input: { day_of_week: number; start_min: number; end_min: number; label?: string }): string | null {
+  const { day_of_week: dow, start_min: start, end_min: end } = input;
+  if (!Number.isInteger(dow) || dow < 1 || dow > 7) return "Day must be between Monday (1) and Sunday (7).";
+  if (!Number.isInteger(start) || start < 0 || start > 1440) return "Start time is out of range.";
+  if (!Number.isInteger(end) || end < 0 || end > 1440) return "End time is out of range.";
+  if (end <= start) return "End time must be after the start time.";
+  return null;
+}
+
+export function validateAvailabilityQuery(dateISO: string, durationMin: number): string | null {
+  if (!ISO_DATE_RE.test(dateISO ?? "")) return "Pick a valid date.";
+  if (!Number.isInteger(durationMin) || durationMin <= 0) return "Pick a valid duration.";
+  if (!DURATIONS_ALLOWED.includes(durationMin)) return "Duration must be one of 15, 30, 45, 60, 90 or 120 minutes.";
+  return null;
+}
+
+function assertTeams(err: string | null) {
+  if (err) throw new TeamValidationError(err);
+}
+
 const teamsRemote = {
+
   list: () =>
     withFallback<FormalTeam[]>(
       async () => {
@@ -194,6 +253,7 @@ const teamsRemote = {
   createTeam: (name: string) =>
     withFallback<FormalTeam>(
       async () => {
+        assertTeams(validateTeamName(name));
         const raw = await requestApi<BackendTeam>("POST", "/teams/", { name: name.trim() });
         const team = await remoteTeam(raw.id);
         const state = load();
@@ -208,6 +268,7 @@ const teamsRemote = {
   renameTeam: (id: string, name: string) =>
     withFallback<FormalTeam | null>(
       async () => {
+        assertTeams(validateTeamName(name));
         await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
         return remoteTeam(id);
       },
@@ -229,6 +290,7 @@ const teamsRemote = {
   inviteMember: (teamId: string, email: string, displayName?: string) =>
     withFallback<FormalTeamMember | null>(
       async () => {
+        assertTeams(validateTeamEmail(email));
         await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
         const team = await remoteTeam(teamId);
         return team.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
@@ -259,6 +321,7 @@ const teamsRemote = {
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
     withFallback<NoMeetingZone | null>(
       async () => {
+        assertTeams(validateZoneInput(input));
         const raw = await requestApi<BackendZone>("POST", "/teams/" + teamId + "/no-meeting-zones", {
           dayOfWeek: input.day_of_week,
           startTime: timeFromMinutes(input.start_min),
@@ -280,6 +343,12 @@ const teamsRemote = {
       async () => {
         const current = (await remoteTeam(teamId)).no_meeting_zones.find((zone) => zone.id === zoneId);
         if (!current) throw new Error("zone not found");
+        const merged = {
+          day_of_week: patch.day_of_week ?? current.day_of_week,
+          start_min: patch.start_min ?? current.start_min,
+          end_min: patch.end_min ?? current.end_min,
+        };
+        assertTeams(validateZoneInput(merged));
         await requestApi("PATCH", "/teams/" + teamId + "/no-meeting-zones/" + zoneId, {
           dayOfWeek: patch.day_of_week ?? current.day_of_week,
           startTime: timeFromMinutes(patch.start_min ?? current.start_min),
@@ -299,6 +368,7 @@ const teamsRemote = {
   findSlots: (teamId: string, dateISO: string, durationMin: number) =>
     withFallback<AvailabilitySlot[]>(
       async () => {
+        assertTeams(validateAvailabilityQuery(dateISO, durationMin));
         const raw = await requestApi<{ slots?: Array<{ start: string; end: string; quality_score?: number }> }>(
           "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
         );
@@ -312,12 +382,13 @@ const teamsRemote = {
       () => teamsApi.findSlots(teamId, dateISO, durationMin),
     ),
 
-  teamAnalytics: (teamId: string) =>
+  teamAnalytics: (teamId: string, dateISO?: string) =>
     withFallback<ReturnType<typeof teamsApi.teamAnalytics>>(
       async () => {
+        if (dateISO !== undefined) assertTeams(ISO_DATE_RE.test(dateISO) ? null : "Pick a valid date.");
         const raw = await requestApi<{
           member_breakdown?: Array<{ name?: string; meeting_minutes: number; focus_minutes: number }>;
-        }>("GET", "/teams/" + teamId + "/analytics");
+        }>("GET", "/teams/" + teamId + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
         const team = await remoteTeam(teamId);
         const weekStart = new Date();
         const day = weekStart.getDay();

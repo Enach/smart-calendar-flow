@@ -54,12 +54,17 @@ import {
 import { toast } from "@/hooks/useToast";
 import {
   managerApi,
+  managerKeys,
   cadenceLabel,
   computeDaysOverdue,
+  validateMemberInput,
   type Cadence,
+  type MemberAnalytics,
+  type OneOnOneGap,
   type TeamMember,
 } from "@/api/manager";
-import { teamsApi } from "@/api/teams";
+import { teamsApi, validateTeamName } from "@/api/teams";
+import { apiErrorMessage } from "@/api/client";
 import { ProtectedHoursTab } from "@/components/team/ProtectedHoursTab";
 import { FindATimeTab } from "@/components/team/FindATimeTab";
 import { AnalyticsTab } from "@/components/team/AnalyticsTab";
@@ -238,6 +243,19 @@ export default function Team() {
   );
 }
 
+function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B91C1C]" />
+      <p className="min-w-0 flex-1 text-sm text-foreground">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="gap-1.5">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 // ============================================================================
 // Header + Tab bar
 // ============================================================================
@@ -385,26 +403,68 @@ function TeamTab({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [autoBannerDismissed, setAutoBannerDismissed] = useState(false);
 
-  const teamQ = useQuery({ queryKey: ["manager-team"], queryFn: () => managerApi.remote.listTeam() });
+  const teamQ = useQuery({
+    queryKey: managerKeys.team,
+    queryFn: () => managerApi.remote.listTeam(),
+    placeholderData: (prev) => prev,
+  });
   const team = teamQ.data ?? [];
+
+  const week = useMemo(() => weekStart(weekOffset).toISOString().slice(0, 10), [weekOffset]);
+
+  const gapsQ = useQuery({
+    queryKey: managerKeys.gaps,
+    queryFn: () => managerApi.remote.gaps(),
+    placeholderData: (prev) => prev,
+  });
+
+  const analyticsQ = useQuery({
+    queryKey: managerKeys.analytics(week),
+    queryFn: () => managerApi.remote.analytics(week),
+    placeholderData: (prev) => prev,
+  });
+  const analyticsByEmail = useMemo(() => {
+    const map = new Map<string, MemberAnalytics>();
+    for (const a of analyticsQ.data ?? []) map.set(a.email.toLowerCase(), a);
+    return map;
+  }, [analyticsQ.data]);
+
+  const scheduleMut = useMutation({
+    mutationFn: (email: string) => managerApi.remote.schedulePrefillUrl(email),
+    onSuccess: (url) => {
+      if (/^https?:\/\//i.test(url)) window.location.assign(url);
+      else navigate(url);
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  });
 
   const detectMut = useMutation({
     mutationFn: () => managerApi.remote.detect(),
+    onError: (e) => toast.error(apiErrorMessage(e)),
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["manager-team"] });
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
       toast.success(r.added > 0 ? `${r.added} new team member${r.added === 1 ? "" : "s"} found.` : "No new members found.");
     },
   });
 
   const removeMut = useMutation({
     mutationFn: (email: string) => managerApi.remote.removeMember(email),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+    },
   });
 
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -413,15 +473,20 @@ function TeamTab({
     return team.filter((m) => m.display_name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q));
   }, [team, search]);
 
-  const gaps = useMemo(() => managerApi.gaps(), [team]);
   const allAuto = team.length > 0 && team.every((m) => m.source === "auto");
 
-  const goSchedule = (email: string) => {
-    navigate(managerApi.schedulePrefillUrl(email));
-  };
+  const goSchedule = (email: string) => scheduleMut.mutate(email);
 
   return (
     <>
+      {teamQ.isError && (
+        <ErrorBanner
+          message={apiErrorMessage(teamQ.error)}
+          onRetry={() => teamQ.refetch()}
+          busy={teamQ.isFetching}
+        />
+      )}
+
       {teamQ.isLoading && (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
@@ -448,7 +513,17 @@ function TeamTab({
         </div>
       )}
 
-      {team.length > 0 && <GapsSection gaps={gaps} onSchedule={goSchedule} />}
+      {team.length > 0 && (
+        <GapsSection
+          gaps={gapsQ.data ?? []}
+          isLoading={gapsQ.isLoading}
+          error={gapsQ.isError ? apiErrorMessage(gapsQ.error) : null}
+          onRetry={() => gapsQ.refetch()}
+          busy={gapsQ.isFetching}
+          schedulingEmail={scheduleMut.isPending ? (scheduleMut.variables as string) : null}
+          onSchedule={goSchedule}
+        />
+      )}
 
       {team.length > 0 && (
         <section className="mt-6 rounded-2xl border border-border bg-card">
@@ -489,6 +564,8 @@ function TeamTab({
               <MemberRow
                 key={m.email}
                 member={m}
+                analytics={analyticsByEmail.get(m.email.toLowerCase()) ?? null}
+                analyticsLoading={analyticsQ.isLoading}
                 expanded={expanded === m.email}
                 onToggle={() => setExpanded(expanded === m.email ? null : m.email)}
                 onCadenceChange={(cadence, custom) =>
@@ -564,7 +641,10 @@ function TeamTab({
       <AddPersonDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        onAdded={() => qc.invalidateQueries({ queryKey: ["manager-team"] })}
+        onAdded={() => {
+          qc.invalidateQueries({ queryKey: managerKeys.team });
+          qc.invalidateQueries({ queryKey: managerKeys.gaps });
+        }}
       />
 
       <AlertDialog open={!!removeTarget} onOpenChange={(o) => !o && setRemoveTarget(null)}>
@@ -647,13 +727,31 @@ function DetectionPrompt({
 
 function GapsSection({
   gaps,
+  isLoading,
+  error,
+  onRetry,
+  busy,
+  schedulingEmail,
   onSchedule,
 }: {
-  gaps: Array<ReturnType<typeof managerApi.gaps>[number]>;
+  gaps: OneOnOneGap[];
+  isLoading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  busy: boolean;
+  schedulingEmail: string | null;
   onSchedule: (email: string) => void;
 }) {
   const overdue = gaps.filter((g) => g.days_overdue > 0);
   const [open, setOpen] = useState(overdue.length > 0);
+
+  if (error && gaps.length === 0) {
+    return <ErrorBanner message={error} onRetry={onRetry} busy={busy} />;
+  }
+
+  if (isLoading && gaps.length === 0) {
+    return <div className="mb-4 h-14 animate-pulse rounded-xl border border-border bg-card" />;
+  }
 
   if (gaps.length === 0) {
     return (
@@ -663,6 +761,7 @@ function GapsSection({
       </div>
     );
   }
+
 
   return (
     <section
@@ -711,8 +810,13 @@ function GapsSection({
                       ? "Due this week"
                       : "On track"}
               </span>
-              <Button size="sm" onClick={() => onSchedule(g.email)} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-                Schedule
+              <Button
+                size="sm"
+                onClick={() => onSchedule(g.email)}
+                disabled={schedulingEmail === g.email}
+                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+              >
+                {schedulingEmail === g.email ? "Opening…" : "Schedule"}
               </Button>
             </li>
           ))}
@@ -724,6 +828,8 @@ function GapsSection({
 
 function MemberRow({
   member,
+  analytics,
+  analyticsLoading,
   expanded,
   onToggle,
   onCadenceChange,
@@ -731,6 +837,8 @@ function MemberRow({
   onSchedule,
 }: {
   member: TeamMember;
+  analytics: MemberAnalytics | null;
+  analyticsLoading: boolean;
   expanded: boolean;
   onToggle: () => void;
   onCadenceChange: (c: Cadence, custom?: number) => void;
@@ -745,7 +853,6 @@ function MemberRow({
     return { kind: "ok" as const, label: "On track" };
   })();
 
-  const analytics = useMemo(() => managerApi.analytics(member.email), [member]);
   const lastWeek = analytics?.weeks[analytics.weeks.length - 1];
   const prevWeek = analytics?.weeks[analytics.weeks.length - 2];
   const focusMin = lastWeek?.focus_minutes ?? 0;
@@ -832,7 +939,9 @@ function MemberRow({
 
         <div className="flex items-center justify-between gap-3 md:w-[35%] md:justify-end">
           <div className="text-right">
-            {member.data_available ? (
+            {analyticsLoading && !analytics ? (
+              <div className="h-7 w-20 animate-pulse rounded bg-muted" />
+            ) : member.data_available && analytics ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
                   <span className="text-2xl font-semibold text-[#5B7FFF]">{fmtMin(focusMin)}</span>
@@ -859,7 +968,7 @@ function MemberRow({
         </div>
       </div>
 
-      {expanded && analytics && <InlineAnalytics member={member} />}
+      {expanded && analytics && <InlineAnalytics data={analytics} />}
     </li>
   );
 }
@@ -886,9 +995,8 @@ function TrendArrow({ pct }: { pct: number }) {
   );
 }
 
-function InlineAnalytics({ member }: { member: TeamMember }) {
-  const data = useMemo(() => managerApi.analytics(member.email), [member]);
-  if (!data) return null;
+function InlineAnalytics({ data }: { data: MemberAnalytics }) {
+  if (data.weeks.length === 0) return null;
   const maxMin = Math.max(...data.weeks.map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes), 1);
 
   return (
@@ -940,6 +1048,7 @@ function AddPersonDialog({
   const [cadence, setCadence] = useState<Cadence>("biweekly");
   const [customDays, setCustomDays] = useState(14);
   const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setEmail("");
@@ -947,28 +1056,43 @@ function AddPersonDialog({
     setCadence("biweekly");
     setCustomDays(14);
     setNote(null);
+    setError(null);
   };
 
-  const submit = async () => {
-    if (!email.trim() || !/.+@.+\..+/.test(email)) {
-      toast.error("Please enter a valid email");
-      return;
-    }
-    const { alreadyAuto } = await managerApi.remote.addMember({
-      email: email.trim(),
-      display_name: name.trim() || undefined,
+  const addMut = useMutation({
+    mutationFn: () =>
+      managerApi.remote.addMember({
+        email: email.trim(),
+        display_name: name.trim() || undefined,
+        cadence,
+        custom_cadence_days: cadence === "custom" ? customDays : undefined,
+      }),
+    // Form values are intentionally preserved on error.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: ({ alreadyAuto }) => {
+      onAdded();
+      if (alreadyAuto) {
+        setNote("This person is already in your team (auto-detected). Settings have been updated.");
+        return;
+      }
+      toast.success(`${name || email} added to your team.`);
+      reset();
+      onOpenChange(false);
+    },
+  });
+
+  const submit = () => {
+    const invalid = validateMemberInput({
+      email,
       cadence,
       custom_cadence_days: cadence === "custom" ? customDays : undefined,
     });
-    if (alreadyAuto) {
-      setNote("This person is already in your team (auto-detected). Settings have been updated.");
-      onAdded();
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    toast.success(`${name || email} added to your team.`);
-    onAdded();
-    reset();
-    onOpenChange(false);
+    setError(null);
+    addMut.mutate();
   };
 
   return (
@@ -1013,14 +1137,19 @@ function AddPersonDialog({
             </label>
           )}
           {note && <div className="rounded-lg bg-[#E9B949]/10 px-3 py-2 text-xs text-[#8A6A14]">{note}</div>}
+          {error && (
+            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-            Add to team
+          <Button onClick={submit} disabled={addMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {addMut.isPending ? "Adding…" : "Add to team"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1038,17 +1167,29 @@ function CreateTeamDialog({
   onCreated: (t: ReturnType<typeof teamsApi.list>[number]) => void;
 }) {
   const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
-    if (!name.trim()) {
-      toast.error("Please enter a team name");
+  const createMut = useMutation({
+    mutationFn: () => teamsApi.remote.createTeam(name),
+    // Keep the typed name on error.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: (t) => {
+      toast.success(`Team "${t.name}" created.`);
+      setName("");
+      setError(null);
+      onOpenChange(false);
+      onCreated(t);
+    },
+  });
+
+  const submit = () => {
+    const invalid = validateTeamName(name);
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    const t = await teamsApi.remote.createTeam(name);
-    toast.success(`Team "${t.name}" created.`);
-    setName("");
-    onOpenChange(false);
-    onCreated(t);
+    setError(null);
+    createMut.mutate();
   };
 
   return (
@@ -1056,7 +1197,10 @@ function CreateTeamDialog({
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) setName("");
+        if (!o) {
+          setName("");
+          setError(null);
+        }
       }}
     >
       <DialogContent className="sm:max-w-md">
@@ -1079,6 +1223,11 @@ function CreateTeamDialog({
               placeholder="Platform team"
             />
           </label>
+          {error && (
+            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground">
             You will be the team owner. Invite teammates after creation.
           </p>
@@ -1087,8 +1236,8 @@ function CreateTeamDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-            Create team
+          <Button onClick={submit} disabled={createMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {createMut.isPending ? "Creating…" : "Create team"}
           </Button>
         </DialogFooter>
       </DialogContent>
