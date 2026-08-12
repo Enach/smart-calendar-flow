@@ -1001,7 +1001,12 @@ export const api = {
   // ----- Conferencing -----
   addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
     withFallback(
-      () => requestApi<ConferenceLink>("POST", `/events/${eventId}/conference`, body),
+      () =>
+        requestApi<ConferenceLink>(
+          "POST",
+          `/events/${eventId}/conference`,
+          conferenceRequestBody(body),
+        ),
       () => {
         const ev = mockState.events.find((e) => e.id === eventId);
         if (!ev) throw new Error("Not found");
@@ -1023,7 +1028,10 @@ export const api = {
     ),
   conferenceProviders: () =>
     withFallback(
-      () => requestApi<ConferenceProviderStatus[]>("GET", "/conference/providers"),
+      async () =>
+        normalizeConferenceProviders(
+          await requestApi<unknown>("GET", "/conference/providers"),
+        ),
       () => {
         const calProvider = mockState.settings.calendar_provider ?? "google";
         return [
@@ -1046,6 +1054,7 @@ export const api = {
         ] as ConferenceProviderStatus[];
       },
     ),
+
   zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
   zoomDisconnect: () =>
     withFallback(
@@ -1057,7 +1066,53 @@ export const api = {
     ),
 } satisfies ApiPort;
 
+// ---------- Conferencing helpers (exported for tests) ----------
+
+const CONFERENCE_PROVIDERS: ConferenceProvider[] = ["google_meet", "zoom", "teams", "custom"];
+
+/** Only `custom` links carry a client-supplied URL; other providers are server-generated. */
+export function conferenceRequestBody(body: { provider: ConferenceProvider; url?: string }) {
+  if (body.provider !== "custom") return { provider: body.provider };
+  return { provider: body.provider, url: body.url?.trim() };
+}
+
+/** Accepts the documented array shape and tolerates unknown providers/aliases. */
+export function normalizeConferenceProviders(raw: unknown): ConferenceProviderStatus[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: ConferenceProviderStatus[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const key = String(r.provider ?? "")
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_");
+    const provider = (
+      key === "meet" || key === "googlemeet" ? "google_meet" : key === "microsoft_teams" ? "teams" : key
+    ) as ConferenceProvider;
+    if (!CONFERENCE_PROVIDERS.includes(provider)) continue;
+    out.push({
+      provider,
+      connected: r.connected === true,
+      email: typeof r.email === "string" ? r.email : undefined,
+      enabled: typeof r.enabled === "boolean" ? r.enabled : undefined,
+      auto_with: (r.auto_with as ConferenceProviderStatus["auto_with"]) ?? undefined,
+    });
+  }
+  return out;
+}
+
+/** A custom conference URL must be an absolute http(s) URL. */
+export function isValidConferenceUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 // Mock-only conferencing link generator
+
 function mockGenerateConferenceLink(provider: ConferenceProvider, custom?: string): ConferenceLink {
   if (provider === "custom") {
     return { provider, url: custom?.trim() || "https://meet.example.com/your-room" };

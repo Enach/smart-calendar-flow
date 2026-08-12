@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
-import { api, mockZoomConnect } from "@/api/client";
+import { api, apiErrorMessage, isUsingMocks, mockZoomConnect } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
 
@@ -40,11 +40,22 @@ interface ConferencingSectionProps {
 
 export function ConferencingSection({ settings, onPatch }: ConferencingSectionProps) {
   const qc = useQueryClient();
-  const { data: providers = [], isLoading } = useQuery({
+  const {
+    data: providers,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = useQuery({
     queryKey: ["conferenceProviders"],
     queryFn: () => api.conferenceProviders(),
     staleTime: 60_000,
+    // Keep the last good provider list visible when a refetch fails.
+    placeholderData: (prev) => prev,
   });
+
+  const list: ConferenceProviderStatus[] = providers ?? [];
 
   const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
   const [zoomError, setZoomError] = useState<{
@@ -52,70 +63,46 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     retry: () => void;
   } | null>(null);
 
-  const meet = providers.find((p) => p.provider === "google_meet");
-  const zoom = providers.find((p) => p.provider === "zoom");
-  const teams = providers.find((p) => p.provider === "teams");
+  const meet = list.find((p) => p.provider === "google_meet");
+  const zoom = list.find((p) => p.provider === "zoom");
+  const teams = list.find((p) => p.provider === "teams");
   const isOutlook = settings.calendar_provider === "outlook";
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
-  const patchZoomCache = (connected: boolean, email?: string) => {
-    qc.setQueryData<ConferenceProviderStatus[]>(["conferenceProviders"], (prev) => {
-      if (!prev) return prev;
-      return prev.map((p) =>
-        p.provider === "zoom" ? { ...p, connected, email: connected ? email ?? p.email : undefined } : p,
-      );
-    });
-  };
-
-  const handleZoomConnect = async () => {
-    // Concurrent-toggle guard: ignore if a request is already in flight
+  const handleZoomConnect = () => {
     if (zoomBusy !== null) return;
     setZoomError(null);
-    const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
-    // Optimistically flip to connected immediately
-    patchZoomCache(true, "you@example.com");
-    setZoomBusy("connect");
-    try {
-      try {
-        mockZoomConnect();
-        toast.success("Zoom connected (demo)");
-        refresh();
-      } catch {
-        window.location.href = api.zoomConnectUrl();
-      }
-    } catch {
-      // Rollback on failure
-      if (previous) qc.setQueryData(["conferenceProviders"], previous);
-      const message = "Couldn't connect to Zoom — your previous state has been restored.";
-      toast.error(message);
-      setZoomError({ message, retry: handleZoomConnect });
-    } finally {
-      setZoomBusy(null);
+    // Demo/offline mode only: no OAuth round-trip is possible.
+    if (isUsingMocks()) {
+      mockZoomConnect();
+      toast.success("Zoom connected (demo)");
+      refresh();
+      return;
     }
+    // Real API mode: hand off to the backend OAuth entry point.
+    setZoomBusy("connect");
+    window.location.href = api.zoomConnectUrl();
   };
 
   const handleZoomDisconnect = async () => {
-    // Concurrent-toggle guard: ignore if a request is already in flight
     if (zoomBusy !== null) return;
     setZoomError(null);
-    const previous = qc.getQueryData<ConferenceProviderStatus[]>(["conferenceProviders"]);
-    // Optimistically flip to disconnected immediately
-    patchZoomCache(false);
     setZoomBusy("disconnect");
     try {
       await api.zoomDisconnect();
       toast.success("Disconnected Zoom");
       refresh();
-    } catch {
-      if (previous) qc.setQueryData(["conferenceProviders"], previous);
-      const message = "Couldn't disconnect Zoom — your account is still linked.";
+    } catch (e) {
+      const message = apiErrorMessage(e);
       toast.error(message);
       setZoomError({ message, retry: handleZoomDisconnect });
     } finally {
       setZoomBusy(null);
     }
   };
+
+  const loadError = isError ? apiErrorMessage(error) : null;
 
   return (
     <div className="space-y-4">
@@ -137,6 +124,28 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
         </p>
       </div>
 
+      {loadError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2"
+        >
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold text-destructive">Couldn't load conferencing providers</p>
+            <p className="text-[11px] text-destructive/90">{loadError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-2 py-1 text-[11px] font-medium text-destructive transition hover:bg-destructive/10 disabled:opacity-50"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {zoomError && (
         <div
           role="alert"
@@ -144,7 +153,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
         >
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold text-destructive">Action rolled back</p>
+            <p className="text-[11px] font-semibold text-destructive">Zoom action failed</p>
             <p className="text-[11px] text-destructive/90">{zoomError.message}</p>
           </div>
           <button
