@@ -54,12 +54,17 @@ import {
 import { toast } from "@/hooks/useToast";
 import {
   managerApi,
+  managerKeys,
   cadenceLabel,
   computeDaysOverdue,
+  validateMemberInput,
   type Cadence,
+  type MemberAnalytics,
+  type OneOnOneGap,
   type TeamMember,
 } from "@/api/manager";
-import { teamsApi } from "@/api/teams";
+import { teamsApi, validateTeamName } from "@/api/teams";
+import { apiErrorMessage } from "@/api/client";
 import { ProtectedHoursTab } from "@/components/team/ProtectedHoursTab";
 import { FindATimeTab } from "@/components/team/FindATimeTab";
 import { AnalyticsTab } from "@/components/team/AnalyticsTab";
@@ -385,26 +390,68 @@ function TeamTab({
   const [expanded, setExpanded] = useState<string | null>(null);
   const [autoBannerDismissed, setAutoBannerDismissed] = useState(false);
 
-  const teamQ = useQuery({ queryKey: ["manager-team"], queryFn: () => managerApi.remote.listTeam() });
+  const teamQ = useQuery({
+    queryKey: managerKeys.team,
+    queryFn: () => managerApi.remote.listTeam(),
+    placeholderData: (prev) => prev,
+  });
   const team = teamQ.data ?? [];
+
+  const week = useMemo(() => weekStart(weekOffset).toISOString().slice(0, 10), [weekOffset]);
+
+  const gapsQ = useQuery({
+    queryKey: managerKeys.gaps,
+    queryFn: () => managerApi.remote.gaps(),
+    placeholderData: (prev) => prev,
+  });
+
+  const analyticsQ = useQuery({
+    queryKey: managerKeys.analytics(week),
+    queryFn: () => managerApi.remote.analytics(week),
+    placeholderData: (prev) => prev,
+  });
+  const analyticsByEmail = useMemo(() => {
+    const map = new Map<string, MemberAnalytics>();
+    for (const a of analyticsQ.data ?? []) map.set(a.email.toLowerCase(), a);
+    return map;
+  }, [analyticsQ.data]);
+
+  const scheduleMut = useMutation({
+    mutationFn: (email: string) => managerApi.remote.schedulePrefillUrl(email),
+    onSuccess: (url) => {
+      if (/^https?:\/\//i.test(url)) window.location.assign(url);
+      else navigate(url);
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  });
 
   const detectMut = useMutation({
     mutationFn: () => managerApi.remote.detect(),
+    onError: (e) => toast.error(apiErrorMessage(e)),
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["manager-team"] });
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
       toast.success(r.added > 0 ? `${r.added} new team member${r.added === 1 ? "" : "s"} found.` : "No new members found.");
     },
   });
 
   const removeMut = useMutation({
     mutationFn: (email: string) => managerApi.remote.removeMember(email),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+    },
   });
 
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["manager-team"] }),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: managerKeys.team });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -413,15 +460,20 @@ function TeamTab({
     return team.filter((m) => m.display_name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q));
   }, [team, search]);
 
-  const gaps = useMemo(() => managerApi.gaps(), [team]);
   const allAuto = team.length > 0 && team.every((m) => m.source === "auto");
 
-  const goSchedule = (email: string) => {
-    navigate(managerApi.schedulePrefillUrl(email));
-  };
+  const goSchedule = (email: string) => scheduleMut.mutate(email);
 
   return (
     <>
+      {teamQ.isError && (
+        <ErrorBanner
+          message={apiErrorMessage(teamQ.error)}
+          onRetry={() => teamQ.refetch()}
+          busy={teamQ.isFetching}
+        />
+      )}
+
       {teamQ.isLoading && (
         <div className="space-y-3">
           {[0, 1, 2].map((i) => (
@@ -448,7 +500,17 @@ function TeamTab({
         </div>
       )}
 
-      {team.length > 0 && <GapsSection gaps={gaps} onSchedule={goSchedule} />}
+      {team.length > 0 && (
+        <GapsSection
+          gaps={gapsQ.data ?? []}
+          isLoading={gapsQ.isLoading}
+          error={gapsQ.isError ? apiErrorMessage(gapsQ.error) : null}
+          onRetry={() => gapsQ.refetch()}
+          busy={gapsQ.isFetching}
+          schedulingEmail={scheduleMut.isPending ? (scheduleMut.variables as string) : null}
+          onSchedule={goSchedule}
+        />
+      )}
 
       {team.length > 0 && (
         <section className="mt-6 rounded-2xl border border-border bg-card">
@@ -489,6 +551,8 @@ function TeamTab({
               <MemberRow
                 key={m.email}
                 member={m}
+                analytics={analyticsByEmail.get(m.email.toLowerCase()) ?? null}
+                analyticsLoading={analyticsQ.isLoading}
                 expanded={expanded === m.email}
                 onToggle={() => setExpanded(expanded === m.email ? null : m.email)}
                 onCadenceChange={(cadence, custom) =>
@@ -564,7 +628,10 @@ function TeamTab({
       <AddPersonDialog
         open={addOpen}
         onOpenChange={setAddOpen}
-        onAdded={() => qc.invalidateQueries({ queryKey: ["manager-team"] })}
+        onAdded={() => {
+          qc.invalidateQueries({ queryKey: managerKeys.team });
+          qc.invalidateQueries({ queryKey: managerKeys.gaps });
+        }}
       />
 
       <AlertDialog open={!!removeTarget} onOpenChange={(o) => !o && setRemoveTarget(null)}>
