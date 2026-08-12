@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SettingsPage from "./pages/Settings";
+import AuditPage from "./pages/Audit";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import AuthCallback from "./pages/AuthCallback";
@@ -69,6 +70,14 @@ const App = () => (
             element={
               <RequireAuth>
                 <SettingsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/settings/audit"
+            element={
+              <RequireAuth>
+                <AuditPage />
               </RequireAuth>
             }
           />
