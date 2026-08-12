@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ArrowDownRight, Minus, Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { teamsApi, type FormalTeam } from "@/api/teams";
+import { teamsApi, teamKeys, type FormalTeam } from "@/api/teams";
+import { apiErrorMessage } from "@/api/client";
 import { managerApi, type TeamMember } from "@/api/manager";
 
 interface Props {
@@ -31,14 +32,23 @@ function initials(name: string): string {
   return name.split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
+function todayISO() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
 export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
   const [sub, setSub] = useState<SubTab>("week");
+  const [date, setDate] = useState(todayISO());
 
   // Data source preference: formal team if available, else manager team
   const teamAnalyticsQ = useQuery({
-    queryKey: ["formal-team-analytics", activeTeam?.id],
-    queryFn: () => teamsApi.remote.teamAnalytics(activeTeam!.id),
+    queryKey: teamKeys.analytics(activeTeam?.id ?? "none", date),
+    queryFn: () => teamsApi.remote.teamAnalytics(activeTeam!.id, date),
     enabled: !!activeTeam,
+    // Keep the previous week's data visible while a refetch is in flight.
+    placeholderData: (prev) => prev,
   });
   const teamData = useMemo(() => {
     if (activeTeam) return teamAnalyticsQ.data ?? [];
@@ -64,6 +74,32 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
         </p>
       </div>
 
+      {activeTeam && (
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs font-medium text-foreground">
+            Week of
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="ml-2 h-9 rounded-lg border border-input bg-background px-3 text-sm"
+            />
+          </label>
+          {teamAnalyticsQ.isFetching && <span className="text-[11px] text-muted-foreground">Refreshing…</span>}
+        </div>
+      )}
+
+      {activeTeam && teamAnalyticsQ.isError && (
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+          <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">
+            {apiErrorMessage(teamAnalyticsQ.error)}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => teamAnalyticsQ.refetch()} disabled={teamAnalyticsQ.isFetching}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Sub-tab bar */}
       <div className="flex gap-1 border-b border-border">
         {SUBTABS.map((t) => (
@@ -80,7 +116,15 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
         ))}
       </div>
 
-      {teamData.length === 0 && (
+      {activeTeam && teamAnalyticsQ.isLoading && (
+        <div className="space-y-2">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-16 animate-pulse rounded-xl border border-border bg-card" />
+          ))}
+        </div>
+      )}
+
+      {teamData.length === 0 && !(activeTeam && teamAnalyticsQ.isLoading) && !(activeTeam && teamAnalyticsQ.isError) && (
         <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center">
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <Users className="h-5 w-5" />
