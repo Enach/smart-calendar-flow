@@ -378,6 +378,8 @@ const managerRemote = {
   }) =>
     withFallback<{ member: TeamMember; alreadyAuto: boolean }>(
       async () => {
+        assertMemberInput(input);
+
         await requestApi("POST", "/manager/team/members", {
           email: input.email,
           display_name: input.display_name ?? "",
