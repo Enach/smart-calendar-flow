@@ -1001,7 +1001,12 @@ export const api = {
   // ----- Conferencing -----
   addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
     withFallback(
-      () => requestApi<ConferenceLink>("POST", `/events/${eventId}/conference`, body),
+      () =>
+        requestApi<ConferenceLink>(
+          "POST",
+          `/events/${eventId}/conference`,
+          conferenceRequestBody(body),
+        ),
       () => {
         const ev = mockState.events.find((e) => e.id === eventId);
         if (!ev) throw new Error("Not found");
@@ -1023,7 +1028,10 @@ export const api = {
     ),
   conferenceProviders: () =>
     withFallback(
-      () => requestApi<ConferenceProviderStatus[]>("GET", "/conference/providers"),
+      async () =>
+        normalizeConferenceProviders(
+          await requestApi<unknown>("GET", "/conference/providers"),
+        ),
       () => {
         const calProvider = mockState.settings.calendar_provider ?? "google";
         return [
@@ -1046,6 +1054,7 @@ export const api = {
         ] as ConferenceProviderStatus[];
       },
     ),
+
   zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
   zoomDisconnect: () =>
     withFallback(
