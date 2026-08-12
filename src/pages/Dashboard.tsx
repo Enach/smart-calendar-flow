@@ -175,8 +175,8 @@ export default function Dashboard() {
       } else {
         setNlpError(res.error || "Sorry, I couldn't understand that request.");
       }
-    } catch {
-      setNlpError("Network error. Please try again.");
+    } catch (e) {
+      setNlpError(apiErrorMessage(e));
     } finally {
       setNlpLoading(false);
     }
@@ -192,8 +192,8 @@ export default function Dashboard() {
       setParseResult(null);
       setNlpInitial("");
       qc.invalidateQueries({ queryKey: ["events"] });
-    } catch {
-      toast.error("Failed to schedule meeting");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setConfirming(false);
     }
@@ -215,8 +215,8 @@ export default function Dashboard() {
         demoWriteToast();
         qc.invalidateQueries({ queryKey: ["events"] });
         setQuickCreate(null);
-      } catch {
-        toast.error("Failed to create event");
+      } catch (e) {
+        toast.error(apiErrorMessage(e));
       } finally {
         setQuickCreateSaving(false);
       }
@@ -266,9 +266,9 @@ export default function Dashboard() {
             : `Resized "${event.title}"`,
         );
         demoWriteToast();
-      } catch {
+      } catch (e) {
         revert();
-        toast.error(kind === "drop" ? "Failed to move event" : "Failed to resize event");
+        toast.error(apiErrorMessage(e));
       }
     },
     [qc],
