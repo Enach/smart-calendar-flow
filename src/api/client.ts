@@ -819,11 +819,15 @@ export const api = {
     ),
 
   // Audit
-  getAudit: () =>
+  getAudit: (limit = DEFAULT_AUDIT_LIMIT) =>
     withFallback(
-      () => requestApi<AuditEntry[]>("GET", "/audit"),
-      () => [...mockState.audit],
+      async () => {
+        const raw = await requestApi<unknown>("GET", "/audit", undefined, { limit: String(limit) });
+        return normalizeAuditEntries(raw);
+      },
+      () => mockState.audit.slice(0, limit),
     ),
+
 
   // Personal calendars
   listPersonalCalendars: () =>
