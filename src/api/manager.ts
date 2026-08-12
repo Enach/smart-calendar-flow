@@ -397,7 +397,12 @@ const managerRemote = {
   updateMember: (email: string, patch: Partial<TeamMember>) =>
     withFallback<TeamMember | null>(
       async () => {
+        if (patch.cadence !== undefined) {
+          const err = validateCadencePatch(patch.cadence, patch.custom_cadence_days);
+          if (err) throw new ManagerValidationError(err);
+        }
         const body = {
+
           ...(patch.display_name === undefined ? {} : { display_name: patch.display_name }),
           ...(patch.cadence === undefined ? {} : { cadence: patch.cadence }),
           ...(patch.custom_cadence_days === undefined ? {} : { cadence_custom_days: patch.custom_cadence_days }),
