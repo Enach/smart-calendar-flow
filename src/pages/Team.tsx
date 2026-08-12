@@ -1048,6 +1048,7 @@ function AddPersonDialog({
   const [cadence, setCadence] = useState<Cadence>("biweekly");
   const [customDays, setCustomDays] = useState(14);
   const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setEmail("");
@@ -1055,28 +1056,43 @@ function AddPersonDialog({
     setCadence("biweekly");
     setCustomDays(14);
     setNote(null);
+    setError(null);
   };
 
-  const submit = async () => {
-    if (!email.trim() || !/.+@.+\..+/.test(email)) {
-      toast.error("Please enter a valid email");
-      return;
-    }
-    const { alreadyAuto } = await managerApi.remote.addMember({
-      email: email.trim(),
-      display_name: name.trim() || undefined,
+  const addMut = useMutation({
+    mutationFn: () =>
+      managerApi.remote.addMember({
+        email: email.trim(),
+        display_name: name.trim() || undefined,
+        cadence,
+        custom_cadence_days: cadence === "custom" ? customDays : undefined,
+      }),
+    // Form values are intentionally preserved on error.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: ({ alreadyAuto }) => {
+      onAdded();
+      if (alreadyAuto) {
+        setNote("This person is already in your team (auto-detected). Settings have been updated.");
+        return;
+      }
+      toast.success(`${name || email} added to your team.`);
+      reset();
+      onOpenChange(false);
+    },
+  });
+
+  const submit = () => {
+    const invalid = validateMemberInput({
+      email,
       cadence,
       custom_cadence_days: cadence === "custom" ? customDays : undefined,
     });
-    if (alreadyAuto) {
-      setNote("This person is already in your team (auto-detected). Settings have been updated.");
-      onAdded();
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    toast.success(`${name || email} added to your team.`);
-    onAdded();
-    reset();
-    onOpenChange(false);
+    setError(null);
+    addMut.mutate();
   };
 
   return (
@@ -1121,14 +1137,19 @@ function AddPersonDialog({
             </label>
           )}
           {note && <div className="rounded-lg bg-[#E9B949]/10 px-3 py-2 text-xs text-[#8A6A14]">{note}</div>}
+          {error && (
+            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-            Add to team
+          <Button onClick={submit} disabled={addMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {addMut.isPending ? "Adding…" : "Add to team"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1146,17 +1167,29 @@ function CreateTeamDialog({
   onCreated: (t: ReturnType<typeof teamsApi.list>[number]) => void;
 }) {
   const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
-    if (!name.trim()) {
-      toast.error("Please enter a team name");
+  const createMut = useMutation({
+    mutationFn: () => teamsApi.remote.createTeam(name),
+    // Keep the typed name on error.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: (t) => {
+      toast.success(`Team "${t.name}" created.`);
+      setName("");
+      setError(null);
+      onOpenChange(false);
+      onCreated(t);
+    },
+  });
+
+  const submit = () => {
+    const invalid = validateTeamName(name);
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    const t = await teamsApi.remote.createTeam(name);
-    toast.success(`Team "${t.name}" created.`);
-    setName("");
-    onOpenChange(false);
-    onCreated(t);
+    setError(null);
+    createMut.mutate();
   };
 
   return (
@@ -1164,7 +1197,10 @@ function CreateTeamDialog({
       open={open}
       onOpenChange={(o) => {
         onOpenChange(o);
-        if (!o) setName("");
+        if (!o) {
+          setName("");
+          setError(null);
+        }
       }}
     >
       <DialogContent className="sm:max-w-md">
@@ -1187,6 +1223,11 @@ function CreateTeamDialog({
               placeholder="Platform team"
             />
           </label>
+          {error && (
+            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground">
             You will be the team owner. Invite teammates after creation.
           </p>
@@ -1195,8 +1236,8 @@ function CreateTeamDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-            Create team
+          <Button onClick={submit} disabled={createMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {createMut.isPending ? "Creating…" : "Create team"}
           </Button>
         </DialogFooter>
       </DialogContent>
