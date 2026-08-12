@@ -442,21 +442,119 @@ const managerRemote = {
   gaps: () =>
     withFallback<OneOnOneGap[]>(
       async () => {
-        const raw = await requestApi<{ gaps?: Array<{
-          member_email: string; display_name: string; cadence: Cadence;
-          last_one_on_one_at?: string | null; days_overdue: number;
-        }> }>("GET", "/manager/gaps");
-        return (raw.gaps ?? []).map((gap) => ({
-          email: gap.member_email,
-          display_name: gap.display_name,
-          cadence: gap.cadence,
-          last_one_on_one: gap.last_one_on_one_at ?? null,
-          days_overdue: gap.days_overdue,
-        }));
+        const raw = await requestApi<{ gaps?: RawGap[] }>("GET", "/manager/gaps");
+        return normalizeGaps(raw);
       },
       () => managerApi.gaps(),
     ),
+
+  /**
+   * GET /api/manager/analytics?week=YYYY-MM-DD -> { members: [...] }
+   * `week` must be the ISO date of a Monday.
+   */
+  analytics: (week: string) =>
+    withFallback<MemberAnalytics[]>(
+      async () => {
+        if (!DATE_RE.test(week)) throw new ManagerValidationError("Week must be an ISO date (YYYY-MM-DD).");
+        const raw = await requestApi<{ members?: RawAnalyticsMember[] }>(
+          "GET",
+          `/manager/analytics?week=${encodeURIComponent(week)}`,
+        );
+        return normalizeAnalytics(raw, week);
+      },
+      () =>
+        managerApi
+          .listTeam()
+          .map((m) => managerApi.analytics(m.email))
+          .filter((a): a is MemberAnalytics => a !== null),
+    ),
+
+  /**
+   * POST /api/manager/team/members/:email/schedule -> { prefill_url }
+   * The URL is always server-generated; we never fabricate one online.
+   */
+  schedulePrefillUrl: (email: string, suggestedDate?: string) =>
+    withFallback<string>(
+      async () => {
+        if (!EMAIL_RE.test(email.trim())) throw new ManagerValidationError("Enter a valid email address.");
+        if (suggestedDate !== undefined && !DATE_RE.test(suggestedDate)) {
+          throw new ManagerValidationError("Suggested date must be an ISO date (YYYY-MM-DD).");
+        }
+        const raw = await requestApi<{ prefill_url?: string }>(
+          "POST",
+          `/manager/team/members/${encodeURIComponent(email)}/schedule`,
+          suggestedDate ? { suggested_date: suggestedDate } : {},
+        );
+        if (!raw?.prefill_url) throw new Error("backend did not return a prefill_url");
+        return raw.prefill_url;
+      },
+      () => managerApi.schedulePrefillUrl(email),
+    ),
 };
+
+// ---------- Response normalization (exported for tests) ----------
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+export interface RawGap {
+  member_email: string;
+  display_name?: string;
+  cadence?: Cadence;
+  last_one_on_one_at?: string | null;
+  days_overdue?: number;
+}
+
+export function normalizeGaps(raw: { gaps?: RawGap[] } | null | undefined): OneOnOneGap[] {
+  return (raw?.gaps ?? []).map((gap) => ({
+    email: gap.member_email,
+    display_name: gap.display_name || gap.member_email.split("@")[0],
+    cadence: gap.cadence ?? "none",
+    last_one_on_one: gap.last_one_on_one_at ?? null,
+    days_overdue: Number.isFinite(gap.days_overdue) ? Number(gap.days_overdue) : 0,
+  }));
+}
+
+export interface RawAnalyticsMember {
+  email: string;
+  is_paceday_user?: boolean;
+  data_available?: boolean;
+  week_start?: string;
+  meeting_minutes?: number;
+  focus_minutes?: number;
+  free_minutes?: number;
+  weeks?: Array<{
+    week_start?: string;
+    meeting_minutes?: number;
+    focus_minutes?: number;
+    free_minutes?: number;
+  }>;
+  one_on_ones?: Array<{ date: string; title?: string }>;
+}
+
+export function normalizeAnalytics(
+  raw: { members?: RawAnalyticsMember[] } | null | undefined,
+  week: string,
+): MemberAnalytics[] {
+  return (raw?.members ?? []).map((m) => {
+    const source =
+      m.weeks && m.weeks.length > 0
+        ? m.weeks
+        : [{ week_start: m.week_start ?? week, meeting_minutes: m.meeting_minutes, focus_minutes: m.focus_minutes, free_minutes: m.free_minutes }];
+    return {
+      email: m.email,
+      is_paceday_user: m.is_paceday_user ?? false,
+      data_available: m.data_available ?? true,
+      weeks: source.map((w) => ({
+        week_start: w.week_start ?? week,
+        meeting_minutes: Number(w.meeting_minutes ?? 0),
+        focus_minutes: Number(w.focus_minutes ?? 0),
+        free_minutes: Number(w.free_minutes ?? 0),
+      })),
+      one_on_ones: (m.one_on_ones ?? []).map((o) => ({ date: o.date, title: o.title ?? "1:1" })),
+    };
+  });
+}
+
 
 export const managerApi = {
   remote: managerRemote,
