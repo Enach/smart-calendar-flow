@@ -245,7 +245,61 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
   };
 }
 
+// ---------- Query keys ----------
+
+/** Smallest-scope React Query keys for the manager surface. */
+export const managerKeys = {
+  profile: ["manager", "profile"] as const,
+  team: ["manager-team"] as const,
+  gaps: ["manager", "gaps"] as const,
+  analytics: (week: string) => ["manager", "analytics", week] as const,
+};
+
+// ---------- Validation ----------
+
+export class ManagerValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ManagerValidationError";
+  }
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export const CADENCE_VALUES: Cadence[] = ["weekly", "biweekly", "monthly", "custom", "none"];
+
+/** Returns an error message, or null when the input is valid. */
+export function validateMemberInput(input: {
+  email: string;
+  cadence: Cadence | string;
+  custom_cadence_days?: number;
+}): string | null {
+  const email = input.email?.trim().toLowerCase() ?? "";
+  if (!email) return "Email is required.";
+  if (!EMAIL_RE.test(email)) return "Enter a valid email address.";
+  if (!CADENCE_VALUES.includes(input.cadence as Cadence)) return "Choose a valid cadence.";
+  if (input.cadence === "custom") {
+    const d = input.custom_cadence_days;
+    if (d == null || !Number.isFinite(d) || !Number.isInteger(d) || d < 1 || d > 365) {
+      return "Custom cadence must be a whole number of days between 1 and 365.";
+    }
+  }
+  return null;
+}
+
+function assertMemberInput(input: { email: string; cadence: Cadence; custom_cadence_days?: number }) {
+  const err = validateMemberInput(input);
+  if (err) throw new ManagerValidationError(err);
+}
+
+/** Validate a cadence-only patch (member edit). */
+export function validateCadencePatch(cadence: Cadence, customDays?: number): string | null {
+  return validateMemberInput({ email: "placeholder@example.com", cadence, custom_cadence_days: customDays });
+}
+
 // ---------- Public API ----------
+
+
 
 
 type BackendManagerMember = {
