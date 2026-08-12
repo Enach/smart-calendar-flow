@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, Plus, RotateCcw, Trash2, Video, ExternalLink, Settings as SettingsIcon, X } from "lucide-react";
-import { api } from "@/api/client";
+import { api, apiErrorMessage, isValidConferenceUrl } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceLink, ConferenceProvider } from "@/api/types";
 
@@ -40,18 +40,6 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     providers.find((x) => x.provider === p)?.connected ||
     !!providers.find((x) => x.provider === p)?.auto_with;
 
-  const buildOptimisticLink = (provider: ConferenceProvider, url?: string): ConferenceLink => {
-    const fallbackUrl =
-      provider === "google_meet"
-        ? `https://meet.google.com/lookup/${eventId.slice(0, 10)}`
-        : provider === "zoom"
-          ? `https://zoom.us/j/${Math.floor(Math.random() * 1e10)}`
-          : provider === "teams"
-            ? `https://teams.microsoft.com/l/meetup-join/${eventId}`
-            : url ?? "";
-    return { provider, url: url ?? fallbackUrl };
-  };
-
   const add = async (provider: ConferenceProvider, url?: string) => {
     // Concurrent-toggle guard
     if (busy !== null) return;
@@ -59,27 +47,23 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       toast.error(`${PROVIDER_META[provider].label} isn't connected — open Settings → Conferencing to link it.`);
       return;
     }
+    if (provider === "custom" && !isValidConferenceUrl(url ?? "")) {
+      toast.error("Enter a valid http(s) meeting URL.");
+      return;
+    }
     setLinkError(null);
-    const previous = conference;
-    const optimistic = buildOptimisticLink(provider, url);
-    // Show the new link immediately
-    onChange(optimistic);
     setOpen(false);
     setCustomMode(false);
-    setCustomUrl("");
     setBusy(provider);
     try {
-      const link = await api.addConference(eventId, { provider, url });
-      // Reconcile with server response
+      // Only `custom` carries a URL; other providers are generated server-side.
+      const link = await api.addConference(eventId, { provider, url: provider === "custom" ? url : undefined });
       onChange(link);
+      setCustomUrl("");
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`${PROVIDER_META[provider].label} link added`);
-    } catch {
-      // Rollback
-      onChange(previous);
-      const message = previous
-        ? `Couldn't switch to ${PROVIDER_META[provider].label} — the previous link has been restored.`
-        : `Couldn't add a ${PROVIDER_META[provider].label} link — no link was attached.`;
+    } catch (e) {
+      const message = apiErrorMessage(e);
       toast.error(message);
       setLinkError({ message, retry: () => add(provider, url) });
     } finally {
@@ -91,17 +75,14 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
     // Concurrent-toggle guard
     if (busy !== null) return;
     setLinkError(null);
-    const previous = conference;
-    // Clear immediately
-    onChange(undefined);
     setBusy("custom");
     try {
       await api.removeConference(eventId);
+      onChange(undefined);
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success("Meeting link removed");
-    } catch {
-      onChange(previous);
-      const message = "Couldn't remove the meeting link — it's still attached to the event.";
+    } catch (e) {
+      const message = apiErrorMessage(e);
       toast.error(message);
       setLinkError({ message, retry: remove });
     } finally {
@@ -221,8 +202,8 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
               />
               <button
                 type="button"
-                onClick={() => customUrl.trim() && add("custom", customUrl.trim())}
-                disabled={!customUrl.trim() || busy !== null}
+                onClick={() => add("custom", customUrl.trim())}
+                disabled={!isValidConferenceUrl(customUrl) || busy !== null}
                 className="flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
               >
                 {busy === "custom" && <Loader2 className="h-3 w-3 animate-spin" />}
