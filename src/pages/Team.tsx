@@ -714,13 +714,31 @@ function DetectionPrompt({
 
 function GapsSection({
   gaps,
+  isLoading,
+  error,
+  onRetry,
+  busy,
+  schedulingEmail,
   onSchedule,
 }: {
-  gaps: Array<ReturnType<typeof managerApi.gaps>[number]>;
+  gaps: OneOnOneGap[];
+  isLoading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  busy: boolean;
+  schedulingEmail: string | null;
   onSchedule: (email: string) => void;
 }) {
   const overdue = gaps.filter((g) => g.days_overdue > 0);
   const [open, setOpen] = useState(overdue.length > 0);
+
+  if (error && gaps.length === 0) {
+    return <ErrorBanner message={error} onRetry={onRetry} busy={busy} />;
+  }
+
+  if (isLoading && gaps.length === 0) {
+    return <div className="mb-4 h-14 animate-pulse rounded-xl border border-border bg-card" />;
+  }
 
   if (gaps.length === 0) {
     return (
@@ -730,6 +748,7 @@ function GapsSection({
       </div>
     );
   }
+
 
   return (
     <section
