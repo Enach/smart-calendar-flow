@@ -253,6 +253,7 @@ const teamsRemote = {
   createTeam: (name: string) =>
     withFallback<FormalTeam>(
       async () => {
+        assertTeams(validateTeamName(name));
         const raw = await requestApi<BackendTeam>("POST", "/teams/", { name: name.trim() });
         const team = await remoteTeam(raw.id);
         const state = load();
@@ -267,6 +268,7 @@ const teamsRemote = {
   renameTeam: (id: string, name: string) =>
     withFallback<FormalTeam | null>(
       async () => {
+        assertTeams(validateTeamName(name));
         await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
         return remoteTeam(id);
       },
@@ -288,6 +290,7 @@ const teamsRemote = {
   inviteMember: (teamId: string, email: string, displayName?: string) =>
     withFallback<FormalTeamMember | null>(
       async () => {
+        assertTeams(validateTeamEmail(email));
         await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
         const team = await remoteTeam(teamId);
         return team.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
@@ -318,6 +321,7 @@ const teamsRemote = {
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
     withFallback<NoMeetingZone | null>(
       async () => {
+        assertTeams(validateZoneInput(input));
         const raw = await requestApi<BackendZone>("POST", "/teams/" + teamId + "/no-meeting-zones", {
           dayOfWeek: input.day_of_week,
           startTime: timeFromMinutes(input.start_min),
@@ -339,6 +343,12 @@ const teamsRemote = {
       async () => {
         const current = (await remoteTeam(teamId)).no_meeting_zones.find((zone) => zone.id === zoneId);
         if (!current) throw new Error("zone not found");
+        const merged = {
+          day_of_week: patch.day_of_week ?? current.day_of_week,
+          start_min: patch.start_min ?? current.start_min,
+          end_min: patch.end_min ?? current.end_min,
+        };
+        assertTeams(validateZoneInput(merged));
         await requestApi("PATCH", "/teams/" + teamId + "/no-meeting-zones/" + zoneId, {
           dayOfWeek: patch.day_of_week ?? current.day_of_week,
           startTime: timeFromMinutes(patch.start_min ?? current.start_min),
@@ -358,6 +368,7 @@ const teamsRemote = {
   findSlots: (teamId: string, dateISO: string, durationMin: number) =>
     withFallback<AvailabilitySlot[]>(
       async () => {
+        assertTeams(validateAvailabilityQuery(dateISO, durationMin));
         const raw = await requestApi<{ slots?: Array<{ start: string; end: string; quality_score?: number }> }>(
           "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
         );
@@ -371,12 +382,13 @@ const teamsRemote = {
       () => teamsApi.findSlots(teamId, dateISO, durationMin),
     ),
 
-  teamAnalytics: (teamId: string) =>
+  teamAnalytics: (teamId: string, dateISO?: string) =>
     withFallback<ReturnType<typeof teamsApi.teamAnalytics>>(
       async () => {
+        if (dateISO !== undefined) assertTeams(ISO_DATE_RE.test(dateISO) ? null : "Pick a valid date.");
         const raw = await requestApi<{
           member_breakdown?: Array<{ name?: string; meeting_minutes: number; focus_minutes: number }>;
-        }>("GET", "/teams/" + teamId + "/analytics");
+        }>("GET", "/teams/" + teamId + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
         const team = await remoteTeam(teamId);
         const weekStart = new Date();
         const day = weekStart.getDay();
