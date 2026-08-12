@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Loader2, Save, Zap, RefreshCw, User, Users } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Loader2, Save, Zap, RefreshCw, ScrollText, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
@@ -182,6 +182,16 @@ export default function SettingsPage() {
         </div>
 
         <ProfileSection />
+
+        <Section title="Activity" description="Every action Paceday took on your calendar.">
+          <Link
+            to="/settings/audit"
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
+          >
+            <ScrollText className="h-4 w-4 text-muted-foreground" />
+            Open audit log
+          </Link>
+        </Section>
 
         <Section title="Working Hours" description="When you're available for meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

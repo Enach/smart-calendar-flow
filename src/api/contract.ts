@@ -73,7 +73,7 @@ export interface ApiPort {
   nlpParse(text: string): Promise<ParseResult>;
   nlpConfirm(parseResult: ParseResult, selectedSlotIndex: number): Promise<CalendarEvent>;
 
-  getAudit(): Promise<AuditEntry[]>;
+  getAudit(limit?: number): Promise<AuditEntry[]>;
 
   listPersonalCalendars(): Promise<PersonalCalendar[]>;
   addPersonalCalendar(body: { type: PersonalCalendarType; label: string; url?: string }): Promise<PersonalCalendar>;
