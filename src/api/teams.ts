@@ -165,7 +165,66 @@ async function remoteTeam(id: string): Promise<FormalTeam> {
   return normalizeTeam(detail.team ?? { id, name: "Team" }, detail.members ?? [], zones ?? []);
 }
 
+// ---------- Query keys ----------
+
+export const teamKeys = {
+  all: ["formal-teams"] as const,
+  detail: (id: string) => ["formal-teams", id] as const,
+  availability: (id: string, date: string, duration: number) =>
+    ["formal-teams", id, "availability", date, duration] as const,
+  analytics: (id: string, date: string) => ["formal-team-analytics", id, date] as const,
+};
+
+// ---------- Validation ----------
+
+export class TeamValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TeamValidationError";
+  }
+}
+
+const TEAM_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DURATIONS_ALLOWED = [15, 30, 45, 60, 90, 120];
+
+export function validateTeamName(name: string): string | null {
+  const trimmed = name?.trim() ?? "";
+  if (!trimmed) return "Team name is required.";
+  if (trimmed.length > 80) return "Team name must be 80 characters or fewer.";
+  return null;
+}
+
+export function validateTeamEmail(email: string): string | null {
+  const trimmed = email?.trim() ?? "";
+  if (!trimmed) return "Email is required.";
+  if (!TEAM_EMAIL_RE.test(trimmed)) return "Enter a valid email address.";
+  return null;
+}
+
+/** Weekday convention is Monday=1 … Sunday=7. */
+export function validateZoneInput(input: { day_of_week: number; start_min: number; end_min: number; label?: string }): string | null {
+  const { day_of_week: dow, start_min: start, end_min: end } = input;
+  if (!Number.isInteger(dow) || dow < 1 || dow > 7) return "Day must be between Monday (1) and Sunday (7).";
+  if (!Number.isInteger(start) || start < 0 || start > 1440) return "Start time is out of range.";
+  if (!Number.isInteger(end) || end < 0 || end > 1440) return "End time is out of range.";
+  if (end <= start) return "End time must be after the start time.";
+  return null;
+}
+
+export function validateAvailabilityQuery(dateISO: string, durationMin: number): string | null {
+  if (!ISO_DATE_RE.test(dateISO ?? "")) return "Pick a valid date.";
+  if (!Number.isInteger(durationMin) || durationMin <= 0) return "Pick a valid duration.";
+  if (!DURATIONS_ALLOWED.includes(durationMin)) return "Duration must be one of 15, 30, 45, 60, 90 or 120 minutes.";
+  return null;
+}
+
+function assertTeams(err: string | null) {
+  if (err) throw new TeamValidationError(err);
+}
+
 const teamsRemote = {
+
   list: () =>
     withFallback<FormalTeam[]>(
       async () => {
