@@ -377,6 +377,46 @@ function normalizePersonalCalendar(raw: BackendPersonalCalendar): PersonalCalend
   };
 }
 
+/** Default number of audit entries requested (matches GET /api/audit?limit=50). */
+export const DEFAULT_AUDIT_LIMIT = 50;
+
+/**
+ * Render an audit `details` payload as safe, readable plain text.
+ * Structured details are JSON-stringified — never injected as HTML.
+ */
+export function formatAuditDetails(details: unknown): string {
+  if (details == null) return "";
+  if (typeof details === "string") return details;
+  if (typeof details === "number" || typeof details === "boolean") return String(details);
+  try {
+    return JSON.stringify(details);
+  } catch {
+    return "";
+  }
+}
+
+/** Normalize the audit list response; tolerates missing/odd fields and envelopes. */
+export function normalizeAuditEntries(raw: unknown): AuditEntry[] {
+  const list = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { entries?: unknown[] } | null)?.entries)
+      ? (raw as { entries: unknown[] }).entries
+      : Array.isArray((raw as { items?: unknown[] } | null)?.items)
+        ? (raw as { items: unknown[] }).items
+        : [];
+  return list.map((item, i) => {
+    const e = (item ?? {}) as { id?: unknown; action?: unknown; details?: unknown; created_at?: unknown };
+    const idNum = Number(e.id);
+    return {
+      id: Number.isFinite(idNum) ? idNum : i,
+      action: typeof e.action === "string" && e.action ? e.action : "unknown",
+      details: formatAuditDetails(e.details),
+      created_at: typeof e.created_at === "string" ? e.created_at : "",
+    } satisfies AuditEntry;
+  });
+}
+
+
 /**
  * Run the real network call, falling back to local preview data ONLY when the
  * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
