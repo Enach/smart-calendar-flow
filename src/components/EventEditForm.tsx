@@ -14,7 +14,7 @@ import {
 import { LocationPicker } from "@/components/LocationPicker";
 import { ParticipantPicker } from "@/components/ParticipantPicker";
 import { MeetingLinkRow } from "@/components/MeetingLinkRow";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { Attendee, CalendarEvent, ConferenceLink } from "@/api/types";
 
@@ -109,8 +109,8 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       toast.success("Event saved");
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
-    } catch {
-      toast.error("Failed to save event");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -124,8 +124,8 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       qc.invalidateQueries({ queryKey: ["events"] });
       setConfirmingDelete(false);
       onClose();
-    } catch {
-      toast.error("Failed to delete event");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setDeleting(false);
     }

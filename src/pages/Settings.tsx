@@ -8,7 +8,7 @@ import { PersonalCalendarsSection } from "@/components/PersonalCalendarsSection"
 import { ConferencingSection } from "@/components/ConferencingSection";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
 import { toast } from "@/hooks/useToast";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { managerApi } from "@/api/manager";
 import {
   AlertDialog,
@@ -133,8 +133,8 @@ export default function SettingsPage() {
       } else {
         toast.error(res.message || "Test failed");
       }
-    } catch {
-      toast.error("Test failed");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setLlmTesting(false);
     }
@@ -145,8 +145,8 @@ export default function SettingsPage() {
     try {
       await update.mutateAsync(draft);
       toast.success("Settings saved");
-    } catch {
-      toast.error("Failed to save settings");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     }
   };
 

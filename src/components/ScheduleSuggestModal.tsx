@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Calendar, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/AuthContext";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
@@ -99,8 +99,8 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       setSlots(res.slots);
       setSelected(0);
       setSearched(true);
-    } catch {
-      setError("Couldn't load suggestions. Try again.");
+    } catch (e) {
+      setError(apiErrorMessage(e));
     } finally {
       setSearching(false);
     }
@@ -121,8 +121,8 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       if (isDemo) toast.info("Changes are local — connect the backend to save them.");
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
-    } catch {
-      toast.error("Failed to create event");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setApplying(false);
     }
