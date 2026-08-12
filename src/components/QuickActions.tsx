@@ -31,8 +31,8 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
       const res = await api.runFocus(weekISO);
       toast.success(`Created ${res.created_blocks.length} focus block${res.created_blocks.length === 1 ? "" : "s"}`);
       refreshAll();
-    } catch {
-      toast.error("Failed to run focus engine");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
     } finally {
       setRunning(false);
     }
