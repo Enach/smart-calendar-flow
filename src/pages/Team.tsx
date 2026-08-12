@@ -243,6 +243,19 @@ export default function Team() {
   );
 }
 
+function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B91C1C]" />
+      <p className="min-w-0 flex-1 text-sm text-foreground">{message}</p>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="gap-1.5">
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+        Retry
+      </Button>
+    </div>
+  );
+}
+
 // ============================================================================
 // Header + Tab bar
 // ============================================================================
@@ -797,8 +810,13 @@ function GapsSection({
                       ? "Due this week"
                       : "On track"}
               </span>
-              <Button size="sm" onClick={() => onSchedule(g.email)} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-                Schedule
+              <Button
+                size="sm"
+                onClick={() => onSchedule(g.email)}
+                disabled={schedulingEmail === g.email}
+                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+              >
+                {schedulingEmail === g.email ? "Opening…" : "Schedule"}
               </Button>
             </li>
           ))}
@@ -810,6 +828,8 @@ function GapsSection({
 
 function MemberRow({
   member,
+  analytics,
+  analyticsLoading,
   expanded,
   onToggle,
   onCadenceChange,
@@ -817,6 +837,8 @@ function MemberRow({
   onSchedule,
 }: {
   member: TeamMember;
+  analytics: MemberAnalytics | null;
+  analyticsLoading: boolean;
   expanded: boolean;
   onToggle: () => void;
   onCadenceChange: (c: Cadence, custom?: number) => void;
@@ -831,7 +853,6 @@ function MemberRow({
     return { kind: "ok" as const, label: "On track" };
   })();
 
-  const analytics = useMemo(() => managerApi.analytics(member.email), [member]);
   const lastWeek = analytics?.weeks[analytics.weeks.length - 1];
   const prevWeek = analytics?.weeks[analytics.weeks.length - 2];
   const focusMin = lastWeek?.focus_minutes ?? 0;
@@ -918,7 +939,9 @@ function MemberRow({
 
         <div className="flex items-center justify-between gap-3 md:w-[35%] md:justify-end">
           <div className="text-right">
-            {member.data_available ? (
+            {analyticsLoading && !analytics ? (
+              <div className="h-7 w-20 animate-pulse rounded bg-muted" />
+            ) : member.data_available && analytics ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
                   <span className="text-2xl font-semibold text-[#5B7FFF]">{fmtMin(focusMin)}</span>
@@ -945,7 +968,7 @@ function MemberRow({
         </div>
       </div>
 
-      {expanded && analytics && <InlineAnalytics member={member} />}
+      {expanded && analytics && <InlineAnalytics data={analytics} />}
     </li>
   );
 }
@@ -972,9 +995,8 @@ function TrendArrow({ pct }: { pct: number }) {
   );
 }
 
-function InlineAnalytics({ member }: { member: TeamMember }) {
-  const data = useMemo(() => managerApi.analytics(member.email), [member]);
-  if (!data) return null;
+function InlineAnalytics({ data }: { data: MemberAnalytics }) {
+  if (data.weeks.length === 0) return null;
   const maxMin = Math.max(...data.weeks.map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes), 1);
 
   return (
