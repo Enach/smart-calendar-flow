@@ -19,7 +19,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { toast } from "@/hooks/useToast";
-import { teamsApi, DAY_LABELS, fmtTime, type FormalTeam, type NoMeetingZone } from "@/api/teams";
+import {
+  teamsApi,
+  teamKeys,
+  validateTeamEmail,
+  validateZoneInput,
+  DAY_LABELS,
+  fmtTime,
+  type FormalTeam,
+  type NoMeetingZone,
+} from "@/api/teams";
+import { apiErrorMessage } from "@/api/client";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -46,22 +56,26 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
   const [manageOpen, setManageOpen] = useState(false);
 
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: ["formal-teams"] });
+    qc.invalidateQueries({ queryKey: teamKeys.all });
     onChanged();
   };
+  const onMutationError = (e: unknown) => toast.error(apiErrorMessage(e));
 
   const addMut = useMutation({
     mutationFn: (input: Omit<NoMeetingZone, "id" | "created_at">) =>
       teamsApi.remote.addZone(team.id, input),
+    onError: onMutationError,
     onSuccess: () => refresh(),
   });
   const updateMut = useMutation({
     mutationFn: (input: { id: string; patch: Partial<NoMeetingZone> }) =>
       teamsApi.remote.updateZone(team.id, input.id, input.patch),
+    onError: onMutationError,
     onSuccess: () => refresh(),
   });
   const removeMut = useMutation({
     mutationFn: (id: string) => teamsApi.remote.removeZone(team.id, id),
+    onError: onMutationError,
     onSuccess: () => refresh(),
   });
 
@@ -482,11 +496,13 @@ function MobileAddForm({
     const [eh, em] = end.split(":").map(Number);
     const startMin = sh * 60 + sm;
     const endMin = eh * 60 + em;
-    if (endMin <= startMin) {
-      toast.error("End time must be after start time");
+    const zone = { day_of_week: day, start_min: startMin, end_min: endMin, label: label || "Protected" };
+    const invalid = validateZoneInput(zone);
+    if (invalid) {
+      toast.error(invalid);
       return;
     }
-    onSave({ day_of_week: day, start_min: startMin, end_min: endMin, label: label || "Protected" });
+    onSave(zone);
   };
 
   return (
@@ -551,18 +567,30 @@ function InviteDialog({
 }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const submit = async () => {
-    if (!/.+@.+\..+/.test(email)) {
-      toast.error("Please enter a valid email");
+  const inviteMut = useMutation({
+    mutationFn: () => teamsApi.remote.inviteMember(teamId, email, name),
+    // Typed values are preserved on failure.
+    onError: (e) => setError(apiErrorMessage(e)),
+    onSuccess: () => {
+      toast.success(`Invite sent to ${email}.`);
+      setEmail("");
+      setName("");
+      setError(null);
+      onOpenChange(false);
+      onInvited();
+    },
+  });
+
+  const submit = () => {
+    const invalid = validateTeamEmail(email);
+    if (invalid) {
+      setError(invalid);
       return;
     }
-    await teamsApi.remote.inviteMember(teamId, email, name);
-    toast.success(`Invite sent to ${email}.`);
-    setEmail("");
-    setName("");
-    onOpenChange(false);
-    onInvited();
+    setError(null);
+    inviteMut.mutate();
   };
 
   return (
@@ -591,13 +619,18 @@ function InviteDialog({
             Display name <span className="text-muted-foreground">(optional)</span>
             <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20" placeholder="Alex Carter" />
           </label>
+          {error && (
+            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-            Send invite
+          <Button onClick={submit} disabled={inviteMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {inviteMut.isPending ? "Sending…" : "Send invite"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -618,6 +651,14 @@ function ManageMembersSheet({
 }) {
   const me = teamsApi.currentUserEmail();
   const isOwner = team.owner_email === me;
+  const removeMemberMut = useMutation({
+    mutationFn: (email: string) => teamsApi.remote.removeMember(team.id, email),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: () => {
+      toast.success("Member removed.");
+      onChanged();
+    },
+  });
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -654,10 +695,8 @@ function ManageMembersSheet({
               </div>
               {isOwner && m.email !== me && (
                 <button
-                  onClick={() => {
-                    void teamsApi.remote.removeMember(team.id, m.email);
-                    onChanged();
-                  }}
+                  onClick={() => removeMemberMut.mutate(m.email)}
+                  disabled={removeMemberMut.isPending}
                   className="rounded p-1.5 text-muted-foreground hover:bg-[#EF4444]/10 hover:text-[#EF4444]"
                   title="Remove"
                 >
