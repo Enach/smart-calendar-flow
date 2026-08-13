@@ -78,7 +78,6 @@ export default function Dashboard() {
       toast.info("Prefilled from manager dashboard — review and confirm a slot.");
       window.history.replaceState({}, "", "/app");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
 
@@ -103,7 +102,7 @@ export default function Dashboard() {
     error: eventsErrorObj,
     refetch: refetchEvents,
   } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
-  const events = Array.isArray(eventsRaw) ? eventsRaw : [];
+  const events = useMemo(() => (Array.isArray(eventsRaw) ? eventsRaw : []), [eventsRaw]);
   // Debounce the calendar overlay so very fast responses don't cause flicker.
   const showEventsOverlay = useDebouncedFlag(
     (eventsLoading || (eventsFetching && events.length === 0)) && !eventsError,
@@ -180,7 +179,7 @@ export default function Dashboard() {
     } finally {
       setNlpLoading(false);
     }
-  }, [qc, weekISO]);
+  }, [qc, weekISO, demoWriteToast]);
 
   const handleConfirm = useCallback(async (slotIndex: number) => {
     if (!parseResult) return;
@@ -197,7 +196,7 @@ export default function Dashboard() {
     } finally {
       setConfirming(false);
     }
-  }, [parseResult, qc]);
+  }, [parseResult, qc, demoWriteToast]);
 
   // Quick-create from a calendar selection
   const handleQuickCreateSave = useCallback(
@@ -221,7 +220,7 @@ export default function Dashboard() {
         setQuickCreateSaving(false);
       }
     },
-    [quickCreate, qc],
+    [quickCreate, qc, demoWriteToast],
   );
 
   const handleQuickCreateMore = useCallback(
@@ -271,7 +270,7 @@ export default function Dashboard() {
         toast.error(apiErrorMessage(e));
       }
     },
-    [qc],
+    [qc, demoWriteToast],
   );
 
   const fcEvents = useMemo(

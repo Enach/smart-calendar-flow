@@ -408,7 +408,7 @@ function TeamTab({
     queryFn: () => managerApi.remote.listTeam(),
     placeholderData: (prev) => prev,
   });
-  const team = teamQ.data ?? [];
+  const team = useMemo(() => teamQ.data ?? [], [teamQ.data]);
 
   const week = useMemo(() => weekStart(weekOffset).toISOString().slice(0, 10), [weekOffset]);
 

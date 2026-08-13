@@ -169,7 +169,7 @@ export default function SettingsPage() {
         <div className="mb-2 flex items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
-            <p className="mt-1 text-sm text-muted-foreground">Configure how Clockwise-like manages your calendar.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Configure how Paceday manages your calendar.</p>
           </div>
           <button
             onClick={save}
@@ -376,7 +376,7 @@ export default function SettingsPage() {
 
         <Section
           title="Calendar Connection"
-          description="Choose which work calendar Clockwise-like reads and writes to."
+          description="Choose which work calendar Paceday reads and writes to."
         >
           <div className="space-y-4">
             <WorkCalendarConnection settings={draft} onPatch={patchDraft} />
