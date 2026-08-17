@@ -17,7 +17,7 @@ import {
 import { PacedayMark } from "@/components/auth/AuthLayout";
 
 import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 
 interface AuthDialogProps {
   open: boolean;

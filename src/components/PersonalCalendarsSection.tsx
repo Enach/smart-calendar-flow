@@ -22,6 +22,7 @@ import {
 import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { PersonalCalendar, PersonalCalendarType } from "@/api/types";
+import { isValidWebcalUrl } from "@/lib/personalCalendarValidation";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -31,17 +32,6 @@ const TYPE_META: Record<PersonalCalendarType, { label: string; icon: React.Compo
   outlook: { label: "Outlook", icon: Mail, badgeCls: "bg-accent/10 text-accent-foreground" },
   webcal: { label: "WebCal", icon: LinkIcon, badgeCls: "bg-muted text-muted-foreground" },
 };
-
-export function isValidWebcalUrl(value: string): boolean {
-  const v = value.trim();
-  if (!v) return false;
-  try {
-    const u = new URL(v);
-    return ["webcal:", "http:", "https:"].includes(u.protocol) && !!u.host;
-  } catch {
-    return false;
-  }
-}
 
 function formatRelative(iso?: string) {
   if (!iso) return "Never";

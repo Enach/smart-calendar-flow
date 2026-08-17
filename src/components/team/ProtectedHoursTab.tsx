@@ -84,9 +84,16 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
     [team.no_meeting_zones, editingId],
   );
 
+  const editingZoneId = editingZone?.id ?? null;
+  const editingZoneLabel = editingZone?.label ?? "";
+  const previousEditingZoneId = useRef<string | null>(null);
+
   useEffect(() => {
-    if (editingZone) setLabelInput(editingZone.label);
-  }, [editingZone?.id]);
+    if (editingZoneId && editingZoneId !== previousEditingZoneId.current) {
+      setLabelInput(editingZoneLabel);
+    }
+    previousEditingZoneId.current = editingZoneId;
+  }, [editingZoneId, editingZoneLabel]);
 
   const activeMembers = team.members.filter((m) => m.status === "active");
 
@@ -437,9 +444,10 @@ function DraftDialog({
   onCancel: () => void;
 }) {
   const [label, setLabel] = useState("");
+  const hasDraft = draft !== null;
   useEffect(() => {
-    if (draft) setLabel("");
-  }, [draft?.day_of_week, draft?.start_min, draft?.end_min]);
+    if (hasDraft) setLabel("");
+  }, [draft?.day_of_week, draft?.start_min, draft?.end_min, hasDraft]);
 
   return (
     <Dialog open={!!draft} onOpenChange={(o) => !o && onCancel()}>

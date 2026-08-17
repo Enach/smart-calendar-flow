@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 
 const DISMISS_KEY = "paceday:demo-banner-dismissed";
 

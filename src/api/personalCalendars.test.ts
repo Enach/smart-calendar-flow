@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, setMockMode, isUsingMocks, isApiHttpError } from "./client";
-import { isValidWebcalUrl } from "@/components/PersonalCalendarsSection";
+import { isValidWebcalUrl } from "@/lib/personalCalendarValidation";
 
 const fetchMock = vi.fn<typeof fetch>();
 

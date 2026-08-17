@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -12,26 +10,14 @@ import {
 import { apiFetch, type ApiError } from "@/lib/api";
 import { setMockMode } from "@/api/client";
 import { seedDemoEvents, clearDemoEvents } from "@/lib/demoData";
+import { AuthContext } from "./auth-context";
+import type { AuthContextValue } from "./auth-context";
 
 export interface AuthUser {
   id: string;
   email: string;
   name: string;
   avatar?: string;
-}
-
-interface AuthContextValue {
-  user: AuthUser | null;
-  isDemo: boolean;
-  loading: boolean;
-  /** Re-fetch /api/auth/me — used after OAuth callbacks and email login. */
-  refresh: () => Promise<void>;
-  /** Drop into demo mode without touching the backend. */
-  loginDemo: () => void;
-  /** Exit demo (clears local mock state) and returns to anonymous. */
-  exitDemo: () => void;
-  /** Signs the user out — POST /auth/logout, then clear state. */
-  logout: () => Promise<void>;
 }
 
 const DEMO_USER: AuthUser = {
@@ -41,8 +27,6 @@ const DEMO_USER: AuthUser = {
 };
 
 const DEMO_FLAG = "paceday:demo";
-
-const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -141,10 +125,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
-export function useAuth(): AuthContextValue {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
-  return ctx;
 }

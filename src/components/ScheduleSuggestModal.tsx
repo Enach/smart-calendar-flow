@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Calendar, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import type { SuggestedSlot } from "@/api/types";
 

@@ -1,7 +1,7 @@
 import { Settings as SettingsIcon, ChevronLeft, ChevronRight, Link2, Users, LogOut } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 import {
   DropdownMenu,
   DropdownMenuContent,

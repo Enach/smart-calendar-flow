@@ -3,7 +3,7 @@ import { CalendarClock, Crown, ExternalLink, Link2, MapPin, Pencil, Users, Video
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { RescheduleSuggestions } from "@/components/RescheduleSuggestions";
 import { OwnershipPill, ParticipantNotice } from "@/components/EventOwnership";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
 import { parseDescription } from "@/lib/eventDescription";
 import type { Attendee, CalendarEvent } from "@/api/types";

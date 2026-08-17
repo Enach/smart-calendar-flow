@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/paceday-logo.png";
 import { AuthDialog } from "@/components/auth/AuthDialog";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/useAuth";
 
 /* ---------- shared bits ---------- */
 
