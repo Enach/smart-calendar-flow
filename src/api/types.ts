@@ -6,6 +6,15 @@ export type LLMProvider =
   | "ollama"
   | "bedrock"
   | "azure_openai";
+export type IntegrationProvider = "google" | "microsoft" | "zoom" | "slack" | "notion" | "webcal";
+
+export interface IntegrationAvailabilityStatus {
+  available: boolean;
+  reason?: "configured" | "missing_credentials" | "invalid_redirect_uri" | "built_in" | string;
+}
+
+export type IntegrationAvailability = Record<IntegrationProvider, IntegrationAvailabilityStatus>;
+
 
 export type ConferenceProvider = "google_meet" | "zoom" | "teams" | "custom";
 

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogIn, LogOut, Calendar, Mail, Link as LinkIcon } from "lucide-react";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider, Settings } from "@/api/types";
+import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 
 const PROVIDERS: Array<{
   value: CalendarProvider;
@@ -27,10 +28,20 @@ export function WorkCalendarConnection({
   onPatch: (patch: Partial<Settings>) => void;
 }) {
   const qc = useQueryClient();
-  const { data: status, isLoading } = useQuery({
+  const { data: status, isLoading: authLoading } = useQuery({
     queryKey: ["auth"],
     queryFn: () => api.authStatus(),
   });
+  const {
+    data: availability,
+    isLoading: availabilityLoading,
+    error: availabilityError,
+  } = useIntegrationAvailability();
+  const availableProviders = useMemo(
+    () =>
+      PROVIDERS.filter((p) => availability?.[integrationProviderForCalendar(p.value)]?.available === true),
+    [availability],
+  );
 
   const initialProvider: CalendarProvider =
     settings.calendar_provider ?? status?.provider ?? "google";
@@ -43,10 +54,20 @@ export function WorkCalendarConnection({
   }, [settings.calendar_provider, status?.provider]);
 
   useEffect(() => {
+    if (availableProviders.length > 0 && !availableProviders.some((p) => p.value === provider)) {
+      setProvider(availableProviders[0].value);
+    }
+  }, [availableProviders, provider]);
+
+  useEffect(() => {
     setWebcalUrl(settings.webcal_url ?? "");
   }, [settings.webcal_url]);
 
   const handleConnect = () => {
+    if (!availableProviders.some((p) => p.value === provider)) {
+      toast.error("This calendar provider is not available on the backend");
+      return;
+    }
     onPatch({ calendar_provider: provider });
     if (provider === "webcal") {
       if (!webcalUrl.trim()) {
@@ -81,7 +102,7 @@ export function WorkCalendarConnection({
       {/* Current connection */}
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 p-3">
         <div className="flex min-w-0 items-center gap-2">
-          {isLoading ? (
+          {authLoading ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
           ) : (
             <span
@@ -115,7 +136,19 @@ export function WorkCalendarConnection({
 
       {/* Provider picker */}
       <div role="radiogroup" aria-label="Calendar provider" className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        {PROVIDERS.map((p) => {
+        {availabilityLoading ? (
+          <p className="col-span-full flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Checking available calendar providers…
+          </p>
+        ) : availabilityError ? (
+          <p role="alert" className="col-span-full text-xs text-destructive">
+            Could not check calendar providers: {apiErrorMessage(availabilityError)}
+          </p>
+        ) : availableProviders.length === 0 ? (
+          <p className="col-span-full text-xs text-muted-foreground">
+            No calendar provider is configured on the backend.
+          </p>
+        ) : availableProviders.map((p) => {
           const Icon = p.icon;
           const selected = provider === p.value;
           return (
@@ -159,7 +192,8 @@ export function WorkCalendarConnection({
 
       <button
         onClick={handleConnect}
-        className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90"
+        disabled={availabilityLoading || !!availabilityError || availableProviders.length === 0}
+        className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
       >
         <LogIn className="h-3 w-3" />
         {provider === "webcal" ? "Save WebCal URL" : `Connect ${PROVIDERS.find((p) => p.value === provider)?.label}`}

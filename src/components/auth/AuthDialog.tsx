@@ -18,6 +18,7 @@ import { PacedayMark } from "@/components/auth/AuthLayout";
 
 import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/useAuth";
+import { useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 
 interface AuthDialogProps {
   open: boolean;
@@ -47,6 +48,7 @@ export function AuthDialog({ open, onOpenChange, mode = "signin" }: AuthDialogPr
 
 function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose: () => void }) {
   const { loginDemo, refresh } = useAuth();
+  const { data: availability } = useIntegrationAvailability();
   const navigate = useNavigate();
 
   /** Where to land after a successful login. Honours ?redirect= on the URL. */
@@ -135,6 +137,8 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
             if (emailError) setEmailError(null);
           }}
           emailError={emailError}
+          googleAvailable={availability?.google.available === true}
+          microsoftAvailable={availability?.microsoft.available === true}
           pending={pending}
           onSocial={onSocial}
           onEmailContinue={onEmailContinue}
@@ -165,6 +169,8 @@ function DiscoverStep({
   pending,
   onSocial,
   onEmailContinue,
+  googleAvailable,
+  microsoftAvailable,
 }: {
   mode: "signin" | "signup";
   email: string;
@@ -173,6 +179,8 @@ function DiscoverStep({
   pending: null | "google" | "microsoft" | "email";
   onSocial: (p: "google" | "microsoft") => void;
   onEmailContinue: (e: React.FormEvent) => void;
+  googleAvailable: boolean;
+  microsoftAvailable: boolean;
 }) {
   return (
     <>
@@ -186,25 +194,31 @@ function DiscoverStep({
       </p>
 
       <div className="mt-6 space-y-2.5">
-        <ProviderButton
-          icon={<GoogleGlyph />}
-          label={mode === "signup" ? "Sign up with Google" : "Continue with Google"}
-          onClick={() => onSocial("google")}
-          disabled={pending !== null}
-        />
-        <ProviderButton
-          icon={<MicrosoftGlyph />}
-          label={mode === "signup" ? "Sign up with Microsoft" : "Continue with Microsoft"}
-          onClick={() => onSocial("microsoft")}
-          disabled={pending !== null}
-        />
+        {googleAvailable && (
+          <ProviderButton
+            icon={<GoogleGlyph />}
+            label={mode === "signup" ? "Sign up with Google" : "Continue with Google"}
+            onClick={() => onSocial("google")}
+            disabled={pending !== null}
+          />
+        )}
+        {microsoftAvailable && (
+          <ProviderButton
+            icon={<MicrosoftGlyph />}
+            label={mode === "signup" ? "Sign up with Microsoft" : "Continue with Microsoft"}
+            onClick={() => onSocial("microsoft")}
+            disabled={pending !== null}
+          />
+        )}
       </div>
 
-      <div className="my-6 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+      {(googleAvailable || microsoftAvailable) && (
+        <div className="my-6 flex items-center gap-3 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
         <span className="h-px flex-1 bg-border" />
         or with email
         <span className="h-px flex-1 bg-border" />
-      </div>
+        </div>
+      )}
 
       <form onSubmit={onEmailContinue} className="space-y-3">
         <div className="space-y-1.5">

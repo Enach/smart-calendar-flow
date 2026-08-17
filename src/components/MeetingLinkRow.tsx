@@ -166,7 +166,8 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
 
       {open && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-border bg-card p-1 shadow-lg">
-          {(["google_meet", "zoom", "teams"] as ConferenceProvider[]).map((p) => {
+          {providers.filter((p) => p.provider !== "custom").map((entry) => {
+            const p = entry.provider;
             const meta = PROVIDER_META[p];
             const connected = isConnected(p);
             return (

@@ -66,6 +66,10 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   const meet = list.find((p) => p.provider === "google_meet");
   const zoom = list.find((p) => p.provider === "zoom");
   const teams = list.find((p) => p.provider === "teams");
+  const configuredDefault = settings.default_conference_provider ?? "google_meet";
+  const defaultProvider = list.some((p) => p.provider === configuredDefault)
+    ? configuredDefault
+    : list.find((p) => p.provider !== "custom")?.provider ?? "custom";
   const isOutlook = settings.calendar_provider === "outlook";
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
@@ -109,13 +113,13 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       <div>
         <label className="mb-1 block text-xs font-medium text-foreground">Default provider</label>
         <select
-          value={settings.default_conference_provider ?? "google_meet"}
+          value={defaultProvider}
           onChange={(e) => onPatch({ default_conference_provider: e.target.value as ConferenceProvider })}
           className={inputCls}
         >
-          {(["google_meet", "zoom", "teams"] as ConferenceProvider[]).map((p) => (
-            <option key={p} value={p}>
-              {PROVIDER_LABEL[p]}
+          {list.filter((p) => p.provider !== "custom").map((p) => (
+            <option key={p.provider} value={p.provider}>
+              {PROVIDER_LABEL[p.provider]}
             </option>
           ))}
         </select>
@@ -183,8 +187,10 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
           </li>
         )}
 
-        {/* Google Meet */}
-        <li className="flex items-center gap-3 bg-background p-3">
+        {meet && (
+          <>
+            {/* Google Meet */}
+            <li className="flex items-center gap-3 bg-background p-3">
           <span className="text-base leading-none">🟢</span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">Google Meet</p>
@@ -201,10 +207,14 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
           >
             {meet?.connected ? "Active" : "Inactive"}
           </span>
-        </li>
+            </li>
+          </>
+        )}
 
-        {/* Zoom */}
-        <li className="flex items-center gap-3 bg-background p-3">
+        {zoom && (
+          <>
+            {/* Zoom */}
+            <li className="flex items-center gap-3 bg-background p-3">
           <span className="text-base leading-none">🔵</span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">Zoom</p>
@@ -233,10 +243,14 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
               Connect Zoom account
             </button>
           )}
-        </li>
+            </li>
+          </>
+        )}
 
-        {/* Teams */}
-        <li className="flex items-center gap-3 bg-background p-3">
+        {teams && (
+          <>
+            {/* Teams */}
+            <li className="flex items-center gap-3 bg-background p-3">
           <span className="text-base leading-none">🟣</span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-foreground">Microsoft Teams</p>
@@ -252,7 +266,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
             checked={isOutlook ? true : !!settings.teams_enabled}
             onChange={(v) => onPatch({ teams_enabled: v })}
           />
-        </li>
+            </li>
+          </>
+        )}
       </ul>
     </div>
   );

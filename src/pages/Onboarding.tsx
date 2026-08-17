@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronRight, User, Users, Calendar, Mail, Link as LinkIcon, Loader2 } from "lucide-react";
 
@@ -8,6 +8,7 @@ import { managerApi } from "@/api/manager";
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider } from "@/api/types";
+import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 
 type Step = "connect" | "profile";
 
@@ -25,6 +26,7 @@ const PROVIDERS: Array<{
 export default function Onboarding() {
   const navigate = useNavigate();
   const { isDemo } = useAuth();
+  const { data: availability, isLoading: availabilityLoading, error: availabilityError } = useIntegrationAvailability();
 
   // If already done, skip immediately.
   useEffect(() => {
@@ -36,6 +38,17 @@ export default function Onboarding() {
   const [provider, setProvider] = useState<CalendarProvider>("google");
   const [role, setRole] = useState<"ic" | "manager" | null>(null);
   const [busy, setBusy] = useState(false);
+  const availableProviders = useMemo(
+    () =>
+      PROVIDERS.filter((p) => availability?.[integrationProviderForCalendar(p.value)]?.available === true),
+    [availability],
+  );
+
+  useEffect(() => {
+    if (availableProviders.length > 0 && !availableProviders.some((p) => p.value === provider)) {
+      setProvider(availableProviders[0].value);
+    }
+  }, [availableProviders, provider]);
 
   // Pre-check connection — if the user already connected via Settings,
   // skip the connect step entirely.
@@ -122,7 +135,17 @@ export default function Onboarding() {
             </p>
 
             <div className="mt-8 space-y-2">
-              {PROVIDERS.map((p) => {
+              {availabilityLoading ? (
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Checking available calendar providers…
+                </p>
+              ) : availabilityError ? (
+                <p role="alert" className="text-xs text-destructive">
+                  Could not check calendar providers. Try again later.
+                </p>
+              ) : availableProviders.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No calendar provider is configured on the backend.</p>
+              ) : availableProviders.map((p) => {
                 const selected = provider === p.value;
                 return (
                   <button
@@ -163,7 +186,7 @@ export default function Onboarding() {
               </button>
               <Button
                 onClick={continueFromConnect}
-                disabled={busy}
+                disabled={busy || availabilityLoading || !!availabilityError || availableProviders.length === 0}
                 className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Continue<ChevronRight className="ml-1 h-4 w-4" /></>}

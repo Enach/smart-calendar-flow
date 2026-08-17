@@ -10,6 +10,7 @@ import type {
   CompressionResult,
   FocusBlock,
   FocusRunResult,
+  IntegrationAvailability,
   FreeBusyResponse,
   LLMTestResult,
   MoveProposal,
@@ -53,6 +54,7 @@ export interface ApiPort {
   freebusy(input: { emails: string[]; start_time: string; end_time: string }): Promise<FreeBusyResponse>;
 
   authStatus(): Promise<AuthStatus>;
+  integrationAvailability(): Promise<IntegrationAvailability>;
   authConnectUrl(provider?: CalendarProvider): string;
   authDisconnect(): Promise<void>;
 

@@ -13,6 +13,7 @@ import type {
   CoverageProvider,
   CoverageStatus,
   FocusBlock,
+  IntegrationAvailability,
   FocusRunResult,
   FreeBusyResponse,
   LLMTestResult,
@@ -597,6 +598,18 @@ export const api = {
     withFallback(
       () => requestApi<AuthStatus>("GET", "/auth/status"),
       () => ({ ...mockState.auth }),
+    ),
+  integrationAvailability: () =>
+    withFallback<IntegrationAvailability>(
+      () => requestApi<IntegrationAvailability>("GET", "/integrations/availability"),
+      () => ({
+        google: { available: true, reason: "demo" },
+        microsoft: { available: true, reason: "demo" },
+        zoom: { available: true, reason: "demo" },
+        slack: { available: true, reason: "demo" },
+        notion: { available: true, reason: "demo" },
+        webcal: { available: true, reason: "built_in" },
+      }),
     ),
   authConnectUrl: (provider: CalendarProvider = "google") =>
     `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
