@@ -295,17 +295,10 @@ export default function SettingsPage() {
 
           <div className="mt-5 border-t border-border pt-4">
             <p className="mb-3 text-xs font-medium text-foreground">Day-by-day hours</p>
-            {supportsPerDay && draft.working_hours ? (
-              <WorkingHoursEditor
-                value={draft.working_hours}
-                onChange={(next) => set("working_hours", next)}
-              />
-            ) : (
-              <UnsupportedNotice>
-                Backend update required — GET /api/settings does not return <code>workingHours</code> yet,
-                so day-by-day hours cannot be saved. The global start and end times above are used instead.
-              </UnsupportedNotice>
-            )}
+            <WorkingHoursEditor
+              value={draft.working_hours ?? defaultWorkingHours(draft.work_start, draft.work_end)}
+              onChange={(next) => set("working_hours", next)}
+            />
           </div>
         </Section>
 
