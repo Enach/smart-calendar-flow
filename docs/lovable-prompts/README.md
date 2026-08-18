@@ -13,9 +13,9 @@ Ce dossier contient les prompts de référence pour faire évoluer uniquement le
 7. `06-audit-log.md` — écran d’audit et lecture des événements d’activité.
 8. `07-manager-team.md` — manager, équipe, zones sans réunion, disponibilité et analytics.
 9. `08-final-qa.md` — validation finale en ligne, hors ligne, tests et rapport de changement.
+10. `09-current-issues-and-scheduling-preferences.md` — équipes multiples, préférences d’agenda et récupération API.
 
 ## Mode d’emploi
-10. \`09-current-issues-and-scheduling-preferences.md\` — multiple teams, scheduling preferences, scan UX and real API recovery.
 
 Dans Lovable, ouvrir le repository frontend puis :
 

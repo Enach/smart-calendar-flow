@@ -39,9 +39,9 @@ The backend settings contract for the new fields is:
 - workingHours: { mode: all_days | by_day, default: { enabled, start, end }, days: { monday..sunday: { enabled, start, end } } }
 - lunchBreaks: { monday..sunday: { enabled, start, end } } or an omitted/empty object when no per-day override exists
 
-Until GET /api/settings returns these fields, do not pretend the day-by-day setting was saved. Keep the UI disabled with a clear “backend update required” message or use only the existing global work_start/work_end fields.
+These fields are now available from GET /api/settings and accepted by PUT /api/settings. Use the returned server settings as the source of truth; do not introduce a frontend-only persistence path.
 
-When the fields are available:
+Implement these fields now:
 
 - Offer two modes: “Same hours every day” and “Customize by day”.
 - In same-hours mode, edit one default interval.
