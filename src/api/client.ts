@@ -438,6 +438,94 @@ export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Pr
   }
 }
 
+// ---------- Settings adapter ----------
+
+export const WEEKDAY_KEYS: WeekdayKey[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isValidHHMM(value: unknown): value is string {
+  return typeof value === "string" && HHMM_RE.test(value);
+}
+
+function normalizeInterval(raw: unknown): DayInterval | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const start = isValidHHMM(r.start) ? r.start : undefined;
+  const end = isValidHHMM(r.end) ? r.end : undefined;
+  if (!start || !end) return undefined;
+  return { enabled: r.enabled !== false, start, end };
+}
+
+function normalizeDayMap(raw: unknown): Partial<Record<WeekdayKey, DayInterval>> {
+  const out: Partial<Record<WeekdayKey, DayInterval>> = {};
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as Record<string, unknown>;
+  for (const key of WEEKDAY_KEYS) {
+    const interval = normalizeInterval(r[key]);
+    if (interval) out[key] = interval;
+  }
+  return out;
+}
+
+/**
+ * Accepts the backend camelCase `workingHours` payload (or an already
+ * snake_cased one) and returns undefined when the backend does not send it yet.
+ */
+export function normalizeWorkingHours(raw: unknown): WorkingHours | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const fallback = normalizeInterval(r.default);
+  const days = normalizeDayMap(r.days);
+  if (!fallback && Object.keys(days).length === 0) return undefined;
+  const mode: WorkingHoursMode = r.mode === "by_day" ? "by_day" : "all_days";
+  return {
+    mode,
+    default: fallback ?? { enabled: true, start: "09:00", end: "18:00" },
+    days,
+  };
+}
+
+export function normalizeLunchBreaks(raw: unknown): LunchBreaks | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const days = normalizeDayMap(raw);
+  return Object.keys(days).length > 0 ? days : undefined;
+}
+
+/** Normalize a GET/PUT /api/settings response (snake_case + camelCase fields). */
+export function normalizeSettings(raw: unknown): Settings {
+  const r = (raw ?? {}) as Record<string, unknown> & Settings;
+  const working = normalizeWorkingHours(r.workingHours ?? r.working_hours);
+  const lunch = normalizeLunchBreaks(r.lunchBreaks ?? r.lunch_breaks);
+  const out: Settings = { ...(r as Settings) };
+  delete (out as Record<string, unknown>).workingHours;
+  delete (out as Record<string, unknown>).lunchBreaks;
+  if (working) out.working_hours = working;
+  else delete out.working_hours;
+  if (lunch) out.lunch_breaks = lunch;
+  else delete out.lunch_breaks;
+  return out;
+}
+
+/** Build the PUT /api/settings body: snake_case base + camelCase new fields. */
+export function settingsRequestBody(s: Settings): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...s };
+  delete body.working_hours;
+  delete body.lunch_breaks;
+  if (s.working_hours) body.workingHours = s.working_hours;
+  if (s.lunch_breaks && Object.keys(s.lunch_breaks).length > 0) body.lunchBreaks = s.lunch_breaks;
+  return body;
+}
+
+
 
 // ---------- Mock implementations ----------
 
