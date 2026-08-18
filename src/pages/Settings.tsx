@@ -21,13 +21,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LLMProvider, Settings } from "@/api/types";
-import {
-  LunchBreaksEditor,
-  UnsupportedNotice,
-  WorkingHoursEditor,
-} from "@/components/settings/WorkingHoursEditor";
+import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
+  defaultWorkingHours,
   emptyLunchBreaks,
   matchTemplate,
   templatePatch,
