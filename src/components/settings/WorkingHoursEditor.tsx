@@ -14,13 +14,17 @@ const inputCls =
 
 function DayRow({
   label,
+  ariaLabel,
   value,
   onChange,
 }: {
   label: string;
+  /** Accessible name prefix; defaults to the visible label. */
+  ariaLabel?: string;
   value: DayInterval;
   onChange: (next: DayInterval) => void;
 }) {
+  const name = ariaLabel ?? label;
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 sm:grid-cols-[130px_1fr_1fr_auto]">
       <label className="flex items-center gap-2 text-sm text-foreground">
@@ -29,7 +33,7 @@ function DayRow({
           checked={value.enabled}
           onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
           className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
-          aria-label={`${label} enabled`}
+          aria-label={`${name} enabled`}
         />
         {label}
       </label>
@@ -39,7 +43,7 @@ function DayRow({
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, start: e.target.value })}
         className={inputCls}
-        aria-label={`${label} start`}
+        aria-label={`${name} start`}
       />
       <input
         type="time"
@@ -47,7 +51,7 @@ function DayRow({
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, end: e.target.value })}
         className={inputCls}
-        aria-label={`${label} end`}
+        aria-label={`${name} end`}
       />
       <span className="hidden text-[11px] text-muted-foreground sm:block">
         {value.enabled ? "" : "Off"}
@@ -133,6 +137,7 @@ export function LunchBreaksEditor({
           <DayRow
             key={key}
             label={WEEKDAY_LABELS[key]}
+            ariaLabel={`${WEEKDAY_LABELS[key]} lunch`}
             value={day}
             onChange={(next) => onChange({ ...value, [key]: next })}
           />
