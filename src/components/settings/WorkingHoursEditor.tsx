@@ -1,4 +1,3 @@
-import { AlertTriangle } from "lucide-react";
 
 import { WEEKDAY_KEYS } from "@/api/client";
 import type { DayInterval, LunchBreaks, WeekdayKey, WorkingHours } from "@/api/types";
