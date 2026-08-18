@@ -35,7 +35,6 @@ export function RequireAuth({
     queryFn: () => managerApi.remote.getProfile(),
     enabled: needsProfile,
     staleTime: 60_000,
-    retry: 1,
   });
 
   if (loading) {
