@@ -721,12 +721,13 @@ export const api = {
   // Settings
   getSettings: () =>
     withFallback(
-      () => requestApi<Settings>("GET", "/settings"),
+      async () => normalizeSettings(await requestApi<unknown>("GET", "/settings")),
       () => ({ ...mockState.settings }),
     ),
   updateSettings: (s: Settings) =>
     withFallback(
-      () => requestApi<Settings>("PUT", "/settings", s),
+      async () => normalizeSettings(await requestApi<unknown>("PUT", "/settings", settingsRequestBody(s))),
+
       () => {
         mockState.settings = { ...s };
         // keep focus block colors in sync
