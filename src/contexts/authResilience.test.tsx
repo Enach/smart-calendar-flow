@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { AuthProvider } from "./AuthContext";
 import { useAuth } from "./useAuth";
@@ -48,7 +47,7 @@ describe("AuthContext resilience", () => {
     await screen.findByText("user:a@x.com|fresh");
 
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await userEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
 
     await waitFor(() => {
       expect(screen.getByText("user:a@x.com|stale")).toBeInTheDocument();
@@ -65,7 +64,7 @@ describe("AuthContext resilience", () => {
     await screen.findByText("user:a@x.com|fresh");
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));
-    await userEvent.click(screen.getByRole("button", { name: "refresh" }));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
 
     await screen.findByText("anon|fresh");
   });
