@@ -511,9 +511,11 @@ export function normalizeSettings(raw: unknown): Settings {
   const r = (raw ?? {}) as Record<string, unknown> & Settings;
   const working = normalizeWorkingHours(r.workingHours ?? r.working_hours);
   const lunch = normalizeLunchBreaks(r.lunchBreaks ?? r.lunch_breaks);
-  const out: Settings = { ...(r as Settings) };
-  delete (out as Record<string, unknown>).workingHours;
-  delete (out as Record<string, unknown>).lunchBreaks;
+  const bag: Record<string, unknown> = { ...r };
+  delete bag.workingHours;
+  delete bag.lunchBreaks;
+  const out = bag as unknown as Settings;
+
   if (working) out.working_hours = working;
   else delete out.working_hours;
   if (lunch) out.lunch_breaks = lunch;
