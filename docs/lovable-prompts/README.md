@@ -15,6 +15,7 @@ Ce dossier contient les prompts de référence pour faire évoluer uniquement le
 9. `08-final-qa.md` — validation finale en ligne, hors ligne, tests et rapport de changement.
 
 ## Mode d’emploi
+10. \`09-current-issues-and-scheduling-preferences.md\` — multiple teams, scheduling preferences, scan UX and real API recovery.
 
 Dans Lovable, ouvrir le repository frontend puis :
 
