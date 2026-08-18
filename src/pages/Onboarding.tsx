@@ -91,26 +91,45 @@ export default function Onboarding() {
   };
 
   const finish = async () => {
-    if (!role) return;
+    if (!role || busy) return; // guard against a second submission
     setBusy(true);
+    setProfileError(null);
     try {
-      void managerApi.remote.setProfile({
+      // The profile save must resolve before we leave onboarding.
+      await managerApi.remote.setProfile({
         is_manager: role === "manager",
         onboarding_profile_selected: true,
       });
-      if (role === "manager") {
-        // Fire-and-forget detection so the dashboard is populated when arrived.
-        managerApi.remote.detect().then((r) => {
-          if (r.added > 0) toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s.`);
-        }).catch(() => undefined);
-        navigate("/app/team", { replace: true });
+    } catch (e) {
+      setProfileError(apiErrorMessage(e)); // keep the selected role
+      setBusy(false);
+      return;
+    }
+
+    if (role !== "manager") {
+      navigate("/app", { replace: true });
+      setBusy(false);
+      return;
+    }
+
+    setScanning(true);
+    try {
+      const r = await managerApi.remote.detect();
+      if (r.added > 0) {
+        toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s.`);
       } else {
-        navigate("/app", { replace: true });
+        toast.info("No new members found in your calendar.");
       }
+    } catch (e) {
+      // A failed scan is never reported as "no new members found".
+      toast.error(apiErrorMessage(e));
     } finally {
+      setScanning(false);
       setBusy(false);
     }
+    navigate("/app/team", { replace: true });
   };
+
 
   const stepIndex = step === "connect" ? 0 : 1;
 
