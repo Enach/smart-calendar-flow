@@ -14,6 +14,8 @@ Ce dossier contient les prompts de référence pour faire évoluer uniquement le
 8. `07-manager-team.md` — manager, équipe, zones sans réunion, disponibilité et analytics.
 9. `08-final-qa.md` — validation finale en ligne, hors ligne, tests et rapport de changement.
 10. `09-current-issues-and-scheduling-preferences.md` — équipes multiples, préférences d’agenda et récupération API.
+11. `10-qa-hardening.md` — corrections QA du parcours authentifié et des adapters.
+12. `11-habits.md` — habitudes, occurrences planifiées et reoptimisation.
 
 ## Mode d’emploi
 
