@@ -1,4 +1,3 @@
-import { AlertTriangle } from "lucide-react";
 
 import { WEEKDAY_KEYS } from "@/api/client";
 import type { DayInterval, LunchBreaks, WeekdayKey, WorkingHours } from "@/api/types";
@@ -57,14 +56,6 @@ function DayRow({
   );
 }
 
-export function UnsupportedNotice({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex items-start gap-2 rounded-lg border border-[#E9B949]/40 bg-[#E9B949]/10 px-3 py-2">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#8A6D1F]" />
-      <p className="text-xs text-foreground">{children}</p>
-    </div>
-  );
-}
 
 export function WorkingHoursEditor({
   value,

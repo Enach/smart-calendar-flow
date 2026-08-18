@@ -21,13 +21,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LLMProvider, Settings } from "@/api/types";
-import {
-  LunchBreaksEditor,
-  UnsupportedNotice,
-  WorkingHoursEditor,
-} from "@/components/settings/WorkingHoursEditor";
+import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
+  defaultWorkingHours,
   emptyLunchBreaks,
   matchTemplate,
   templatePatch,
@@ -127,7 +124,15 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<Settings | null>(null);
 
   useEffect(() => {
-    if (data && !draft) setDraft({ ...data });
+    if (data && !draft) {
+      // The server response is the source of truth. workingHours is only seeded
+      // from the global work_start/work_end pair when the payload omitted it,
+      // and it is then persisted through PUT /api/settings like any other field.
+      setDraft({
+        ...data,
+        working_hours: data.working_hours ?? defaultWorkingHours(data.work_start, data.work_end),
+      });
+    }
   }, [data, draft]);
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
@@ -155,7 +160,7 @@ export default function SettingsPage() {
     }
   };
 
-  const supportsPerDay = !!data?.working_hours;
+  
   const template: SchedulingTemplateId = draft ? matchTemplate(draft) : "custom";
   const applyTemplate = (id: SchedulingTemplateId) => {
     setDraft((d) => {
@@ -290,17 +295,10 @@ export default function SettingsPage() {
 
           <div className="mt-5 border-t border-border pt-4">
             <p className="mb-3 text-xs font-medium text-foreground">Day-by-day hours</p>
-            {supportsPerDay && draft.working_hours ? (
-              <WorkingHoursEditor
-                value={draft.working_hours}
-                onChange={(next) => set("working_hours", next)}
-              />
-            ) : (
-              <UnsupportedNotice>
-                Backend update required — GET /api/settings does not return <code>workingHours</code> yet,
-                so day-by-day hours cannot be saved. The global start and end times above are used instead.
-              </UnsupportedNotice>
-            )}
+            <WorkingHoursEditor
+              value={draft.working_hours ?? defaultWorkingHours(draft.work_start, draft.work_end)}
+              onChange={(next) => set("working_hours", next)}
+            />
           </div>
         </Section>
 
@@ -416,50 +414,41 @@ export default function SettingsPage() {
 
             {draft.protect_lunch && (
               <div className="border-t border-border pt-4">
-                {supportsPerDay ? (
-                  <>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => set("lunch_breaks", undefined)}
-                        className={
-                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
-                          (!lunchOverride
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground")
-                        }
-                      >
-                        Use the template lunch
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          set("lunch_breaks", draft.lunch_breaks ?? emptyLunchBreaks(draft.lunch_start, draft.lunch_end))
-                        }
-                        className={
-                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
-                          (lunchOverride
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground")
-                        }
-                      >
-                        Override by day
-                      </button>
-                    </div>
-                    {lunchOverride && draft.lunch_breaks && (
-                      <div className="mt-4">
-                        <LunchBreaksEditor
-                          value={draft.lunch_breaks}
-                          onChange={(next) => set("lunch_breaks", next)}
-                        />
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <UnsupportedNotice>
-                    Backend update required — GET /api/settings does not return <code>lunchBreaks</code> yet,
-                    so per-day lunch overrides cannot be saved. The single lunch interval above is used instead.
-                  </UnsupportedNotice>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => set("lunch_breaks", undefined)}
+                    className={
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                      (!lunchOverride
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    Use the template lunch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      set("lunch_breaks", draft.lunch_breaks ?? emptyLunchBreaks(draft.lunch_start, draft.lunch_end))
+                    }
+                    className={
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                      (lunchOverride
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    Override by day
+                  </button>
+                </div>
+                {lunchOverride && draft.lunch_breaks && (
+                  <div className="mt-4">
+                    <LunchBreaksEditor
+                      value={draft.lunch_breaks}
+                      onChange={(next) => set("lunch_breaks", next)}
+                    />
+                  </div>
                 )}
               </div>
             )}

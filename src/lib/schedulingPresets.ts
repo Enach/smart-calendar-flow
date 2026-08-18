@@ -97,14 +97,26 @@ export function templatePatch(id: SchedulingTemplateId, current: Settings): Part
   const template = SCHEDULING_TEMPLATES.find((t) => t.id === id);
   if (!template?.values) return null;
   const patch: Partial<Settings> = { ...template.values, protect_lunch: true };
-  if (current.working_hours) {
-    patch.working_hours = applyDefaultInterval(current.working_hours, {
-      enabled: true,
-      start: template.values.work_start,
-      end: template.values.work_end,
-    });
-  }
+  const base = current.working_hours ?? defaultWorkingHours(current.work_start, current.work_end);
+  patch.working_hours = applyDefaultInterval(base, {
+    enabled: true,
+    start: template.values.work_start,
+    end: template.values.work_end,
+  });
   return patch;
+}
+
+/**
+ * Seed a full workingHours object from the global work_start/work_end fields.
+ * Used only to initialise the editable draft when GET /api/settings omitted the
+ * field; the saved value always round-trips through PUT /api/settings.
+ */
+export function defaultWorkingHours(start: string, end: string): WorkingHours {
+  return ensureAllDays({
+    mode: "all_days",
+    default: { enabled: true, start, end },
+    days: {},
+  });
 }
 
 /** Replace the default interval, keeping every enabled day in sync in all_days mode. */
