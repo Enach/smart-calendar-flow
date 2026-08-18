@@ -665,7 +665,63 @@ seedMocks();
 
 // ---------- Public API ----------
 
+/**
+ * GET /api/events may return attendees as plain strings or as attendee
+ * objects. Ownership logic expects strings, so coerce safely and keep the
+ * richer objects in attendee_details for views that need them.
+ */
+type RawAttendee = string | { email?: string; name?: string; displayName?: string; organizer?: boolean; rsvp?: string } | null | undefined;
+
+export function normalizeAttendees(raw: unknown): {
+  attendees?: string[];
+  attendee_details?: Attendee[];
+} {
+  if (!Array.isArray(raw)) return {};
+  const attendees: string[] = [];
+  const details: Attendee[] = [];
+  for (const item of raw as RawAttendee[]) {
+    if (typeof item === "string") {
+      const value = item.trim();
+      if (value) attendees.push(value);
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const email = typeof item.email === "string" ? item.email.trim() : "";
+      const name =
+        (typeof item.name === "string" && item.name) ||
+        (typeof item.displayName === "string" && item.displayName) ||
+        undefined;
+      const label = email || name;
+      if (!label) continue; // malformed attendee → skip, never fabricate
+      attendees.push(label);
+      details.push({
+        email: email || label,
+        name,
+        organizer: item.organizer === true ? true : undefined,
+        rsvp: item.rsvp as Attendee["rsvp"],
+      });
+    }
+  }
+  return {
+    attendees,
+    attendee_details: details.length ? details : undefined,
+  };
+}
+
+export function normalizeEvents(raw: unknown): CalendarEvent[] {
+  if (!Array.isArray(raw)) return [];
+  return (raw as Array<CalendarEvent & { attendees?: unknown }>).map((ev) => {
+    const { attendees, attendee_details } = normalizeAttendees(ev?.attendees);
+    return {
+      ...ev,
+      ...(attendees ? { attendees } : {}),
+      attendee_details: ev?.attendee_details?.length ? ev.attendee_details : attendee_details,
+    } as CalendarEvent;
+  });
+}
+
 export const api = {
+
   // Health — used by the polling probe. We don't go through withFallback
   // because we want to control the mock-mode flag directly here.
   //
