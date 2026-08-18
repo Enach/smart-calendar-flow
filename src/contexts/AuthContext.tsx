@@ -38,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   });
   const [loading, setLoading] = useState(true);
+  const [sessionStale, setSessionStale] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => () => {
@@ -115,6 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsDemo(false);
     setUser(null);
+    setSessionStale(false);
   }, []);
 
   const logout = useCallback(async () => {
@@ -128,11 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* even if it fails, clear local state */
     }
     setUser(null);
+    setSessionStale(false);
   }, [isDemo, exitDemo]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isDemo, loading, refresh, loginDemo, exitDemo, logout }),
-    [user, isDemo, loading, refresh, loginDemo, exitDemo, logout],
+    () => ({ user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout }),
+    [user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
