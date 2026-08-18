@@ -12,6 +12,12 @@ import type {
   ConferenceProviderStatus,
   CoverageProvider,
   CoverageStatus,
+  DayInterval,
+  LunchBreaks,
+  WeekdayKey,
+  WorkingHours,
+  WorkingHoursMode,
+
   FocusBlock,
   IntegrationAvailability,
   FocusRunResult,
