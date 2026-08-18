@@ -127,7 +127,15 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<Settings | null>(null);
 
   useEffect(() => {
-    if (data && !draft) setDraft({ ...data });
+    if (data && !draft) {
+      // The server response is the source of truth. workingHours is only seeded
+      // from the global work_start/work_end pair when the payload omitted it,
+      // and it is then persisted through PUT /api/settings like any other field.
+      setDraft({
+        ...data,
+        working_hours: data.working_hours ?? defaultWorkingHours(data.work_start, data.work_end),
+      });
+    }
   }, [data, draft]);
 
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => {
