@@ -9,6 +9,8 @@ import SignUp from "./pages/SignUp";
 import AuthCallback from "./pages/AuthCallback";
 import LinksPage from "./pages/Links";
 import Team from "./pages/Team";
+import TeamInvite from "./pages/TeamInvite";
+
 import Onboarding from "./pages/Onboarding";
 import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";

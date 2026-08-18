@@ -122,19 +122,29 @@ export default function Team() {
   };
 
   // Formal teams
-  const teamsQ = useQuery({ queryKey: ["formal-teams"], queryFn: () => teamsApi.remote.list() });
-  const teams = teamsQ.data ?? [];
+  // Formal teams — every team the user belongs to stays visible; a failed
+  // refetch keeps the cached list and surfaces a retryable error.
+  const teamsQ = useQuery({
+    queryKey: ["formal-teams"],
+    queryFn: () => teamsApi.remote.list(),
+    placeholderData: (prev) => prev,
+  });
+  const teams = useMemo(() => teamsQ.data ?? [], [teamsQ.data]);
   const [activeTeamId, setActiveTeamIdState] = useState<string | null>(() => teamsApi.activeTeamId());
   useEffect(() => {
+    if (activeTeamId && teams.some((t) => t.id === activeTeamId)) return;
     const id = teamsApi.activeTeamId();
-    setActiveTeamIdState(id);
-  }, [teams.length]);
+    setActiveTeamIdState(id ?? teams[0]?.id ?? null);
+  }, [teams, activeTeamId]);
 
   const activeTeam = activeTeamId ? teams.find((t) => t.id === activeTeamId) ?? null : null;
   const switchTeam = (id: string) => {
+    // Switching only changes the active team; the full list is untouched.
     teamsApi.setActiveTeam(id);
     setActiveTeamIdState(id);
   };
+  const teamsError = teamsQ.error;
+
 
   const [createTeamOpen, setCreateTeamOpen] = useState(false);
 
