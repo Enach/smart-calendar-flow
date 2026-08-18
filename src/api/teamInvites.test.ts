@@ -63,7 +63,7 @@ describe("team invite endpoints", () => {
 
 describe("multiple formal teams", () => {
   it("keeps every team returned by GET /api/teams/ and only switches the active one", async () => {
-    fetchMock.mockResolvedValue(
+    fetchMock.mockImplementation(async () =>
       jsonResponse([
         { id: "t1", name: "Team A", members: [] },
         { id: "t2", name: "Team B", members: [] },
