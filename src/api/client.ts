@@ -97,7 +97,22 @@ const DEFAULT_SETTINGS: Settings = {
   azure_api_version: "2024-02-01",
   default_conference_provider: "google_meet",
   teams_enabled: false,
+  // Preview-only defaults so the day-by-day editor is explorable offline.
+  working_hours: {
+    mode: "all_days",
+    default: { enabled: true, start: "09:00", end: "18:00" },
+    days: {
+      monday: { enabled: true, start: "09:00", end: "18:00" },
+      tuesday: { enabled: true, start: "09:00", end: "18:00" },
+      wednesday: { enabled: true, start: "09:00", end: "18:00" },
+      thursday: { enabled: true, start: "09:00", end: "18:00" },
+      friday: { enabled: true, start: "09:00", end: "18:00" },
+      saturday: { enabled: false, start: "09:00", end: "13:00" },
+      sunday: { enabled: false, start: "09:00", end: "13:00" },
+    },
+  },
 };
+
 
 const MOCK_ROOMS: Room[] = [
   { id: "r1", name: "Helsinki", email: "room.helsinki@co.com", building: "HQ", floor: "3", capacity: 6 },
