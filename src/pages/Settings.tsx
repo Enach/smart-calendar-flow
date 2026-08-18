@@ -155,15 +155,36 @@ export default function SettingsPage() {
     }
   };
 
+  const supportsPerDay = !!data?.working_hours;
+  const template: SchedulingTemplateId = draft ? matchTemplate(draft) : "custom";
+  const applyTemplate = (id: SchedulingTemplateId) => {
+    setDraft((d) => {
+      if (!d) return d;
+      const patch = templatePatch(id, d);
+      return patch ? { ...d, ...patch } : d;
+    });
+  };
+  const lunchOverride = !!draft?.lunch_breaks;
+  const workingHoursError = draft?.working_hours ? validateWorkingHours(draft.working_hours) : null;
+  const lunchError = draft?.lunch_breaks ? validateLunchBreaks(draft.lunch_breaks) : null;
+
   const save = async () => {
     if (!draft) return;
+    const invalid = workingHoursError ?? lunchError;
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
     try {
-      await update.mutateAsync(draft);
+      // The draft is intentionally kept as-is on failure so nothing is lost.
+      const saved = await update.mutateAsync(draft);
+      setDraft({ ...saved });
       toast.success("Settings saved");
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
   };
+
 
   if (isLoading || !draft) {
     return (
