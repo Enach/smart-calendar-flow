@@ -21,6 +21,21 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import type { LLMProvider, Settings } from "@/api/types";
+import {
+  LunchBreaksEditor,
+  UnsupportedNotice,
+  WorkingHoursEditor,
+} from "@/components/settings/WorkingHoursEditor";
+import {
+  SCHEDULING_TEMPLATES,
+  emptyLunchBreaks,
+  matchTemplate,
+  templatePatch,
+  validateLunchBreaks,
+  validateWorkingHours,
+  type SchedulingTemplateId,
+} from "@/lib/schedulingPresets";
+
 
 const TIMEZONES = [
   "UTC",
@@ -140,15 +155,36 @@ export default function SettingsPage() {
     }
   };
 
+  const supportsPerDay = !!data?.working_hours;
+  const template: SchedulingTemplateId = draft ? matchTemplate(draft) : "custom";
+  const applyTemplate = (id: SchedulingTemplateId) => {
+    setDraft((d) => {
+      if (!d) return d;
+      const patch = templatePatch(id, d);
+      return patch ? { ...d, ...patch } : d;
+    });
+  };
+  const lunchOverride = !!draft?.lunch_breaks;
+  const workingHoursError = draft?.working_hours ? validateWorkingHours(draft.working_hours) : null;
+  const lunchError = draft?.lunch_breaks ? validateLunchBreaks(draft.lunch_breaks) : null;
+
   const save = async () => {
     if (!draft) return;
+    const invalid = workingHoursError ?? lunchError;
+    if (invalid) {
+      toast.error(invalid);
+      return;
+    }
     try {
-      await update.mutateAsync(draft);
+      // The draft is intentionally kept as-is on failure so nothing is lost.
+      const saved = await update.mutateAsync(draft);
+      setDraft({ ...saved });
       toast.success("Settings saved");
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
   };
+
 
   if (isLoading || !draft) {
     return (
@@ -193,6 +229,32 @@ export default function SettingsPage() {
           </Link>
         </Section>
 
+        <Section
+          title="Scheduling template"
+          description="Pick a starting point, then fine-tune below. Nothing is saved until you press Save changes."
+        >
+          <div className="grid gap-2 sm:grid-cols-3">
+            {SCHEDULING_TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => applyTemplate(t.id)}
+                className={
+                  "rounded-xl border p-3 text-left transition " +
+                  (template === t.id
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/40")
+                }
+              >
+                <span className="block text-sm font-medium text-foreground">{t.label}</span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                  {t.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Section>
+
         <Section title="Working Hours" description="When you're available for meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label="Start">
@@ -225,7 +287,23 @@ export default function SettingsPage() {
               </select>
             </Field>
           </div>
+
+          <div className="mt-5 border-t border-border pt-4">
+            <p className="mb-3 text-xs font-medium text-foreground">Day-by-day hours</p>
+            {supportsPerDay && draft.working_hours ? (
+              <WorkingHoursEditor
+                value={draft.working_hours}
+                onChange={(next) => set("working_hours", next)}
+              />
+            ) : (
+              <UnsupportedNotice>
+                Backend update required — GET /api/settings does not return <code>workingHours</code> yet,
+                so day-by-day hours cannot be saved. The global start and end times above are used instead.
+              </UnsupportedNotice>
+            )}
+          </div>
         </Section>
+
 
         <Section title="Focus Time" description="Auto-scheduled deep work blocks.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -335,8 +413,59 @@ export default function SettingsPage() {
                 </Field>
               </div>
             )}
+
+            {draft.protect_lunch && (
+              <div className="border-t border-border pt-4">
+                {supportsPerDay ? (
+                  <>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => set("lunch_breaks", undefined)}
+                        className={
+                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                          (!lunchOverride
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground")
+                        }
+                      >
+                        Use the template lunch
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          set("lunch_breaks", draft.lunch_breaks ?? emptyLunchBreaks(draft.lunch_start, draft.lunch_end))
+                        }
+                        className={
+                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                          (lunchOverride
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground hover:text-foreground")
+                        }
+                      >
+                        Override by day
+                      </button>
+                    </div>
+                    {lunchOverride && draft.lunch_breaks && (
+                      <div className="mt-4">
+                        <LunchBreaksEditor
+                          value={draft.lunch_breaks}
+                          onChange={(next) => set("lunch_breaks", next)}
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <UnsupportedNotice>
+                    Backend update required — GET /api/settings does not return <code>lunchBreaks</code> yet,
+                    so per-day lunch overrides cannot be saved. The single lunch interval above is used instead.
+                  </UnsupportedNotice>
+                )}
+              </div>
+            )}
           </div>
         </Section>
+
 
         <Section title="Meeting Buffers" description="Add breathing room between meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

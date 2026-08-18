@@ -222,9 +222,23 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       if (link) return schedulingLinksApi.updateLink(link.id, payload);
       return schedulingLinksApi.createLink(payload);
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       const newCount = coHosts.filter((e) => !initialEmails.includes(e)).length;
       setError(null);
+      // Seed the cache with the link the server actually returned, so the saved
+      // data stays visible even if the list refetch below fails.
+      if (saved) {
+        qc.setQueryData<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(
+          schedulingLinkKeys.links,
+          (prev) => {
+            const base = prev ?? { owned: [], shared: [] };
+            const owned = base.owned.some((l) => l.id === saved.id)
+              ? base.owned.map((l) => (l.id === saved.id ? saved : l))
+              : [saved, ...base.owned];
+            return { owned, shared: base.shared };
+          },
+        );
+      }
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
       if (newCount > 0) {
@@ -234,6 +248,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       }
       onOpenChange(false);
     },
+
     onError: (e) => {
       // 409 / 422 and friends keep the drawer open with an actionable message.
       const message = apiErrorMessage(e);

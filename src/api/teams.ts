@@ -165,15 +165,68 @@ async function remoteTeam(id: string): Promise<FormalTeam> {
   return normalizeTeam(detail.team ?? { id, name: "Team" }, detail.members ?? [], zones ?? []);
 }
 
+// ---------- Team invites ----------
+
+export interface TeamInvite {
+  token: string;
+  team_id: string;
+  team_name: string;
+  invited_email: string;
+  inviter_email?: string;
+  expires_at?: string;
+}
+
+type BackendInvite = {
+  token?: string;
+  teamId?: string;
+  team_id?: string;
+  teamName?: string;
+  team_name?: string;
+  email?: string;
+  invitedEmail?: string;
+  invited_email?: string;
+  inviterEmail?: string;
+  inviter_email?: string;
+  expiresAt?: string;
+  expires_at?: string;
+};
+
+export function normalizeInvite(raw: BackendInvite, token: string): TeamInvite {
+  return {
+    token: raw.token ?? token,
+    team_id: raw.teamId ?? raw.team_id ?? "",
+    team_name: raw.teamName ?? raw.team_name ?? "this team",
+    invited_email: (raw.invitedEmail ?? raw.invited_email ?? raw.email ?? "").toLowerCase(),
+    inviter_email: raw.inviterEmail ?? raw.inviter_email,
+    expires_at: raw.expiresAt ?? raw.expires_at,
+  };
+}
+
+/**
+ * Invite consumption is authenticated and must never be faked: both calls go
+ * straight to the backend so 401/403/404/409/410/422 stay visible in the UI
+ * and the current session is preserved (cookies are sent by requestApi).
+ */
+export const teamInvitesApi = {
+  get: (token: string) =>
+    requestApi<BackendInvite>("GET", "/teams/invites/" + encodeURIComponent(token)).then((raw) =>
+      normalizeInvite(raw ?? {}, token),
+    ),
+  accept: (token: string) =>
+    requestApi<BackendInvite | void>("POST", "/teams/invites/" + encodeURIComponent(token) + "/accept"),
+};
+
 // ---------- Query keys ----------
 
 export const teamKeys = {
   all: ["formal-teams"] as const,
   detail: (id: string) => ["formal-teams", id] as const,
+  invite: (token: string) => ["team-invite", token] as const,
   availability: (id: string, date: string, duration: number) =>
     ["formal-teams", id, "availability", date, duration] as const,
   analytics: (id: string, date: string) => ["formal-team-analytics", id, date] as const,
 };
+
 
 // ---------- Validation ----------
 

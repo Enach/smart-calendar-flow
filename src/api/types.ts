@@ -18,7 +18,36 @@ export type IntegrationAvailability = Record<IntegrationProvider, IntegrationAva
 
 export type ConferenceProvider = "google_meet" | "zoom" | "teams" | "custom";
 
+export type WeekdayKey =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+/** A single HH:MM interval that can be switched off for a given day. */
+export interface DayInterval {
+  enabled: boolean;
+  start: string;
+  end: string;
+}
+
+export type WorkingHoursMode = "all_days" | "by_day";
+
+/** Backend contract: settings.workingHours */
+export interface WorkingHours {
+  mode: WorkingHoursMode;
+  default: DayInterval;
+  days: Partial<Record<WeekdayKey, DayInterval>>;
+}
+
+/** Backend contract: settings.lunchBreaks (may be omitted/empty). */
+export type LunchBreaks = Partial<Record<WeekdayKey, DayInterval>>;
+
 export interface Settings {
+
   work_start: string;
   work_end: string;
   timezone: string;
@@ -54,7 +83,12 @@ export interface Settings {
   // Conferencing
   default_conference_provider?: ConferenceProvider;
   teams_enabled?: boolean;
+  /** Per-day working hours (backend field: workingHours). Absent until the backend ships it. */
+  working_hours?: WorkingHours;
+  /** Per-day lunch overrides (backend field: lunchBreaks). Absent until the backend ships it. */
+  lunch_breaks?: LunchBreaks;
 }
+
 
 export interface PersonalCalendar {
   id: string;

@@ -271,7 +271,30 @@ describe("strict backend validation alignment (422)", () => {
     await expect(schedulingLinksApi.createLink(base)).rejects.toSatisfy((e: unknown) => isApiHttpError(e));
     expect(isUsingMocks()).toBe(false);
   });
+
+  it("keeps the created server link usable when the list refetch fails", async () => {
+    const created = { ...BACKEND_LINK, id: "new", slug: "server-slug" };
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/" && init?.method === "POST") return jsonResponse(created);
+      if (path === "/api/scheduling-links/new") return jsonResponse(created);
+      if (path === "/api/auth/me") return jsonResponse({ id: "u1", email: "owner@co.com" });
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+
+    const saved = await schedulingLinksApi.createLink(base);
+    // The server-generated slug is what the UI renders — never a fabricated one.
+    expect(saved.slug).toBe("server-slug");
+    expect(saved.id).toBe("new");
+
+    // The subsequent list refetch fails with an HTTP error: it must stay an
+    // error (no demo links) while the created link above remains valid data.
+    fetchMock.mockImplementation(async () => jsonResponse({ detail: "boom" }, 500));
+    await expect(schedulingLinksApi.listLinks()).rejects.toSatisfy((e: unknown) => isApiHttpError(e));
+    expect(isUsingMocks()).toBe(false);
+  });
 });
+
 
 describe("link bookings", () => {
   beforeEach(() => {

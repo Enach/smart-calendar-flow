@@ -12,6 +12,12 @@ import type {
   ConferenceProviderStatus,
   CoverageProvider,
   CoverageStatus,
+  DayInterval,
+  LunchBreaks,
+  WeekdayKey,
+  WorkingHours,
+  WorkingHoursMode,
+
   FocusBlock,
   IntegrationAvailability,
   FocusRunResult,
@@ -91,7 +97,22 @@ const DEFAULT_SETTINGS: Settings = {
   azure_api_version: "2024-02-01",
   default_conference_provider: "google_meet",
   teams_enabled: false,
+  // Preview-only defaults so the day-by-day editor is explorable offline.
+  working_hours: {
+    mode: "all_days",
+    default: { enabled: true, start: "09:00", end: "18:00" },
+    days: {
+      monday: { enabled: true, start: "09:00", end: "18:00" },
+      tuesday: { enabled: true, start: "09:00", end: "18:00" },
+      wednesday: { enabled: true, start: "09:00", end: "18:00" },
+      thursday: { enabled: true, start: "09:00", end: "18:00" },
+      friday: { enabled: true, start: "09:00", end: "18:00" },
+      saturday: { enabled: false, start: "09:00", end: "13:00" },
+      sunday: { enabled: false, start: "09:00", end: "13:00" },
+    },
+  },
 };
+
 
 const MOCK_ROOMS: Room[] = [
   { id: "r1", name: "Helsinki", email: "room.helsinki@co.com", building: "HQ", floor: "3", capacity: 6 },
@@ -438,6 +459,96 @@ export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Pr
   }
 }
 
+// ---------- Settings adapter ----------
+
+export const WEEKDAY_KEYS: WeekdayKey[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isValidHHMM(value: unknown): value is string {
+  return typeof value === "string" && HHMM_RE.test(value);
+}
+
+function normalizeInterval(raw: unknown): DayInterval | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const start = isValidHHMM(r.start) ? r.start : undefined;
+  const end = isValidHHMM(r.end) ? r.end : undefined;
+  if (!start || !end) return undefined;
+  return { enabled: r.enabled !== false, start, end };
+}
+
+function normalizeDayMap(raw: unknown): Partial<Record<WeekdayKey, DayInterval>> {
+  const out: Partial<Record<WeekdayKey, DayInterval>> = {};
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as Record<string, unknown>;
+  for (const key of WEEKDAY_KEYS) {
+    const interval = normalizeInterval(r[key]);
+    if (interval) out[key] = interval;
+  }
+  return out;
+}
+
+/**
+ * Accepts the backend camelCase `workingHours` payload (or an already
+ * snake_cased one) and returns undefined when the backend does not send it yet.
+ */
+export function normalizeWorkingHours(raw: unknown): WorkingHours | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const fallback = normalizeInterval(r.default);
+  const days = normalizeDayMap(r.days);
+  if (!fallback && Object.keys(days).length === 0) return undefined;
+  const mode: WorkingHoursMode = r.mode === "by_day" ? "by_day" : "all_days";
+  return {
+    mode,
+    default: fallback ?? { enabled: true, start: "09:00", end: "18:00" },
+    days,
+  };
+}
+
+export function normalizeLunchBreaks(raw: unknown): LunchBreaks | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const days = normalizeDayMap(raw);
+  return Object.keys(days).length > 0 ? days : undefined;
+}
+
+/** Normalize a GET/PUT /api/settings response (snake_case + camelCase fields). */
+export function normalizeSettings(raw: unknown): Settings {
+  const r = (raw ?? {}) as Record<string, unknown> & Settings;
+  const working = normalizeWorkingHours(r.workingHours ?? r.working_hours);
+  const lunch = normalizeLunchBreaks(r.lunchBreaks ?? r.lunch_breaks);
+  const bag: Record<string, unknown> = { ...r };
+  delete bag.workingHours;
+  delete bag.lunchBreaks;
+  const out = bag as unknown as Settings;
+
+  if (working) out.working_hours = working;
+  else delete out.working_hours;
+  if (lunch) out.lunch_breaks = lunch;
+  else delete out.lunch_breaks;
+  return out;
+}
+
+/** Build the PUT /api/settings body: snake_case base + camelCase new fields. */
+export function settingsRequestBody(s: Settings): Record<string, unknown> {
+  const body: Record<string, unknown> = { ...s };
+  delete body.working_hours;
+  delete body.lunch_breaks;
+  if (s.working_hours) body.workingHours = s.working_hours;
+  if (s.lunch_breaks && Object.keys(s.lunch_breaks).length > 0) body.lunchBreaks = s.lunch_breaks;
+  return body;
+}
+
+
 
 // ---------- Mock implementations ----------
 
@@ -625,12 +736,13 @@ export const api = {
   // Settings
   getSettings: () =>
     withFallback(
-      () => requestApi<Settings>("GET", "/settings"),
+      async () => normalizeSettings(await requestApi<unknown>("GET", "/settings")),
       () => ({ ...mockState.settings }),
     ),
   updateSettings: (s: Settings) =>
     withFallback(
-      () => requestApi<Settings>("PUT", "/settings", s),
+      async () => normalizeSettings(await requestApi<unknown>("PUT", "/settings", settingsRequestBody(s))),
+
       () => {
         mockState.settings = { ...s };
         // keep focus block colors in sync

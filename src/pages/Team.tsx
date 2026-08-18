@@ -122,19 +122,29 @@ export default function Team() {
   };
 
   // Formal teams
-  const teamsQ = useQuery({ queryKey: ["formal-teams"], queryFn: () => teamsApi.remote.list() });
-  const teams = teamsQ.data ?? [];
+  // Formal teams — every team the user belongs to stays visible; a failed
+  // refetch keeps the cached list and surfaces a retryable error.
+  const teamsQ = useQuery({
+    queryKey: ["formal-teams"],
+    queryFn: () => teamsApi.remote.list(),
+    placeholderData: (prev) => prev,
+  });
+  const teams = useMemo(() => teamsQ.data ?? [], [teamsQ.data]);
   const [activeTeamId, setActiveTeamIdState] = useState<string | null>(() => teamsApi.activeTeamId());
   useEffect(() => {
+    if (activeTeamId && teams.some((t) => t.id === activeTeamId)) return;
     const id = teamsApi.activeTeamId();
-    setActiveTeamIdState(id);
-  }, [teams.length]);
+    setActiveTeamIdState(id ?? teams[0]?.id ?? null);
+  }, [teams, activeTeamId]);
 
   const activeTeam = activeTeamId ? teams.find((t) => t.id === activeTeamId) ?? null : null;
   const switchTeam = (id: string) => {
+    // Switching only changes the active team; the full list is untouched.
     teamsApi.setActiveTeam(id);
     setActiveTeamIdState(id);
   };
+  const teamsError = teamsQ.error;
+
 
   const [createTeamOpen, setCreateTeamOpen] = useState(false);
 
@@ -209,6 +219,21 @@ export default function Team() {
       />
 
       <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+        {teamsError && (
+          <div
+            role="alert"
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/5 px-4 py-3 text-sm text-foreground"
+          >
+            <span className="flex-1">
+              Couldn't refresh your teams: {apiErrorMessage(teamsError)}
+              {teams.length > 0 ? " Showing the last loaded list." : ""}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => teamsQ.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         {tab === "team" && (
           <TeamTab
             onCreateTeam={() => setCreateTeamOpen(true)}
@@ -707,16 +732,22 @@ function DetectionPrompt({
         Paceday will auto-detect your team from recurring 1:1s. Trigger a scan or add people manually.
       </p>
       <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
-        <Button onClick={onScan} disabled={isDetecting} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+        {/* Fixed size: the pending label must not resize the card. */}
+        <Button
+          onClick={onScan}
+          disabled={isDetecting}
+          className="h-10 w-full justify-center overflow-hidden bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[200px]"
+        >
           {isDetecting ? (
-            <>
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              Scanning your calendar for recurring 1:1s…
-            </>
+            <span className="flex items-center gap-1.5 truncate">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              Scanning calendar…
+            </span>
           ) : (
             "Scan calendar now"
           )}
         </Button>
+
         <Button variant="outline" onClick={onAddManually}>
           Add manually
         </Button>
