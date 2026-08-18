@@ -732,16 +732,22 @@ function DetectionPrompt({
         Paceday will auto-detect your team from recurring 1:1s. Trigger a scan or add people manually.
       </p>
       <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
-        <Button onClick={onScan} disabled={isDetecting} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+        {/* Fixed size: the pending label must not resize the card. */}
+        <Button
+          onClick={onScan}
+          disabled={isDetecting}
+          className="h-10 w-full justify-center overflow-hidden bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[200px]"
+        >
           {isDetecting ? (
-            <>
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              Scanning your calendar for recurring 1:1s…
-            </>
+            <span className="flex items-center gap-1.5 truncate">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              Scanning calendar…
+            </span>
           ) : (
             "Scan calendar now"
           )}
         </Button>
+
         <Button variant="outline" onClick={onAddManually}>
           Add manually
         </Button>
