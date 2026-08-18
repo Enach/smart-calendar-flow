@@ -64,7 +64,16 @@ const App = () => (
               </RequireAuth>
             }
           />
+          <Route
+            path="/app/team/invite/:token"
+            element={
+              <RequireAuth>
+                <TeamInvite />
+              </RequireAuth>
+            }
+          />
           <Route path="/app/manager" element={<Navigate to="/app/team" replace />} />
+
           <Route
             path="/settings"
             element={
