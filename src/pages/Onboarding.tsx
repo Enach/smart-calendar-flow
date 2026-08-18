@@ -243,15 +243,35 @@ export default function Onboarding() {
               />
             </div>
 
+            {profileError && (
+              <p role="alert" className="mt-6 text-sm text-destructive">
+                {profileError}
+              </p>
+            )}
+
             <div className="mt-8 flex justify-end">
+              {/* Fixed width so the pending label never resizes the card. */}
               <Button
                 onClick={finish}
                 disabled={!role || busy}
-                className="w-full bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-auto"
+                className="h-10 w-full justify-center bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[210px]"
               >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Continue"}
+                {scanning ? (
+                  <span className="flex items-center gap-2 truncate">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    Scanning calendar…
+                  </span>
+                ) : busy ? (
+                  <span className="flex items-center gap-2 truncate">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    Saving…
+                  </span>
+                ) : (
+                  "Continue"
+                )}
               </Button>
             </div>
+
           </section>
         )}
       </main>
