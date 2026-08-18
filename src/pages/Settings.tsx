@@ -229,6 +229,32 @@ export default function SettingsPage() {
           </Link>
         </Section>
 
+        <Section
+          title="Scheduling template"
+          description="Pick a starting point, then fine-tune below. Nothing is saved until you press Save changes."
+        >
+          <div className="grid gap-2 sm:grid-cols-3">
+            {SCHEDULING_TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => applyTemplate(t.id)}
+                className={
+                  "rounded-xl border p-3 text-left transition " +
+                  (template === t.id
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-muted-foreground/40")
+                }
+              >
+                <span className="block text-sm font-medium text-foreground">{t.label}</span>
+                <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                  {t.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        </Section>
+
         <Section title="Working Hours" description="When you're available for meetings.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label="Start">
@@ -261,7 +287,23 @@ export default function SettingsPage() {
               </select>
             </Field>
           </div>
+
+          <div className="mt-5 border-t border-border pt-4">
+            <p className="mb-3 text-xs font-medium text-foreground">Day-by-day hours</p>
+            {supportsPerDay && draft.working_hours ? (
+              <WorkingHoursEditor
+                value={draft.working_hours}
+                onChange={(next) => set("working_hours", next)}
+              />
+            ) : (
+              <UnsupportedNotice>
+                Backend update required — GET /api/settings does not return <code>workingHours</code> yet,
+                so day-by-day hours cannot be saved. The global start and end times above are used instead.
+              </UnsupportedNotice>
+            )}
+          </div>
         </Section>
+
 
         <Section title="Focus Time" description="Auto-scheduled deep work blocks.">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
