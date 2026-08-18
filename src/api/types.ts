@@ -83,7 +83,12 @@ export interface Settings {
   // Conferencing
   default_conference_provider?: ConferenceProvider;
   teams_enabled?: boolean;
+  /** Per-day working hours (backend field: workingHours). Absent until the backend ships it. */
+  working_hours?: WorkingHours;
+  /** Per-day lunch overrides (backend field: lunchBreaks). Absent until the backend ships it. */
+  lunch_breaks?: LunchBreaks;
 }
+
 
 export interface PersonalCalendar {
   id: string;
