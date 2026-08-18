@@ -5,7 +5,7 @@ import { Check, ChevronRight, User, Users, Calendar, Mail, Link as LinkIcon, Loa
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/useAuth";
 import { managerApi } from "@/api/manager";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
@@ -38,6 +38,9 @@ export default function Onboarding() {
   const [provider, setProvider] = useState<CalendarProvider>("google");
   const [role, setRole] = useState<"ic" | "manager" | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
   const availableProviders = useMemo(
     () =>
       PROVIDERS.filter((p) => availability?.[integrationProviderForCalendar(p.value)]?.available === true),
