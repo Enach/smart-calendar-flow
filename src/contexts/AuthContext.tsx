@@ -38,6 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   });
   const [loading, setLoading] = useState(true);
+  const [sessionStale, setSessionStale] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => () => {
@@ -47,14 +48,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       const me = await apiFetch<AuthUser>("/api/auth/me", { method: "GET" });
-      if (mounted.current) setUser(me ?? null);
+      if (mounted.current) {
+        setUser(me ?? null);
+        setSessionStale(false);
+      }
     } catch (e) {
-      const err = e as ApiError;
-      // 401 → not logged in. Network/other errors → also leave unauthenticated.
-      // We do NOT auto-enter demo here: that's a user-initiated action.
-      if (mounted.current && err?.status !== 200) setUser(null);
+      const status = (e as ApiError)?.status;
+      if (!mounted.current) return;
+      if (status === 401 || status === 403) {
+        // Explicit authentication failure → the session is really gone.
+        setUser(null);
+        setSessionStale(false);
+        return;
+      }
+      // Network failure / 5xx / unreachable backend: keep the last known user
+      // and mark the session as temporarily unavailable so the UI can retry.
+      setSessionStale(true);
     }
   }, []);
+
 
   // Restore demo mock state if the flag is set on mount.
   useEffect(() => {
@@ -104,6 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setIsDemo(false);
     setUser(null);
+    setSessionStale(false);
   }, []);
 
   const logout = useCallback(async () => {
@@ -117,11 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       /* even if it fails, clear local state */
     }
     setUser(null);
+    setSessionStale(false);
   }, [isDemo, exitDemo]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isDemo, loading, refresh, loginDemo, exitDemo, logout }),
-    [user, isDemo, loading, refresh, loginDemo, exitDemo, logout],
+    () => ({ user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout }),
+    [user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

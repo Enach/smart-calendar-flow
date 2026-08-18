@@ -276,13 +276,34 @@ function assertTeams(err: string | null) {
   if (err) throw new TeamValidationError(err);
 }
 
+/**
+ * GET /api/teams/ and POST /api/teams/ may return either a bare array /
+ * object or an envelope with a `teams` (or `team`) property.
+ */
+export function unwrapTeamList(raw: unknown): BackendTeam[] {
+  if (Array.isArray(raw)) return raw as BackendTeam[];
+  if (raw && typeof raw === "object") {
+    const teams = (raw as { teams?: unknown }).teams;
+    if (Array.isArray(teams)) return teams as BackendTeam[];
+  }
+  return [];
+}
+
+export function unwrapTeam(raw: unknown): BackendTeam | null {
+  if (!raw || typeof raw !== "object") return null;
+  const envelope = raw as { team?: BackendTeam; id?: string };
+  if (envelope.team?.id) return envelope.team;
+  if (envelope.id) return raw as BackendTeam;
+  return null;
+}
+
 const teamsRemote = {
 
   list: () =>
     withFallback<FormalTeam[]>(
       async () => {
-        const raw = await requestApi<BackendTeam[]>("GET", "/teams/");
-        const teams = await Promise.all((raw ?? []).map((team) => remoteTeam(team.id)));
+        const raw = unwrapTeamList(await requestApi<unknown>("GET", "/teams/"));
+        const teams = await Promise.all(raw.map((team) => remoteTeam(team.id)));
         const state = load();
         state.teams = teams;
         if (state.active_team_id && !teams.some((team) => team.id === state.active_team_id)) {
@@ -307,7 +328,8 @@ const teamsRemote = {
     withFallback<FormalTeam>(
       async () => {
         assertTeams(validateTeamName(name));
-        const raw = await requestApi<BackendTeam>("POST", "/teams/", { name: name.trim() });
+        const raw = unwrapTeam(await requestApi<unknown>("POST", "/teams/", { name: name.trim() }));
+        if (!raw?.id) throw new TeamValidationError("The server did not return the created team.");
         const team = await remoteTeam(raw.id);
         const state = load();
         state.teams = state.teams.filter((item) => item.id !== team.id).concat(team);
@@ -317,6 +339,7 @@ const teamsRemote = {
       },
       () => teamsApi.createTeam(name),
     ),
+
 
   renameTeam: (id: string, name: string) =>
     withFallback<FormalTeam | null>(
