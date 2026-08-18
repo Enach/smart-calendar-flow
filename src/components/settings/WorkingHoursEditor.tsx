@@ -1,0 +1,157 @@
+import { AlertTriangle } from "lucide-react";
+
+import { WEEKDAY_KEYS } from "@/api/client";
+import type { DayInterval, LunchBreaks, WeekdayKey, WorkingHours } from "@/api/types";
+import {
+  WEEKDAY_LABELS,
+  applyDefaultInterval,
+  ensureAllDays,
+  validateLunchBreaks,
+  validateWorkingHours,
+} from "@/lib/schedulingPresets";
+
+const inputCls =
+  "h-9 w-full rounded-lg border border-input bg-background px-2 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:opacity-50";
+
+function DayRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: DayInterval;
+  onChange: (next: DayInterval) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 sm:grid-cols-[130px_1fr_1fr_auto]">
+      <label className="flex items-center gap-2 text-sm text-foreground">
+        <input
+          type="checkbox"
+          checked={value.enabled}
+          onChange={(e) => onChange({ ...value, enabled: e.target.checked })}
+          className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
+          aria-label={`${label} enabled`}
+        />
+        {label}
+      </label>
+      <input
+        type="time"
+        value={value.start}
+        disabled={!value.enabled}
+        onChange={(e) => onChange({ ...value, start: e.target.value })}
+        className={inputCls}
+        aria-label={`${label} start`}
+      />
+      <input
+        type="time"
+        value={value.end}
+        disabled={!value.enabled}
+        onChange={(e) => onChange({ ...value, end: e.target.value })}
+        className={inputCls}
+        aria-label={`${label} end`}
+      />
+      <span className="hidden text-[11px] text-muted-foreground sm:block">
+        {value.enabled ? "" : "Off"}
+      </span>
+    </div>
+  );
+}
+
+export function UnsupportedNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-[#E9B949]/40 bg-[#E9B949]/10 px-3 py-2">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#8A6D1F]" />
+      <p className="text-xs text-foreground">{children}</p>
+    </div>
+  );
+}
+
+export function WorkingHoursEditor({
+  value,
+  onChange,
+}: {
+  value: WorkingHours;
+  onChange: (next: WorkingHours) => void;
+}) {
+  const error = validateWorkingHours(value);
+  const days = ensureAllDays(value).days;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        {(["all_days", "by_day"] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() =>
+              onChange(mode === "by_day" ? ensureAllDays({ ...value, mode }) : { ...value, mode })
+            }
+            className={
+              "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+              (value.mode === mode
+                ? "border-primary bg-primary/10 text-foreground"
+                : "border-border text-muted-foreground hover:text-foreground")
+            }
+          >
+            {mode === "all_days" ? "Same hours every day" : "Customize by day"}
+          </button>
+        ))}
+      </div>
+
+      {value.mode === "all_days" ? (
+        <DayRow
+          label="Every day"
+          value={value.default}
+          onChange={(next) => onChange(applyDefaultInterval(value, next))}
+        />
+      ) : (
+        <div className="space-y-2">
+          {WEEKDAY_KEYS.map((key: WeekdayKey) => (
+            <DayRow
+              key={key}
+              label={WEEKDAY_LABELS[key]}
+              value={days[key]!}
+              onChange={(next) => onChange({ ...value, days: { ...days, [key]: next } })}
+            />
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function LunchBreaksEditor({
+  value,
+  onChange,
+}: {
+  value: LunchBreaks;
+  onChange: (next: LunchBreaks) => void;
+}) {
+  const error = validateLunchBreaks(value);
+  return (
+    <div className="space-y-2">
+      {WEEKDAY_KEYS.map((key) => {
+        const day = value[key] ?? { enabled: false, start: "12:30", end: "13:30" };
+        return (
+          <DayRow
+            key={key}
+            label={WEEKDAY_LABELS[key]}
+            value={day}
+            onChange={(next) => onChange({ ...value, [key]: next })}
+          />
+        );
+      })}
+      {error && (
+        <p role="alert" className="text-xs text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
