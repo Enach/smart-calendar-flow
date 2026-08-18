@@ -219,6 +219,21 @@ export default function Team() {
       />
 
       <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+        {teamsError && (
+          <div
+            role="alert"
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/5 px-4 py-3 text-sm text-foreground"
+          >
+            <span className="flex-1">
+              Couldn't refresh your teams: {apiErrorMessage(teamsError)}
+              {teams.length > 0 ? " Showing the last loaded list." : ""}
+            </span>
+            <Button size="sm" variant="outline" onClick={() => teamsQ.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         {tab === "team" && (
           <TeamTab
             onCreateTeam={() => setCreateTeamOpen(true)}
