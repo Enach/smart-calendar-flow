@@ -414,50 +414,41 @@ export default function SettingsPage() {
 
             {draft.protect_lunch && (
               <div className="border-t border-border pt-4">
-                {supportsPerDay ? (
-                  <>
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => set("lunch_breaks", undefined)}
-                        className={
-                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
-                          (!lunchOverride
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground")
-                        }
-                      >
-                        Use the template lunch
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          set("lunch_breaks", draft.lunch_breaks ?? emptyLunchBreaks(draft.lunch_start, draft.lunch_end))
-                        }
-                        className={
-                          "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
-                          (lunchOverride
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "border-border text-muted-foreground hover:text-foreground")
-                        }
-                      >
-                        Override by day
-                      </button>
-                    </div>
-                    {lunchOverride && draft.lunch_breaks && (
-                      <div className="mt-4">
-                        <LunchBreaksEditor
-                          value={draft.lunch_breaks}
-                          onChange={(next) => set("lunch_breaks", next)}
-                        />
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <UnsupportedNotice>
-                    Backend update required — GET /api/settings does not return <code>lunchBreaks</code> yet,
-                    so per-day lunch overrides cannot be saved. The single lunch interval above is used instead.
-                  </UnsupportedNotice>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => set("lunch_breaks", undefined)}
+                    className={
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                      (!lunchOverride
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    Use the template lunch
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      set("lunch_breaks", draft.lunch_breaks ?? emptyLunchBreaks(draft.lunch_start, draft.lunch_end))
+                    }
+                    className={
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition " +
+                      (lunchOverride
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-border text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    Override by day
+                  </button>
+                </div>
+                {lunchOverride && draft.lunch_breaks && (
+                  <div className="mt-4">
+                    <LunchBreaksEditor
+                      value={draft.lunch_breaks}
+                      onChange={(next) => set("lunch_breaks", next)}
+                    />
+                  </div>
                 )}
               </div>
             )}
