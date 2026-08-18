@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { normalizeSettings, settingsRequestBody } from "./client";
+import { defaultWorkingHours, templatePatch } from "@/lib/schedulingPresets";
 import type { Settings } from "./types";
 
 const base = {
