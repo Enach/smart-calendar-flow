@@ -760,7 +760,10 @@ export const api = {
   // Calendar
   getEvents: (start: string, end: string) =>
     withFallback(
-      () => requestApi<CalendarEvent[]>("GET", "/calendar/events", undefined, { start, end }),
+      async () =>
+        normalizeEvents(
+          await requestApi<CalendarEvent[]>("GET", "/calendar/events", undefined, { start, end }),
+        ),
       () => {
         const s = new Date(start).getTime();
         const e = new Date(end).getTime();
@@ -771,6 +774,7 @@ export const api = {
         });
       },
     ),
+
 
   // Focus
   runFocus: (week?: string) =>
