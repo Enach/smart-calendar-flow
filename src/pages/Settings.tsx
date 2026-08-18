@@ -160,7 +160,7 @@ export default function SettingsPage() {
     }
   };
 
-  const supportsPerDay = !!data?.working_hours;
+  
   const template: SchedulingTemplateId = draft ? matchTemplate(draft) : "custom";
   const applyTemplate = (id: SchedulingTemplateId) => {
     setDraft((d) => {
