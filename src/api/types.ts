@@ -54,7 +54,8 @@ export interface Settings {
   focus_min_block_minutes: number;
   focus_max_block_minutes: number;
   focus_daily_target_minutes: number;
-  focus_max_per_week?: number;
+  out_of_hours_meetings_per_week?: number;
+  auto_decline_outside_working_hours?: boolean;
   focus_label: string;
   focus_color: string;
   lunch_start: string;

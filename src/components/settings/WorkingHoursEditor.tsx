@@ -17,12 +17,16 @@ function DayRow({
   ariaLabel,
   value,
   onChange,
+  minStart,
+  maxEnd,
 }: {
   label: string;
   /** Accessible name prefix; defaults to the visible label. */
   ariaLabel?: string;
   value: DayInterval;
   onChange: (next: DayInterval) => void;
+  minStart?: string;
+  maxEnd?: string;
 }) {
   const name = ariaLabel ?? label;
   return (
@@ -43,6 +47,8 @@ function DayRow({
         value={value.start}
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, start: e.target.value })}
+        min={minStart}
+        max={maxEnd}
         className={inputCls}
         aria-label={`${name} start`}
       />
@@ -52,6 +58,8 @@ function DayRow({
         value={value.end}
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, end: e.target.value })}
+        min={minStart}
+        max={maxEnd}
         className={inputCls}
         aria-label={`${name} end`}
       />
@@ -126,9 +134,11 @@ export function WorkingHoursEditor({
 export function LunchBreaksEditor({
   value,
   onChange,
+  workingHours,
 }: {
   value: LunchBreaks;
   onChange: (next: LunchBreaks) => void;
+  workingHours?: WorkingHours;
 }) {
   const error = validateLunchBreaks(value);
   return (
@@ -141,6 +151,8 @@ export function LunchBreaksEditor({
             label={WEEKDAY_LABELS[key]}
             ariaLabel={`${WEEKDAY_LABELS[key]} lunch`}
             value={day}
+            minStart={workingHours?.mode === "by_day" ? workingHours.days[key]?.start : workingHours?.default.start}
+            maxEnd={workingHours?.mode === "by_day" ? workingHours.days[key]?.end : workingHours?.default.end}
             onChange={(next) => onChange({ ...value, [key]: next })}
           />
         );

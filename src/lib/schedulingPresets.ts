@@ -192,3 +192,89 @@ export function validateLunchBreaks(breaks: LunchBreaks): string | null {
   }
   return null;
 }
+
+function minutes(value: string): number {
+  const [hours, mins] = value.split(":").map(Number);
+  return hours * 60 + mins;
+}
+
+function dayIntervals(hours: WorkingHours): Array<[WeekdayKey, DayInterval]> {
+  if (hours.mode === "all_days") return WEEKDAY_KEYS.map((key) => [key, hours.default]);
+  return WEEKDAY_KEYS.flatMap((key) => {
+    const interval = hours.days[key];
+    return interval ? [[key, interval] as [WeekdayKey, DayInterval]] : [];
+  });
+}
+
+/** The most restrictive enabled day capacity, excluding the effective lunch break. */
+export function workingHoursCapacity(
+  hours: WorkingHours,
+  lunchBreaks: LunchBreaks | undefined,
+  lunchStart: string,
+  lunchEnd: string,
+  protectLunch: boolean,
+): number {
+  const capacities = dayIntervals(hours)
+    .filter(([, interval]) => interval.enabled && HHMM_RE.test(interval.start) && HHMM_RE.test(interval.end))
+    .map(([key, interval]) => {
+      let available = minutes(interval.end) - minutes(interval.start);
+      const lunch = lunchBreaks?.[key] ?? {
+        enabled: protectLunch,
+        start: lunchStart,
+        end: lunchEnd,
+      };
+      if (lunch.enabled && HHMM_RE.test(lunch.start) && HHMM_RE.test(lunch.end)) {
+        const overlapStart = Math.max(minutes(interval.start), minutes(lunch.start));
+        const overlapEnd = Math.min(minutes(interval.end), minutes(lunch.end));
+        if (overlapEnd > overlapStart) available -= overlapEnd - overlapStart;
+      }
+      return Math.max(0, available);
+    });
+  return capacities.length > 0 ? Math.min(...capacities) : 0;
+}
+
+/** Return the common time bounds for controls that apply to every enabled day. */
+export function workingHoursBounds(hours: WorkingHours): { start?: string; end?: string } {
+  const intervals = dayIntervals(hours).filter(([, interval]) => interval.enabled && HHMM_RE.test(interval.start) && HHMM_RE.test(interval.end));
+  if (intervals.length === 0) return {};
+  return {
+    start: intervals.reduce((latest, [, interval]) => (interval.start > latest ? interval.start : latest), intervals[0][1].start),
+    end: intervals.reduce((earliest, [, interval]) => (interval.end < earliest ? interval.end : earliest), intervals[0][1].end),
+  };
+}
+
+/** Validate global and per-day lunch values against their corresponding work windows. */
+export function validateLunchWithinWorkingHours(
+  hours: WorkingHours,
+  lunchBreaks: LunchBreaks | undefined,
+  lunchStart: string,
+  lunchEnd: string,
+  protectLunch: boolean,
+): string | null {
+  if (!protectLunch) return null;
+  for (const [key, interval] of dayIntervals(hours)) {
+    if (!interval.enabled) continue;
+    const lunch = lunchBreaks?.[key] ?? { enabled: true, start: lunchStart, end: lunchEnd };
+    if (!lunch.enabled) continue;
+    if (lunch.start < interval.start || lunch.end > interval.end) {
+      return `${WEEKDAY_LABELS[key]} lunch must stay inside working hours.`;
+    }
+  }
+  return null;
+}
+
+/** Keep minute selectors coherent when the working window becomes smaller. */
+export function clampMinuteSettings(settings: Settings): Settings {
+  const hours = settings.working_hours ?? defaultWorkingHours(settings.work_start, settings.work_end);
+  const capacity = workingHoursCapacity(hours, settings.lunch_breaks, settings.lunch_start, settings.lunch_end, settings.protect_lunch);
+  if (capacity <= 0) return settings;
+  const clamp = (value: number) => Math.min(Math.max(0, value), capacity);
+  return {
+    ...settings,
+    focus_min_block_minutes: clamp(settings.focus_min_block_minutes),
+    focus_max_block_minutes: clamp(settings.focus_max_block_minutes),
+    focus_daily_target_minutes: clamp(settings.focus_daily_target_minutes),
+    buffer_before_minutes: clamp(settings.buffer_before_minutes),
+    buffer_after_minutes: clamp(settings.buffer_after_minutes),
+  };
+}

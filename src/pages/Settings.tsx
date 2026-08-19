@@ -24,12 +24,17 @@ import type { LLMProvider, Settings } from "@/api/types";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
+  applyDefaultInterval,
+  clampMinuteSettings,
   defaultWorkingHours,
   emptyLunchBreaks,
   matchTemplate,
   templatePatch,
   validateLunchBreaks,
+  validateLunchWithinWorkingHours,
   validateWorkingHours,
+  workingHoursBounds,
+  workingHoursCapacity,
   type SchedulingTemplateId,
 } from "@/lib/schedulingPresets";
 
@@ -131,6 +136,8 @@ export default function SettingsPage() {
       setDraft({
         ...data,
         working_hours: data.working_hours ?? defaultWorkingHours(data.work_start, data.work_end),
+        out_of_hours_meetings_per_week: data.out_of_hours_meetings_per_week ?? 0,
+        auto_decline_outside_working_hours: data.auto_decline_outside_working_hours ?? false,
       });
     }
   }, [data, draft]);
@@ -140,6 +147,19 @@ export default function SettingsPage() {
   };
   const patchDraft = (patch: Partial<Settings>) => {
     setDraft((d) => (d ? { ...d, ...patch } : d));
+  };
+
+  const updateWorkingHours = (next: Settings["working_hours"]) => {
+    if (!next) return;
+    setDraft((d) => {
+      if (!d) return d;
+      return clampMinuteSettings({
+        ...d,
+        working_hours: next,
+        work_start: next.default.start,
+        work_end: next.default.end,
+      });
+    });
   };
 
   const [llmTesting, setLlmTesting] = useState(false);
@@ -172,10 +192,14 @@ export default function SettingsPage() {
   const lunchOverride = !!draft?.lunch_breaks;
   const workingHoursError = draft?.working_hours ? validateWorkingHours(draft.working_hours) : null;
   const lunchError = draft?.lunch_breaks ? validateLunchBreaks(draft.lunch_breaks) : null;
+  const currentHours = draft?.working_hours ?? (draft ? defaultWorkingHours(draft.work_start, draft.work_end) : defaultWorkingHours("09:00", "18:00"));
+  const workingBounds = workingHoursBounds(currentHours);
+  const maxScheduleMinutes = Math.max(15, workingHoursCapacity(currentHours, draft?.lunch_breaks, draft?.lunch_start ?? "12:30", draft?.lunch_end ?? "13:30", draft?.protect_lunch ?? false));
+  const lunchWindowError = draft ? validateLunchWithinWorkingHours(currentHours, draft.lunch_breaks, draft.lunch_start, draft.lunch_end, draft.protect_lunch) : null;
 
   const save = async () => {
     if (!draft) return;
-    const invalid = workingHoursError ?? lunchError;
+    const invalid = workingHoursError ?? lunchError ?? lunchWindowError;
     if (invalid) {
       toast.error(invalid);
       return;
@@ -267,7 +291,7 @@ export default function SettingsPage() {
                 type="time"
                 step="900"
                 value={draft.work_start}
-                onChange={(e) => set("work_start", e.target.value)}
+                onChange={(e) => updateWorkingHours(applyDefaultInterval(currentHours, { ...currentHours.default, start: e.target.value }))}
                 className={inputCls}
               />
             </Field>
@@ -276,7 +300,7 @@ export default function SettingsPage() {
                 type="time"
                 step="900"
                 value={draft.work_end}
-                onChange={(e) => set("work_end", e.target.value)}
+                onChange={(e) => updateWorkingHours(applyDefaultInterval(currentHours, { ...currentHours.default, end: e.target.value }))}
                 className={inputCls}
               />
             </Field>
@@ -299,7 +323,7 @@ export default function SettingsPage() {
             <p className="mb-3 text-xs font-medium text-foreground">Day-by-day hours</p>
             <WorkingHoursEditor
               value={draft.working_hours ?? defaultWorkingHours(draft.work_start, draft.work_end)}
-              onChange={(next) => set("working_hours", next)}
+              onChange={updateWorkingHours}
             />
           </div>
         </Section>
@@ -312,8 +336,9 @@ export default function SettingsPage() {
                 type="number"
                 min={15}
                 step={15}
+                max={maxScheduleMinutes}
                 value={draft.focus_min_block_minutes}
-                onChange={(e) => set("focus_min_block_minutes", Number(e.target.value))}
+                onChange={(e) => set("focus_min_block_minutes", Math.min(Number(e.target.value), maxScheduleMinutes))}
                 className={inputCls}
               />
             </Field>
@@ -322,8 +347,9 @@ export default function SettingsPage() {
                 type="number"
                 min={15}
                 step={15}
+                max={maxScheduleMinutes}
                 value={draft.focus_max_block_minutes}
-                onChange={(e) => set("focus_max_block_minutes", Number(e.target.value))}
+                onChange={(e) => set("focus_max_block_minutes", Math.min(Number(e.target.value), maxScheduleMinutes))}
                 className={inputCls}
               />
             </Field>
@@ -332,8 +358,9 @@ export default function SettingsPage() {
                 type="number"
                 min={0}
                 step={15}
+                max={maxScheduleMinutes}
                 value={draft.focus_daily_target_minutes}
-                onChange={(e) => set("focus_daily_target_minutes", Number(e.target.value))}
+                onChange={(e) => set("focus_daily_target_minutes", Math.min(Number(e.target.value), maxScheduleMinutes))}
                 className={inputCls}
               />
             </Field>
@@ -400,6 +427,8 @@ export default function SettingsPage() {
                     type="time"
                     step="900"
                     value={draft.lunch_start}
+                    min={workingBounds.start}
+                    max={workingBounds.end}
                     onChange={(e) => set("lunch_start", e.target.value)}
                     className={inputCls}
                   />
@@ -409,6 +438,8 @@ export default function SettingsPage() {
                     type="time"
                     step="900"
                     value={draft.lunch_end}
+                    min={workingBounds.start}
+                    max={workingBounds.end}
                     onChange={(e) => set("lunch_end", e.target.value)}
                     className={inputCls}
                   />
@@ -450,6 +481,7 @@ export default function SettingsPage() {
                   <div className="mt-4">
                     <LunchBreaksEditor
                       value={draft.lunch_breaks}
+                      workingHours={currentHours}
                       onChange={(next) => set("lunch_breaks", next)}
                     />
                   </div>
@@ -467,8 +499,9 @@ export default function SettingsPage() {
                 type="number"
                 min={0}
                 step={5}
+                max={maxScheduleMinutes}
                 value={draft.buffer_before_minutes}
-                onChange={(e) => set("buffer_before_minutes", Number(e.target.value))}
+                onChange={(e) => set("buffer_before_minutes", Math.min(Number(e.target.value), maxScheduleMinutes))}
                 className={inputCls}
               />
             </Field>
@@ -477,11 +510,36 @@ export default function SettingsPage() {
                 type="number"
                 min={0}
                 step={5}
+                max={maxScheduleMinutes}
                 value={draft.buffer_after_minutes}
-                onChange={(e) => set("buffer_after_minutes", Number(e.target.value))}
+                onChange={(e) => set("buffer_after_minutes", Math.min(Number(e.target.value), maxScheduleMinutes))}
                 className={inputCls}
               />
             </Field>
+          </div>
+        </Section>
+
+        <Section title="Meeting Policy" description="Allow a controlled number of meetings outside your working hours.">
+          <Field label="Meetings outside working hours per week" hint="0 means none are allowed. This override is independent from the working-hours capacity.">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={draft.out_of_hours_meetings_per_week ?? 0}
+              onChange={(e) => set("out_of_hours_meetings_per_week", Math.max(0, Number(e.target.value)))}
+              className={inputCls}
+            />
+          </Field>
+          <div className="mt-5 border-t border-border pt-4">
+            <Toggle
+              checked={draft.auto_decline_outside_working_hours ?? false}
+              onChange={(v) => set("auto_decline_outside_working_hours", v)}
+              label="Automatically decline invitations outside working hours"
+            />
+            <p className="mt-2 text-xs text-muted-foreground">
+              Pending or tentative invitations only. Paceday checks the next 10 working days every 15 minutes
+              and declines meetings outside these hours or during protected lunch.
+            </p>
           </div>
         </Section>
 

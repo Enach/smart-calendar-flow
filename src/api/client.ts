@@ -72,7 +72,8 @@ const DEFAULT_SETTINGS: Settings = {
   focus_min_block_minutes: 60,
   focus_max_block_minutes: 180,
   focus_daily_target_minutes: 180,
-  focus_max_per_week: 15,
+  out_of_hours_meetings_per_week: 0,
+  auto_decline_outside_working_hours: false,
   focus_label: "Focus Time",
   focus_color: "#7C3AED",
   lunch_start: "12:30",
@@ -529,8 +530,15 @@ export function normalizeSettings(raw: unknown): Settings {
   const bag: Record<string, unknown> = { ...r };
   delete bag.workingHours;
   delete bag.lunchBreaks;
+  delete bag.focus_max_per_week;
   const out = bag as unknown as Settings;
 
+  const maxMeetings = r.outOfHoursMeetingsPerWeek ?? r.out_of_hours_meetings_per_week;
+  if (typeof maxMeetings === "number" && Number.isFinite(maxMeetings) && maxMeetings >= 0) {
+    out.out_of_hours_meetings_per_week = maxMeetings;
+  }
+  const autoDecline = r.autoDeclineOutsideWorkingHours ?? r.auto_decline_outside_working_hours;
+  if (typeof autoDecline === "boolean") out.auto_decline_outside_working_hours = autoDecline;
   if (working) out.working_hours = working;
   else delete out.working_hours;
   if (lunch) out.lunch_breaks = lunch;
@@ -543,8 +551,13 @@ export function settingsRequestBody(s: Settings): Record<string, unknown> {
   const body: Record<string, unknown> = { ...s };
   delete body.working_hours;
   delete body.lunch_breaks;
+  delete body.focus_max_per_week;
+  delete body.out_of_hours_meetings_per_week;
+  delete body.auto_decline_outside_working_hours;
   if (s.working_hours) body.workingHours = s.working_hours;
   if (s.lunch_breaks && Object.keys(s.lunch_breaks).length > 0) body.lunchBreaks = s.lunch_breaks;
+  body.outOfHoursMeetingsPerWeek = s.out_of_hours_meetings_per_week ?? 0;
+  body.autoDeclineOutsideWorkingHours = s.auto_decline_outside_working_hours ?? false;
   return body;
 }
 
