@@ -533,11 +533,11 @@ function MobileAddForm({
           <div className="grid grid-cols-2 gap-3">
             <label className="block text-xs font-medium text-foreground">
               Start
-              <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" />
+              <input type="time" step="900" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" />
             </label>
             <label className="block text-xs font-medium text-foreground">
               End
-              <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" />
+              <input type="time" step="900" value={end} onChange={(e) => setEnd(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm" />
             </label>
           </div>
           <label className="block text-xs font-medium text-foreground">

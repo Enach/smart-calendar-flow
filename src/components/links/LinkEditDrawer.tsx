@@ -374,11 +374,11 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label htmlFor="window-start">Start</Label>
-              <Input id="window-start" type="time" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
+              <Input id="window-start" type="time" step="900" value={windowStart} onChange={(e) => setWindowStart(e.target.value)} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="window-end">End</Label>
-              <Input id="window-end" type="time" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
+              <Input id="window-end" type="time" step="900" value={windowEnd} onChange={(e) => setWindowEnd(e.target.value)} />
             </div>
           </div>
 

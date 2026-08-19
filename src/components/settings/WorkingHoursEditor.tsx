@@ -39,6 +39,7 @@ function DayRow({
       </label>
       <input
         type="time"
+        step="900"
         value={value.start}
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, start: e.target.value })}
@@ -47,6 +48,7 @@ function DayRow({
       />
       <input
         type="time"
+        step="900"
         value={value.end}
         disabled={!value.enabled}
         onChange={(e) => onChange({ ...value, end: e.target.value })}

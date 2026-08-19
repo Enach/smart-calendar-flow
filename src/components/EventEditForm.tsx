@@ -180,6 +180,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
             <label className="mb-1 block text-xs font-medium text-foreground">Start</label>
             <input
               type="time"
+              step="900"
               value={startTime}
               onChange={(e) => setStartTime(e.target.value)}
               disabled={isFocus}
@@ -190,6 +191,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
             <label className="mb-1 block text-xs font-medium text-foreground">End</label>
             <input
               type="time"
+              step="900"
               value={endTime}
               onChange={(e) => setEndTime(e.target.value)}
               disabled={isFocus}
