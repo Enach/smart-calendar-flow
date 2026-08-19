@@ -214,6 +214,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
               </label>
               <input
                 type="datetime-local"
+                step="900"
                 value={rangeStart}
                 onChange={(e) => setRangeStart(e.target.value)}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -225,6 +226,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
               </label>
               <input
                 type="datetime-local"
+                step="900"
                 value={rangeEnd}
                 onChange={(e) => setRangeEnd(e.target.value)}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"

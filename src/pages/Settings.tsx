@@ -265,6 +265,7 @@ export default function SettingsPage() {
             <Field label="Start">
               <input
                 type="time"
+                step="900"
                 value={draft.work_start}
                 onChange={(e) => set("work_start", e.target.value)}
                 className={inputCls}
@@ -273,6 +274,7 @@ export default function SettingsPage() {
             <Field label="End">
               <input
                 type="time"
+                step="900"
                 value={draft.work_end}
                 onChange={(e) => set("work_end", e.target.value)}
                 className={inputCls}
@@ -396,6 +398,7 @@ export default function SettingsPage() {
                 <Field label="Start">
                   <input
                     type="time"
+                    step="900"
                     value={draft.lunch_start}
                     onChange={(e) => set("lunch_start", e.target.value)}
                     className={inputCls}
@@ -404,6 +407,7 @@ export default function SettingsPage() {
                 <Field label="End">
                   <input
                     type="time"
+                    step="900"
                     value={draft.lunch_end}
                     onChange={(e) => set("lunch_end", e.target.value)}
                     className={inputCls}
