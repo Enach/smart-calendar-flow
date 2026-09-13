@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import SettingsPage from "./pages/Settings";
@@ -25,6 +25,11 @@ const queryClient = new QueryClient({
   },
 });
 
+export function LegacyCalendarNewRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/app${location.search}`} replace />;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
@@ -42,6 +47,7 @@ const App = () => (
               </RequireAuth>
             }
           />
+          <Route path="/app/calendar/new" element={<LegacyCalendarNewRedirect />} />
           <Route
             path="/app/onboarding"
             element={
