@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, setMockMode } from "./client";
+import { ApiHttpError, isUsingMocks, setMockMode } from "./client";
 import {
   managerApi,
   managerKeys,
@@ -19,6 +19,8 @@ import {
 } from "./teams";
 
 const fetchMock = vi.fn<typeof fetch>();
+const teamID = "11111111-1111-4111-8111-111111111111";
+const otherTeamID = "22222222-2222-4222-8222-222222222222";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -119,35 +121,81 @@ describe("manager request bodies", () => {
   it("posts cadence_custom_days when adding a member", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse({ members: [{ email: "sam@co.com", cadence: "custom", cadence_custom_days: 10 }] }));
-    await managerApi.remote.addMember({ email: "sam@co.com", cadence: "custom", custom_cadence_days: 10 });
+      .mockResolvedValueOnce(jsonResponse({ team_id: teamID, members: [{ email: "sam@co.com", display_name: "Sam", source: "manual", cadence: "custom", cadence_custom_days: 10, last_one_on_one_at: null, is_paceday_user: false, this_week: { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false }, last_week: { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false }, focus_trend_pct: 0 }] }));
+    await managerApi.remote.addMember({ email: "sam@co.com", cadence: "custom", custom_cadence_days: 10 }, teamID);
     expect(urlOf(0).pathname).toBe("/api/manager/team/members");
+    expect(urlOf(0).searchParams.get("team_id")).toBe(teamID);
     expect(bodyOf(0)).toMatchObject({ email: "sam@co.com", cadence: "custom", cadence_custom_days: 10 });
   });
 
   it("requests analytics for the selected week", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ members: [] }));
-    await managerApi.remote.analytics("2026-05-04");
+    await managerApi.remote.analytics("2026-05-04", teamID);
     const url = urlOf(0);
     expect(url.pathname).toBe("/api/manager/analytics");
     expect(url.searchParams.get("week")).toBe("2026-05-04");
+    expect(url.searchParams.get("team_id")).toBe(teamID);
   });
 
   it("uses only the server-returned prefill_url", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ prefill_url: "/app?title=1%3A1" }));
-    await expect(managerApi.remote.schedulePrefillUrl("sam@co.com", "2026-05-06")).resolves.toBe("/app?title=1%3A1");
+    await expect(managerApi.remote.schedulePrefillUrl("sam@co.com", "2026-05-06", teamID)).resolves.toBe("/app?title=1%3A1");
     expect(urlOf(0).pathname).toBe("/api/manager/team/members/sam%40co.com/schedule");
+    expect(urlOf(0).searchParams.get("team_id")).toBe(teamID);
     expect(bodyOf(0)).toEqual({ suggested_date: "2026-05-06" });
   });
 
   it("surfaces a real HTTP error instead of mock data", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "forbidden" }, 403));
-    await expect(managerApi.remote.gaps()).rejects.toBeInstanceOf(ApiHttpError);
+    await expect(managerApi.remote.gaps(teamID)).rejects.toBeInstanceOf(ApiHttpError);
   });
 
   it("exposes stable query keys", () => {
-    expect(managerKeys.analytics("2026-05-04")).toEqual(["manager", "analytics", "2026-05-04"]);
+    expect(managerKeys.team("team-1")).toEqual(["manager-team", "team-1"]);
+    expect(managerKeys.analytics("2026-05-04", "team-1")).toEqual(["manager", "analytics", "team-1", "2026-05-04"]);
     expect(teamKeys.analytics("t1", "2026-05-04")).toEqual(["formal-team-analytics", "t1", "2026-05-04"]);
+  });
+});
+
+describe("manager scoped wire contract", () => {
+  it("rejects a roster without members and never enables mock fallback", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ team_id: teamID }));
+    await expect(managerApi.remote.listTeam(teamID)).rejects.toThrow();
+    expect(isUsingMocks()).toBe(false);
+  });
+  it("does not activate preview data when the scoped backend is unreachable", async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError("connection reset"));
+
+    await expect(managerApi.remote.listTeam(teamID)).rejects.toThrow();
+    expect(isUsingMocks()).toBe(false);
+  });
+
+
+  it("rejects a roster for a different team", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ team_id: otherTeamID, members: [] }));
+    await expect(managerApi.remote.listTeam(teamID)).rejects.toThrow(/active team/i);
+  });
+
+  it("uses preview then strict selected-person confirmation", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        team_id: teamID, scanned_at: "2026-09-13T20:00:00Z", detected: 2, eligible: 2, assigned: 0, skipped: 0,
+        candidates: [
+          { email: "a@example.com", display_name: "A", already_assigned: false },
+          { email: "b@example.com", display_name: "B", already_assigned: true },
+        ],
+      }))
+      .mockResolvedValueOnce(jsonResponse({ team_id: teamID, assigned: 1, skipped: 0, total: 2 }));
+
+    const preview = await managerApi.remote.detect(teamID);
+    expect(preview.assigned).toBe(0);
+    await managerApi.remote.confirmDetect(teamID, [" A@example.com "]);
+
+    expect(urlOf(0).pathname).toBe("/api/manager/detect");
+    expect(urlOf(0).searchParams.get("team_id")).toBe(teamID);
+    expect(urlOf(1).pathname).toBe("/api/manager/detect/confirm");
+    expect(urlOf(1).searchParams.get("team_id")).toBe(teamID);
+    expect(bodyOf(1)).toEqual({ emails: ["a@example.com"] });
   });
 });
 

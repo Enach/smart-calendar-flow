@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Loader2, Save, Zap, RefreshCw, ScrollText, User, Users } from "lucide-react";
+import { Loader2, Save, Zap, ScrollText, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
@@ -746,9 +746,6 @@ function ProfileSection() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(() => managerApi.getProfile());
   const [confirmSwitch, setConfirmSwitch] = useState(false);
-  const [scanning, setScanning] = useState(false);
-  const [scanLabel, setScanLabel] = useState<string | null>(null);
-  const lastScan = managerApi.lastScanAt();
 
   const setRole = (manager: boolean) => {
     if (profile.is_manager && !manager) {
@@ -763,15 +760,7 @@ function ProfileSection() {
       });
       void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
       setProfile(next);
-      toast.success("Manager mode enabled. Detecting your team from calendar…");
-      managerApi
-        .detect()
-        .then((r) => {
-          if (r.added > 0) {
-            toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s. View in My Team.`);
-          }
-        })
-        .catch(() => undefined);
+      toast.success("Manager mode enabled. Select a team to preview calendar candidates.");
     }
   };
 
@@ -783,16 +772,6 @@ function ProfileSection() {
     toast.success("Switched to Individual contributor.");
   };
 
-  const rescan = async () => {
-    setScanning(true);
-    setScanLabel(null);
-    try {
-      const r = await managerApi.remote.detect();
-      setScanLabel(r.added > 0 ? `${r.added} new member${r.added === 1 ? "" : "s"} found` : "No new members found");
-    } finally {
-      setScanning(false);
-    }
-  };
 
   return (
     <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
@@ -837,17 +816,11 @@ function ProfileSection() {
         <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <button
             type="button"
-            onClick={rescan}
-            disabled={scanning}
-            className="inline-flex items-center gap-1.5 text-[#5B7FFF] hover:underline disabled:opacity-60"
+            onClick={() => navigate("/app/team?tab=team")}
+            className="inline-flex items-center gap-1.5 text-[#5B7FFF] hover:underline"
           >
-            {scanning ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-            Re-scan calendar for team members
+            Choose a team and scan calendar
           </button>
-          {scanLabel && <span className="text-foreground">· {scanLabel}</span>}
-          {lastScan && !scanLabel && (
-            <span>· Last scanned: {new Date(lastScan).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-          )}
           <span className="ml-auto">
             <button
               type="button"

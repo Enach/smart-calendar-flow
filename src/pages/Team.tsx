@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -62,12 +62,17 @@ import {
   type MemberAnalytics,
   type OneOnOneGap,
   type TeamMember,
+  normalizeRemoteMember,
 } from "@/api/manager";
+import { failedManagerTeam, loadingManagerTeam, managerTeamFromRoster } from "@/business/managerTeam";
+import type { ScanPreview } from "@/contracts/managerTeam";
 import { teamsApi, validateTeamName } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
 import { ProtectedHoursTab } from "@/components/team/ProtectedHoursTab";
 import { FindATimeTab } from "@/components/team/FindATimeTab";
 import { AnalyticsTab } from "@/components/team/AnalyticsTab";
+import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
+import type { Attendee } from "@/api/types";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20";
@@ -178,10 +183,7 @@ export default function Team() {
                 onClick={() => {
                   void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
                   setProfile(managerApi.getProfile());
-                  void managerApi.remote.detect().then(() => {
-                    qc.invalidateQueries({ queryKey: ["manager-team"] });
-                    toast.success("Manager mode enabled. Detecting your team…");
-                  });
+                  toast.success("Manager mode enabled. Select a team, then scan to preview candidates.");
                 }}
                 className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
               >
@@ -235,10 +237,9 @@ export default function Team() {
         )}
 
         {tab === "team" && (
-          <TeamTab
-            onCreateTeam={() => setCreateTeamOpen(true)}
-            activeTeam={activeTeam}
-          />
+          <RequireFormalTeam team={activeTeam} onCreateTeam={() => setCreateTeamOpen(true)}>
+            {(team) => <TeamTab activeTeam={team} />}
+          </RequireFormalTeam>
         )}
         {tab === "protected" && (
           <RequireFormalTeam team={activeTeam} onCreateTeam={() => setCreateTeamOpen(true)}>
@@ -412,11 +413,9 @@ function RequireFormalTeam({
 // ============================================================================
 
 function TeamTab({
-  onCreateTeam,
   activeTeam,
 }: {
-  onCreateTeam: () => void;
-  activeTeam: ReturnType<typeof teamsApi.list>[number] | null;
+  activeTeam: ReturnType<typeof teamsApi.list>[number];
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -427,26 +426,30 @@ function TeamTab({
   const [removeTarget, setRemoveTarget] = useState<TeamMember | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [autoBannerDismissed, setAutoBannerDismissed] = useState(false);
+  const [scanPreview, setScanPreview] = useState<ScanPreview | null>(null);
+  const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
 
   const teamQ = useQuery({
-    queryKey: managerKeys.team,
-    queryFn: () => managerApi.remote.listTeam(),
-    placeholderData: (prev) => prev,
+    queryKey: managerKeys.team(activeTeam.id),
+    queryFn: () => managerApi.remote.listTeam(activeTeam.id),
   });
-  const team = useMemo(() => teamQ.data ?? [], [teamQ.data]);
+  const teamState = useMemo(() => {
+    if (teamQ.isLoading) return loadingManagerTeam(activeTeam.id);
+    if (teamQ.isError) return failedManagerTeam(activeTeam.id, teamQ.error);
+    return managerTeamFromRoster(activeTeam.id, teamQ.data!, normalizeRemoteMember);
+  }, [activeTeam.id, teamQ.data, teamQ.error, teamQ.isError, teamQ.isLoading]);
+  const team: TeamMember[] = teamState.members;
 
   const week = useMemo(() => weekStart(weekOffset).toISOString().slice(0, 10), [weekOffset]);
 
   const gapsQ = useQuery({
-    queryKey: managerKeys.gaps,
-    queryFn: () => managerApi.remote.gaps(),
-    placeholderData: (prev) => prev,
+    queryKey: managerKeys.gaps(activeTeam.id),
+    queryFn: () => managerApi.remote.gaps(activeTeam.id),
   });
 
   const analyticsQ = useQuery({
-    queryKey: managerKeys.analytics(week),
-    queryFn: () => managerApi.remote.analytics(week),
-    placeholderData: (prev) => prev,
+    queryKey: managerKeys.analytics(week, activeTeam.id),
+    queryFn: () => managerApi.remote.analytics(week, activeTeam.id),
   });
   const analyticsByEmail = useMemo(() => {
     const map = new Map<string, MemberAnalytics>();
@@ -455,7 +458,7 @@ function TeamTab({
   }, [analyticsQ.data]);
 
   const scheduleMut = useMutation({
-    mutationFn: (email: string) => managerApi.remote.schedulePrefillUrl(email),
+    mutationFn: (email: string) => managerApi.remote.schedulePrefillUrl(email, undefined, activeTeam.id),
     onSuccess: (url) => {
       if (/^https?:\/\//i.test(url)) window.location.assign(url);
       else navigate(url);
@@ -464,31 +467,43 @@ function TeamTab({
   });
 
   const detectMut = useMutation({
-    mutationFn: () => managerApi.remote.detect(),
+    mutationFn: () => managerApi.remote.detect(activeTeam.id),
     onError: (e) => toast.error(apiErrorMessage(e)),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: managerKeys.team });
-      qc.invalidateQueries({ queryKey: managerKeys.gaps });
-      toast.success(r.added > 0 ? `${r.added} new team member${r.added === 1 ? "" : "s"} found.` : "No new members found.");
+    onSuccess: (preview) => {
+      setScanPreview(preview);
+      setSelectedCandidates(preview.candidates.filter((candidate) => !candidate.already_assigned).map((candidate) => candidate.email));
+    },
+  });
+
+  const confirmDetectMut = useMutation({
+    mutationFn: () => managerApi.remote.confirmDetect(activeTeam.id, selectedCandidates),
+    onError: (e) => toast.error(apiErrorMessage(e)),
+    onSuccess: (result) => {
+      setScanPreview(null);
+      setSelectedCandidates([]);
+      qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
+      toast.success(result.assigned + " team member" + (result.assigned === 1 ? "" : "s") + " added.");
     },
   });
 
   const removeMut = useMutation({
-    mutationFn: (email: string) => managerApi.remote.removeMember(email),
+    mutationFn: (email: string) => managerApi.remote.removeMember(email, activeTeam.id),
     onError: (e) => toast.error(apiErrorMessage(e)),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: managerKeys.team });
-      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+      qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
+      qc.invalidateQueries({ queryKey: ["formal-teams"] });
     },
   });
 
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
-      managerApi.remote.updateMember(input.email, input.patch),
+      managerApi.remote.updateMember(input.email, input.patch, activeTeam.id),
     onError: (e) => toast.error(apiErrorMessage(e)),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: managerKeys.team });
-      qc.invalidateQueries({ queryKey: managerKeys.gaps });
+      qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+      qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
     },
   });
 
@@ -504,6 +519,16 @@ function TeamTab({
 
   return (
     <>
+      {teamState.status === "degraded" && (
+        <div role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Some calendar analytics are unavailable. All {team.length} team members remain visible.
+        </div>
+      )}
+
+      {teamState.status === "inconsistent" && (
+        <ErrorBanner message="The server returned a different team. Nothing was displayed; retry this team." onRetry={() => teamQ.refetch()} busy={teamQ.isFetching} />
+      )}
+
       {teamQ.isError && (
         <ErrorBanner
           message={apiErrorMessage(teamQ.error)}
@@ -520,7 +545,7 @@ function TeamTab({
         </div>
       )}
 
-      {!teamQ.isLoading && team.length === 0 && (
+      {teamState.status === "empty" && (
         <DetectionPrompt
           isDetecting={detectMut.isPending}
           onScan={() => detectMut.mutate()}
@@ -554,7 +579,7 @@ function TeamTab({
         <section className="mt-6 rounded-2xl border border-border bg-card">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-foreground">Your team</h2>
+              <h2 className="text-base font-semibold text-foreground">{activeTeam.name} members</h2>
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{team.length}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -623,52 +648,23 @@ function TeamTab({
         </section>
       )}
 
-      {/* Sync with a Paceday team callout */}
-      <section className="mt-6 rounded-2xl border border-dashed border-border bg-card/60 p-5">
-        {activeTeam ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">
-                Also a member of {activeTeam.name}
-              </h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                View team coordination in Protected Hours, Find a Time, and Analytics.
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => {
-                const np = new URLSearchParams();
-                np.set("tab", "protected");
-                navigate(`/app/team?${np.toString()}`);
-              }}
-            >
-              Open team coordination
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">
-                Sync with a Paceday team
-              </h3>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Create a team with Paceday users to set protected hours and find meeting times.
-              </p>
-            </div>
-            <Button onClick={onCreateTeam} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
-              Create team
-            </Button>
-          </div>
-        )}
-      </section>
+      <ScanPreviewDialog
+        preview={scanPreview}
+        selected={selectedCandidates}
+        confirming={confirmDetectMut.isPending}
+        onSelectedChange={setSelectedCandidates}
+        onClose={() => { setScanPreview(null); setSelectedCandidates([]); }}
+        onConfirm={() => confirmDetectMut.mutate()}
+      />
 
       <AddPersonDialog
         open={addOpen}
+        teamId={activeTeam.id}
         onOpenChange={setAddOpen}
         onAdded={() => {
-          qc.invalidateQueries({ queryKey: managerKeys.team });
-          qc.invalidateQueries({ queryKey: managerKeys.gaps });
+          qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+          qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
+          qc.invalidateQueries({ queryKey: ["formal-teams"] });
         }}
       />
 
@@ -677,7 +673,7 @@ function TeamTab({
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {removeTarget?.display_name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              They will be removed from your team list. Their 1:1 history stays in your calendar.
+              They will be removed from {activeTeam.name}. Their 1:1 history stays in your calendar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -712,6 +708,46 @@ function weekStart(offset: number) {
 // ============================================================================
 // Sub-components: detection, gaps, member row, analytics panel
 // ============================================================================
+
+export function ScanPreviewDialog({
+  preview, selected, confirming, onSelectedChange, onClose, onConfirm,
+}: {
+  preview: ScanPreview | null; selected: string[]; confirming: boolean;
+  onSelectedChange: (emails: string[]) => void; onClose: () => void; onConfirm: () => void;
+}) {
+  const selectedSet = new Set(selected);
+  return (
+    <Dialog open={preview !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Choose people to add</DialogTitle>
+          <DialogDescription>{preview ? preview.detected + " detected, " + preview.eligible + " eligible, " + preview.skipped + " skipped. Nothing is added until you confirm." : ""}</DialogDescription>
+        </DialogHeader>
+        <div className="max-h-72 space-y-2 overflow-y-auto">
+          {preview?.candidates.map((candidate) => (
+            <label key={candidate.email} className="flex items-center gap-3 rounded-lg border border-border p-3 text-sm">
+              <input type="checkbox" checked={candidate.already_assigned || selectedSet.has(candidate.email)} disabled={candidate.already_assigned || confirming}
+                onChange={(event) => onSelectedChange(event.target.checked ? [...selected, candidate.email] : selected.filter((email) => email !== candidate.email))} />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-foreground">{candidate.display_name || candidate.email}</span>
+                <span className="block truncate text-xs text-muted-foreground">{candidate.email}</span>
+              </span>
+              {candidate.already_assigned && <span className="text-xs text-muted-foreground">Already added</span>}
+            </label>
+          ))}
+          {preview?.candidates.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No candidates found.</p>}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={confirming}>Cancel</Button>
+          <Button onClick={onConfirm} disabled={confirming || selected.length === 0} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            {confirming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Add {selected.length} selected
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function DetectionPrompt({
   isDetecting,
@@ -914,7 +950,11 @@ function MemberRow({
                   (member.source === "auto" ? "bg-muted text-muted-foreground" : "border border-[#5B7FFF]/40 text-[#5B7FFF]")
                 }
               >
-                {member.source === "auto" ? "Auto-detected" : "Added manually"}
+                {member.source === "auto"
+                  ? "Auto-detected"
+                  : member.source === "formal"
+                    ? "Formal team member"
+                    : "Added manually"}
               </span>
             </div>
           </div>
@@ -1065,12 +1105,14 @@ function InlineAnalytics({ data }: { data: MemberAnalytics }) {
 // Add member + Create team dialogs
 // ============================================================================
 
-function AddPersonDialog({
+export function AddPersonDialog({
   open,
+  teamId,
   onOpenChange,
   onAdded,
 }: {
   open: boolean;
+  teamId: string;
   onOpenChange: (v: boolean) => void;
   onAdded: () => void;
 }) {
@@ -1080,6 +1122,21 @@ function AddPersonDialog({
   const [customDays, setCustomDays] = useState(14);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const nameSource = useRef<"empty" | "auto" | "manual">("empty");
+
+  const handleEmailChange = useCallback((value: string) => {
+    setEmail(value);
+    if (nameSource.current === "auto") {
+      setName("");
+      nameSource.current = "empty";
+    }
+  }, []);
+
+  const handleContactResolved = useCallback((contact: Attendee) => {
+    if (!contact.name || nameSource.current === "manual") return;
+    setName(contact.name);
+    nameSource.current = "auto";
+  }, []);
 
   const reset = () => {
     setEmail("");
@@ -1088,6 +1145,7 @@ function AddPersonDialog({
     setCustomDays(14);
     setNote(null);
     setError(null);
+    nameSource.current = "empty";
   };
 
   const addMut = useMutation({
@@ -1097,7 +1155,7 @@ function AddPersonDialog({
         display_name: name.trim() || undefined,
         cadence,
         custom_cadence_days: cadence === "custom" ? customDays : undefined,
-      }),
+      }, teamId),
     // Form values are intentionally preserved on error.
     onError: (e) => setError(apiErrorMessage(e)),
     onSuccess: ({ alreadyAuto }) => {
@@ -1145,11 +1203,26 @@ function AddPersonDialog({
         <div className="space-y-3">
           <label className="block text-xs font-medium text-foreground">
             Email <span className="text-[#EF4444]">*</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls + " mt-1"} placeholder="alex@team.com" />
+            <ContactEmailAutocomplete
+              value={email}
+              onValueChange={handleEmailChange}
+              onContactResolved={handleContactResolved}
+              inputClassName={inputCls + " mt-1"}
+            />
           </label>
           <label className="block text-xs font-medium text-foreground">
             Display name <span className="text-muted-foreground">(optional)</span>
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} className={inputCls + " mt-1"} placeholder="Alex Carter" />
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => {
+                const value = e.target.value;
+                setName(value);
+                nameSource.current = value.trim() ? "manual" : "empty";
+              }}
+              className={inputCls + " mt-1"}
+              placeholder="Alex Carter"
+            />
           </label>
           <label className="block text-xs font-medium text-foreground">
             1:1 cadence

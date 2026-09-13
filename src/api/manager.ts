@@ -6,7 +6,13 @@
  */
 
 import type { Attendee } from "./types";
-import { api, requestApi, withFallback } from "./client";
+import { api, isUsingMocks, requestApi } from "./client";
+
+async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
+  if (isUsingMocks()) return mock();
+  return real();
+}
+import { managerRosterSchema, scanConfirmationSchema, scanPreviewSchema, type ManagerMemberWire, type ManagerRosterWire, type ScanConfirmation, type ScanPreview } from "@/contracts/managerTeam";
 
 // ---------- Types ----------
 
@@ -24,7 +30,7 @@ export interface TeamMember {
   custom_cadence_days?: number;
   /** ISO date of last 1:1, or null. */
   last_one_on_one?: string | null;
-  source: "auto" | "manual";
+  source: "auto" | "manual" | "formal";
   is_paceday_user: boolean;
   data_available: boolean;
   added_at: string;
@@ -250,9 +256,9 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
 /** Smallest-scope React Query keys for the manager surface. */
 export const managerKeys = {
   profile: ["manager", "profile"] as const,
-  team: ["manager-team"] as const,
-  gaps: ["manager", "gaps"] as const,
-  analytics: (week: string) => ["manager", "analytics", week] as const,
+  team: (teamId?: string | null) => ["manager-team", teamId ?? "global"] as const,
+  gaps: (teamId?: string | null) => ["manager", "gaps", teamId ?? "global"] as const,
+  analytics: (week: string, teamId?: string | null) => ["manager", "analytics", teamId ?? "global", week] as const,
 };
 
 // ---------- Validation ----------
@@ -302,29 +308,69 @@ export function validateCadencePatch(cadence: Cadence, customDays?: number): str
 
 
 
-type BackendManagerMember = {
-  email: string;
-  display_name?: string;
-  source?: "auto" | "manual";
-  cadence?: Cadence;
-  cadence_custom_days?: number;
-  last_one_on_one_at?: string | null;
-  is_paceday_user?: boolean;
-  this_week?: { data_available?: boolean };
-};
-
-function normalizeRemoteMember(raw: BackendManagerMember): TeamMember {
+export function normalizeRemoteMember(raw: ManagerMemberWire): TeamMember {
   return {
     email: raw.email,
-    display_name: raw.display_name || raw.email.split("@")[0],
-    cadence: raw.cadence ?? "none",
-    custom_cadence_days: raw.cadence_custom_days,
-    last_one_on_one: raw.last_one_on_one_at ?? null,
-    source: raw.source ?? "manual",
-    is_paceday_user: raw.is_paceday_user ?? false,
-    data_available: raw.this_week?.data_available ?? false,
+    display_name: raw.display_name,
+    cadence: raw.cadence,
+    custom_cadence_days: raw.cadence_custom_days ?? undefined,
+    last_one_on_one: raw.last_one_on_one_at,
+    source: raw.source,
+    is_paceday_user: raw.is_paceday_user,
+    data_available: raw.this_week.data_available && raw.last_week.data_available,
     added_at: new Date().toISOString(),
   };
+}
+
+function requireTeamId(teamId: string): string {
+  const normalized = teamId.trim();
+  if (!normalized) throw new ManagerValidationError("team_id is required.");
+  return normalized;
+}
+
+function managerQuery(teamId: string): Record<string, string> {
+  return { team_id: requireTeamId(teamId) };
+}
+
+function mockMemberToWire(member: TeamMember): ManagerMemberWire {
+  const week = { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: member.data_available };
+  return {
+    email: member.email, display_name: member.display_name, source: member.source, cadence: member.cadence,
+    cadence_custom_days: member.custom_cadence_days ?? null,
+    last_one_on_one_at: member.last_one_on_one ?? null, is_paceday_user: member.is_paceday_user,
+    this_week: week, last_week: week, focus_trend_pct: 0,
+  };
+}
+
+function mockScanPreview(teamId: string): ScanPreview {
+  return {
+    team_id: teamId, scanned_at: new Date().toISOString(), detected: SEED_MEMBERS.length,
+    eligible: SEED_MEMBERS.length, assigned: 0, skipped: 0,
+    candidates: SEED_MEMBERS.map((member) => ({ email: member.email, display_name: member.display_name, already_assigned: false })),
+  };
+}
+
+function mockConfirmScan(teamId: string, emails: string[]): ScanConfirmation {
+  const selected = new Set(emails.map((email) => email.trim().toLowerCase()));
+  let assigned = 0;
+  for (const member of SEED_MEMBERS) {
+    if (!selected.has(member.email)) continue;
+    managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+    assigned += 1;
+  }
+  return { team_id: teamId, assigned, skipped: Math.max(0, selected.size - assigned), total: managerApi.listTeam().length };
+}
+
+function detectRemote(teamId: string): Promise<ScanPreview> {
+  return withFallback<ScanPreview>(
+    async () => {
+      const raw = await requestApi<unknown>("POST", "/manager/detect", undefined, managerQuery(teamId));
+      const result = scanPreviewSchema.parse(raw);
+      if (result.team_id !== teamId) throw new ManagerValidationError("Scan response does not match the active team.");
+      return result;
+    },
+    () => mockScanPreview(teamId),
+  );
 }
 
 const managerRemote = {
@@ -357,17 +403,18 @@ const managerRemote = {
       () => managerApi.setProfile(patch),
     ),
 
-  listTeam: () =>
-    withFallback<TeamMember[]>(
+  listTeam: (teamId: string) =>
+    withFallback<ManagerRosterWire>(
       async () => {
-        const raw = await requestApi<{ members?: BackendManagerMember[] }>("GET", "/manager/team");
-        const members = (raw.members ?? []).map(normalizeRemoteMember);
+        const raw = await requestApi<unknown>("GET", "/manager/team", undefined, managerQuery(teamId));
+        const roster = managerRosterSchema.parse(raw);
+        if (roster.team_id !== teamId) throw new ManagerValidationError("Roster response does not match the active team.");
         const state = load();
-        state.members = members;
+        state.members = roster.members.map(normalizeRemoteMember);
         save(state);
-        return members.slice().sort((a, b) => a.display_name.localeCompare(b.display_name));
+        return roster;
       },
-      () => managerApi.listTeam(),
+      () => ({ team_id: requireTeamId(teamId), members: managerApi.listTeam().map(mockMemberToWire) }),
     ),
 
   addMember: (input: {
@@ -375,7 +422,7 @@ const managerRemote = {
     display_name?: string;
     cadence: Cadence;
     custom_cadence_days?: number;
-  }) =>
+  }, teamId: string) =>
     withFallback<{ member: TeamMember; alreadyAuto: boolean }>(
       async () => {
         assertMemberInput(input);
@@ -385,16 +432,16 @@ const managerRemote = {
           display_name: input.display_name ?? "",
           cadence: input.cadence,
           cadence_custom_days: input.custom_cadence_days,
-        });
-        const members = await managerRemote.listTeam();
-        const member = members.find((m) => m.email === input.email.trim().toLowerCase());
+        }, managerQuery(teamId));
+        const roster = await managerRemote.listTeam(teamId);
+        const member = roster.members.map(normalizeRemoteMember).find((m) => m.email === input.email.trim().toLowerCase());
         if (!member) throw new Error("backend did not return the new team member");
         return { member, alreadyAuto: false };
       },
       () => managerApi.addMember(input),
     ),
 
-  updateMember: (email: string, patch: Partial<TeamMember>) =>
+  updateMember: (email: string, patch: Partial<TeamMember>, teamId: string) =>
     withFallback<TeamMember | null>(
       async () => {
         if (patch.cadence !== undefined) {
@@ -407,17 +454,17 @@ const managerRemote = {
           ...(patch.cadence === undefined ? {} : { cadence: patch.cadence }),
           ...(patch.custom_cadence_days === undefined ? {} : { cadence_custom_days: patch.custom_cadence_days }),
         };
-        await requestApi("PATCH", "/manager/team/members/" + encodeURIComponent(email), body);
-        const members = await managerRemote.listTeam();
-        return members.find((m) => m.email === email.toLowerCase()) ?? null;
+        await requestApi("PATCH", "/manager/team/members/" + encodeURIComponent(email), body, managerQuery(teamId));
+        const roster = await managerRemote.listTeam(teamId);
+        return roster.members.map(normalizeRemoteMember).find((m) => m.email === email.toLowerCase()) ?? null;
       },
       () => managerApi.updateMember(email, patch),
     ),
 
-  removeMember: (email: string) =>
+  removeMember: (email: string, teamId: string) =>
     withFallback<void>(
       async () => {
-        await requestApi("DELETE", "/manager/team/members/" + encodeURIComponent(email));
+        await requestApi("DELETE", "/manager/team/members/" + encodeURIComponent(email), undefined, managerQuery(teamId));
         const state = load();
         state.members = state.members.filter((m) => m.email !== email.toLowerCase());
         save(state);
@@ -425,24 +472,27 @@ const managerRemote = {
       () => managerApi.removeMember(email),
     ),
 
-  detect: () =>
-    withFallback<DetectionResult>(
+  detect: detectRemote,
+
+  confirmDetect: (teamId: string, emails: string[]) =>
+    withFallback<ScanConfirmation>(
       async () => {
-        const raw = await requestApi<{ MembersAdded?: number; members_added?: number }>("POST", "/manager/detect");
-        const members = await managerRemote.listTeam();
-        return {
-          scanned_at: new Date().toISOString(),
-          added: raw.MembersAdded ?? raw.members_added ?? 0,
-          total: members.length,
-        };
+        const normalized = Array.from(new Set(emails.map((email) => email.trim().toLowerCase())));
+        if (normalized.some((email) => !EMAIL_RE.test(email))) throw new ManagerValidationError("Every selected candidate must have a valid email address.");
+        const raw = await requestApi<unknown>("POST", "/manager/detect/confirm", { emails: normalized }, managerQuery(teamId));
+        const result = scanConfirmationSchema.parse(raw);
+        if (result.team_id !== teamId) throw new ManagerValidationError("Confirmation response does not match the active team.");
+        return result;
       },
-      () => managerApi.detect(),
+      () => mockConfirmScan(requireTeamId(teamId), emails),
     ),
 
-  gaps: () =>
+  gaps: (teamId: string) =>
     withFallback<OneOnOneGap[]>(
       async () => {
-        const raw = await requestApi<{ gaps?: RawGap[] }>("GET", "/manager/gaps");
+        const raw = await requestApi<{ gaps?: RawGap[] }>(
+          "GET", "/manager/gaps", undefined, managerQuery(teamId),
+        );
         return normalizeGaps(raw);
       },
       () => managerApi.gaps(),
@@ -452,13 +502,15 @@ const managerRemote = {
    * GET /api/manager/analytics?week=YYYY-MM-DD -> { members: [...] }
    * `week` must be the ISO date of a Monday.
    */
-  analytics: (week: string) =>
+  analytics: (week: string, teamId: string) =>
     withFallback<MemberAnalytics[]>(
       async () => {
         if (!DATE_RE.test(week)) throw new ManagerValidationError("Week must be an ISO date (YYYY-MM-DD).");
         const raw = await requestApi<{ members?: RawAnalyticsMember[] }>(
           "GET",
-          `/manager/analytics?week=${encodeURIComponent(week)}`,
+          "/manager/analytics",
+          undefined,
+          { week, ...managerQuery(teamId) },
         );
         return normalizeAnalytics(raw, week);
       },
@@ -473,7 +525,7 @@ const managerRemote = {
    * POST /api/manager/team/members/:email/schedule -> { prefill_url }
    * The URL is always server-generated; we never fabricate one online.
    */
-  schedulePrefillUrl: (email: string, suggestedDate?: string) =>
+  schedulePrefillUrl: (email: string, suggestedDate: string | undefined, teamId: string) =>
     withFallback<string>(
       async () => {
         if (!EMAIL_RE.test(email.trim())) throw new ManagerValidationError("Enter a valid email address.");
@@ -484,6 +536,7 @@ const managerRemote = {
           "POST",
           `/manager/team/members/${encodeURIComponent(email)}/schedule`,
           suggestedDate ? { suggested_date: suggestedDate } : {},
+          managerQuery(teamId),
         );
         if (!raw?.prefill_url) throw new Error("backend did not return a prefill_url");
         return raw.prefill_url;

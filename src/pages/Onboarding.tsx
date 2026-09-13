@@ -38,7 +38,6 @@ export default function Onboarding() {
   const [provider, setProvider] = useState<CalendarProvider>("google");
   const [role, setRole] = useState<"ic" | "manager" | null>(null);
   const [busy, setBusy] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
   const availableProviders = useMemo(
@@ -115,21 +114,8 @@ export default function Onboarding() {
       return;
     }
 
-    setScanning(true);
-    try {
-      const r = await managerApi.remote.detect();
-      if (r.added > 0) {
-        toast.success(`${r.added} team member${r.added === 1 ? "" : "s"} detected from your 1:1s.`);
-      } else {
-        toast.info("No new members found in your calendar.");
-      }
-    } catch (e) {
-      // A failed scan is never reported as "no new members found".
-      toast.error(apiErrorMessage(e));
-    } finally {
-      setScanning(false);
-      setBusy(false);
-    }
+    setBusy(false);
+    toast.info("Select a team, then scan your calendar to preview people to add.");
     navigate("/app/team", { replace: true });
   };
 
@@ -256,12 +242,7 @@ export default function Onboarding() {
                 disabled={!role || busy}
                 className="h-10 w-full justify-center bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[210px]"
               >
-                {scanning ? (
-                  <span className="flex items-center gap-2 truncate">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    Scanning calendar…
-                  </span>
-                ) : busy ? (
+                {busy ? (
                   <span className="flex items-center gap-2 truncate">
                     <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                     Saving…
