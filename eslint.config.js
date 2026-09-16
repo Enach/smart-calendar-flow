@@ -5,7 +5,11 @@ import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist"] },
+  // src/api/generated is produced from the backend's OpenAPI contract. Linting
+  // it would either fail the build on the generator's style or invite an
+  // --fix that edits generated code; both are wrong. It is still typechecked
+  // (npm run typecheck), which is what actually catches contract drift.
+  { ignores: ["dist", "src/api/generated"] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ["**/*.{ts,tsx}"],

@@ -30,3 +30,6 @@ coverage*/
 .nyc_output/
 *.cdx.json
 sbom.cdx.json
+
+# Scratch space for the `make verify` summary
+.verify/
