@@ -1,0 +1,9 @@
+{
+  "detector": {
+    "ignoreFiles": ["src/api/generated/**"],
+    "designSystem": { "enabled": true }
+  },
+  "hook": {
+    "enabled": true
+  }
+}

@@ -22,13 +22,15 @@ SELF := $(MAKE) --no-print-directory -f $(ROOT)/Makefile
 REQUIRE_DEPS = @test -d "$(ROOT)/node_modules" || { echo "node_modules missing — run: npm install" >&2; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help lint typecheck test coverage openapi openapi-check verify verify-banner verify-summary
+.PHONY: help lint typecheck design-check design-baseline test coverage openapi openapi-check verify verify-banner verify-summary
 
 help:
 	@echo "Paceday (web repo) — targets"
-	@echo "  verify         lint, typecheck, openapi-check, test, coverage — fail-fast, prints a PR-pasteable summary"
+	@echo "  verify         lint, typecheck, design-check, openapi-check, test, coverage — fail-fast, prints a PR-pasteable summary"
 	@echo "  lint           eslint (src/api/generated is excluded on purpose)"
 	@echo "  typecheck      tsc against the generated contract types"
+	@echo "  design-check   Impeccable detector over src/, ratcheted against .impeccable/baseline.json"
+	@echo "  design-baseline  rewrite the baseline from the current scan (new entries need a PAC issue)"
 	@echo "  test           vitest run"
 	@echo "  coverage       vitest run --coverage; the 70% floor is in vitest.config.ts"
 	@echo "  openapi        regenerate src/api/generated from $(CONTRACT)"
@@ -47,6 +49,17 @@ lint:
 typecheck:
 	$(REQUIRE_DEPS)
 	cd $(ROOT) && npm run typecheck
+
+# Deterministic design rules (Impeccable, pinned in the script). No LLM, no key.
+# Ratchets rather than demanding zero: findings that predate the gate live in
+# .impeccable/baseline.json, and the gate fails only on new ones. It is a gate
+# rather than an agent instruction because Lovable's agent edits this repo and
+# reads no agent definition — code is the only thing both agents obey.
+design-check:
+	cd $(ROOT) && node scripts/design-check.mjs
+
+design-baseline:
+	cd $(ROOT) && node scripts/design-check.mjs --update
 
 test:
 	$(REQUIRE_DEPS)
@@ -73,6 +86,7 @@ verify:
 	@$(SELF) verify-banner | tee "$(VERIFY_DIR)/banner.txt"
 	@$(SELF) lint          && echo "lint           PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) typecheck     && echo "typecheck      PASS" >> "$(VERIFY_DIR)/steps.txt"
+	@$(SELF) design-check  && echo "design-check   PASS (impeccable, ratcheted)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) openapi-check && echo "openapi-check  PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) test          && echo "test           PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) coverage      && echo "coverage       PASS (floor 70%, enforced by vitest)" >> "$(VERIFY_DIR)/steps.txt"
