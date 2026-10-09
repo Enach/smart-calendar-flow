@@ -3,7 +3,7 @@ import FullCalendar from "@fullcalendar/react";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
@@ -102,6 +102,11 @@ export default function Dashboard() {
     error: eventsErrorObj,
     refetch: refetchEvents,
   } = useCalendarEvents(rangeStart.toISOString(), rangeEnd.toISOString());
+  // A signed-in user with no calendar connected gets a 401 from the events
+  // endpoint. That is a setup step, not an expired session: say so, and keep
+  // the (empty) week on screen. Same query key as ConnectionStatus.
+  const { data: authStatus } = useQuery({ queryKey: ["auth"], queryFn: () => api.authStatus() });
+  const calendarNotConnected = !isDemo && authStatus?.connected === false;
   const events = useMemo(() => (Array.isArray(eventsRaw) ? eventsRaw : []), [eventsRaw]);
   // Debounce the calendar overlay so very fast responses don't cause flicker.
   const showEventsOverlay = useDebouncedFlag(
@@ -426,7 +431,7 @@ export default function Dashboard() {
               show={showEventsOverlay}
               label="Loading events…"
             />
-            {eventsError && events.length === 0 ? (
+            {eventsError && events.length === 0 && !calendarNotConnected ? (
               <InlineError
                 title="Couldn't load your calendar"
                 message={apiErrorMessage(eventsErrorObj)}
@@ -436,7 +441,26 @@ export default function Dashboard() {
               />
             ) : (
               <>
-                {eventsError && events.length > 0 && (
+                {calendarNotConnected && (
+                  <div className="mb-3 flex flex-col gap-3 rounded-lg border border-border bg-background/50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Connect your calendar to see your week</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Your meetings and focus blocks will appear here once it's connected.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.location.href = api.authConnectUrl();
+                      }}
+                      className="shrink-0 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+                    >
+                      Connect calendar
+                    </button>
+                  </div>
+                )}
+                {eventsError && events.length > 0 && !calendarNotConnected && (
                   <InlineError
                     compact
                     title="Calendar may be out of date"
@@ -557,7 +581,8 @@ export default function Dashboard() {
             <TodayAgenda
               events={events}
               loading={eventsLoading}
-              error={eventsError}
+              error={eventsError && !calendarNotConnected}
+              notConnected={calendarNotConnected}
               errorMessage={apiErrorMessage(eventsErrorObj)}
               onRetry={() => refetchEvents()}
               retrying={eventsFetching}

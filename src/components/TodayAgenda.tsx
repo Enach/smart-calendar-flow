@@ -10,6 +10,8 @@ interface TodayAgendaProps {
   events: CalendarEvent[];
   loading?: boolean;
   error?: boolean;
+  /** No calendar is connected yet: show a setup prompt, not an error. */
+  notConnected?: boolean;
   errorMessage?: string;
   onRetry?: () => void;
   retrying?: boolean;
@@ -19,7 +21,7 @@ function fmt(iso: string) {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-export function TodayAgenda({ events, loading, error, errorMessage, onRetry, retrying }: TodayAgendaProps) {
+export function TodayAgenda({ events, loading, error, notConnected, errorMessage, onRetry, retrying }: TodayAgendaProps) {
   const { user } = useAuth();
   const today = new Date();
   const now = today.getTime();
@@ -51,7 +53,12 @@ export function TodayAgenda({ events, loading, error, errorMessage, onRetry, ret
         </span>
       </div>
 
-      {error && events.length === 0 ? (
+      {notConnected ? (
+        <div className="rounded-lg border border-dashed border-border bg-background/50 px-4 py-6 text-center">
+          <p className="text-sm font-medium text-foreground">No calendar connected</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Connect one to see today's meetings.</p>
+        </div>
+      ) : error && events.length === 0 ? (
         <InlineError
           compact
           title="Couldn't load today's agenda"
