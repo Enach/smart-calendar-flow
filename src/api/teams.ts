@@ -10,6 +10,7 @@
 import { managerApi, type TeamMember as ManagerTeamMember } from "./manager";
 import { getFreebusy } from "./coverageCache";
 import { requestApi, withFallback } from "./client";
+import { localISODate } from "@/lib/localDate";
 
 // ---------- Types ----------
 
@@ -469,7 +470,7 @@ const teamsRemote = {
         const weekStart = new Date();
         const day = weekStart.getDay();
         weekStart.setDate(weekStart.getDate() + (day === 0 ? -6 : 1 - day));
-        const week = weekStart.toISOString().slice(0, 10);
+        const week = localISODate(weekStart);
         return team.members
           .filter((member) => member.status === "active" && member.email !== team.owner_email)
           .map((member, index) => {

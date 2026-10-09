@@ -6,6 +6,7 @@ import { Sparkles, CalendarPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
+import { localISODate } from "@/lib/localDate";
 
 interface Props {
   team: FormalTeam;
@@ -13,11 +14,7 @@ interface Props {
 
 const DURATIONS = [15, 30, 45, 60, 90];
 
-function todayISO() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
-}
+const todayISO = () => localISODate();
 
 function fmtSlot(iso: string, endIso: string) {
   const start = new Date(iso);
@@ -42,7 +39,9 @@ export function FindATimeTab({ team }: Props) {
     onError: (e) => setError(apiErrorMessage(e)),
     onSuccess: (s) => {
       setError(null);
-      setSlots(s);
+      // Never offer a time that has already started.
+      const now = Date.now();
+      setSlots(s.filter((slot) => new Date(slot.start).getTime() > now));
     },
   });
 
@@ -86,6 +85,7 @@ export function FindATimeTab({ team }: Props) {
           <input
             type="date"
             value={date}
+            min={todayISO()}
             onChange={(e) => setDate(e.target.value)}
             className="mt-1 h-10 rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
           />
