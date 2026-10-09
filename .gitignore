@@ -56,3 +56,9 @@ sbom.cdx.json
 **/.impeccable/live/deferred-svelte-component-accepts.json
 **/.impeccable/live/*.png
 # impeccable-ignore-end
+
+# Claude Code: per-developer settings (the Impeccable installer writes its hooks
+# here) and the Impeccable skill's platform binary, which its launcher fetches
+# per machine. The skill's text files are tracked.
+.claude/settings.local.json
+.claude/skills/impeccable/scripts/bin/
