@@ -26,7 +26,13 @@ Run this from the repository root after frontend changes:
 
 - make verify
 
-It runs lint, typecheck, openapi-check, test and coverage in that order and stops at the first failure. `openapi-check` fails when `src/api/generated/` no longer matches the backend contract: regenerate with `make openapi`, never by editing the files. The backend repository exposes the same `make verify`.
+It runs lint, typecheck, design-check, openapi-check, test and coverage in that order and stops at the first failure. `openapi-check` fails when `src/api/generated/` no longer matches the backend contract: regenerate with `make openapi`, never by editing the files. The backend repository exposes the same `make verify`.
+
+`design-check` runs the Impeccable design detector (deterministic rules for generic AI-generated UI: overused fonts, purple gradients, nested cards, gray text on colour, cramped padding, small touch targets, skipped headings and more) over `src/`. Findings that predate the gate are recorded in `.impeccable/baseline.json`; the gate fails only on new ones. When it fails:
+
+- Fix the design. That is the expected outcome.
+- Do not edit `.impeccable/baseline.json` by hand and do not run `make design-baseline` to make a failure go away. A new baseline entry must carry an `"issue": "PAC-NN"` field naming the issue that will remove it, and the gate checks this.
+- Do not add an `impeccable-disable` comment without a PAC issue on the same line. The gate checks this too.
 
 While iterating, the individual commands still work:
 
