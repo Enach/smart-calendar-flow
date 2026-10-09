@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { apiFetch, type ApiError } from "@/lib/api";
-import { setMockMode } from "@/api/client";
+import { DEMO_SESSION_KEY, setMockMode } from "@/api/client";
 import { seedDemoEvents, clearDemoEvents } from "@/lib/demoData";
 import { AuthContext } from "./auth-context";
 import type { AuthContextValue } from "./auth-context";
@@ -26,7 +26,7 @@ const DEMO_USER: AuthUser = {
   email: "alex@demo.paceday.com",
 };
 
-const DEMO_FLAG = "paceday:demo";
+const DEMO_FLAG = DEMO_SESSION_KEY;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);

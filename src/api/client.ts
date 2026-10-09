@@ -65,6 +65,21 @@ try {
   usingMocks = sessionStorage.getItem(PROVIDER_KEY) === "1";
 } catch { /* storage unavailable */ }
 
+/** sessionStorage flag set when the user explicitly starts the demo. */
+export const DEMO_SESSION_KEY = "paceday:demo";
+
+/**
+ * True only in an explicit demo session. Unlike isUsingMocks(), this is never
+ * switched on by an unreachable backend.
+ */
+export function isDemoSession(): boolean {
+  try {
+    return sessionStorage.getItem(DEMO_SESSION_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const DEFAULT_SETTINGS: Settings = {
   work_start: "09:00",
   work_end: "18:00",
