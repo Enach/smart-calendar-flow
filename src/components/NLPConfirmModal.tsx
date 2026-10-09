@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Calendar, Clock, Users, Loader2 } from "lucide-react";
 import type { ParseResult } from "@/api/types";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface NLPConfirmModalProps {
   parseResult: ParseResult;
@@ -11,10 +12,10 @@ interface NLPConfirmModalProps {
 }
 
 function fmtDay(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString(UI_LOCALE, { weekday: "long", month: "short", day: "numeric" });
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NLPConfirmModalProps) {

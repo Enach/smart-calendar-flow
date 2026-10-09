@@ -28,6 +28,7 @@ import { useCalendarEvents } from "@/hooks/useCalendarEvents";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent, ParseResult } from "@/api/types";
+import { UI_LOCALE } from "@/lib/locale";
 
 type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
 const VIEW_STORAGE_KEY = "calendar.view";
@@ -226,8 +227,8 @@ export default function Dashboard() {
   const handleQuickCreateMore = useCallback(
     (title: string, end: Date) => {
       if (!quickCreate) return;
-      const day = quickCreate.start.toLocaleDateString(undefined, { weekday: "long" });
-      const time = quickCreate.start.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      const day = quickCreate.start.toLocaleDateString(UI_LOCALE, { weekday: "long" });
+      const time = quickCreate.start.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
       const durationMin = Math.max(
         15,
         Math.round((end.getTime() - quickCreate.start.getTime()) / 60000),
@@ -473,7 +474,7 @@ export default function Dashboard() {
                     };
                     const isShort = (ext.durationMin ?? 60) <= 30;
                     const startStr = arg.event.start
-                      ? arg.event.start.toLocaleTimeString(undefined, {
+                      ? arg.event.start.toLocaleTimeString(UI_LOCALE, {
                           hour: "2-digit",
                           minute: "2-digit",
                         })

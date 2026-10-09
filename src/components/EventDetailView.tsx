@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/useAuth";
 import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
 import { parseDescription } from "@/lib/eventDescription";
 import type { Attendee, CalendarEvent } from "@/api/types";
+import { UI_LOCALE } from "@/lib/locale";
 
 const RSVP_LABEL: Record<string, string> = {
   accepted: "Accepted",
@@ -36,9 +37,9 @@ function initials(a: Attendee) {
 function formatRange(startISO: string, endISO: string) {
   const s = new Date(startISO);
   const e = new Date(endISO);
-  const day = s.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
-  const sTime = s.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  const eTime = e.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const day = s.toLocaleDateString(UI_LOCALE, { weekday: "long", day: "numeric", month: "long" });
+  const sTime = s.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+  const eTime = e.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
   return `${day} · ${sTime} – ${eTime}`;
 }
 

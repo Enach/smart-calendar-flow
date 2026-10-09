@@ -7,6 +7,7 @@ import { teamsApi, teamKeys, type FormalTeam } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
 import { managerApi, managerKeys } from "@/api/manager";
 import { localISODate, mondayOf } from "@/lib/localDate";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface Props {
   activeTeam: FormalTeam | null;
@@ -328,7 +329,7 @@ function Trends({ data }: { data: RowData[] }) {
         <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
           {weeks.map((w, i) => (
             <span key={i}>
-              {new Date(w.week_start).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {new Date(w.week_start).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" })}
             </span>
           ))}
         </div>
@@ -442,7 +443,7 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
                   <div
                     key={w.week_start}
                     className="relative flex flex-1 flex-col-reverse"
-                    title={`Week of ${new Date(w.week_start).toLocaleDateString(undefined, { month: "short", day: "numeric" })} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
+                    title={`Week of ${new Date(w.week_start).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" })} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
                     style={{ height: `${totalH * 100}%` }}
                   >
                     <div style={{ height: `${(mtgH / totalH) * 100}%`, backgroundColor: "#E9B949" }} />
@@ -476,7 +477,7 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
                   {/* A fixed label, never the event title: managers see aggregates, not titles. */}
                   <span className="text-foreground">1:1</span>
                   <span className="text-muted-foreground">
-                    {new Date(o.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    {new Date(o.date).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" })}
                   </span>
                 </li>
               ))}

@@ -1,6 +1,7 @@
 import { Mail, UserCheck, Users } from "lucide-react";
 import type { Attendee, CalendarEvent } from "@/api/types";
 import type { EventOwnership } from "@/lib/eventOwnership";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface Props {
   ownership: EventOwnership;
@@ -50,7 +51,7 @@ export function ParticipantNotice({
   const subject = encodeURIComponent(`Reschedule: ${event.title}`);
   const body = encodeURIComponent(
     `Hi${organizer?.name ? " " + organizer.name.split(" ")[0] : ""},\n\n` +
-      `Could we move "${event.title}" on ${new Date(event.start).toLocaleString()}? ` +
+      `Could we move "${event.title}" on ${new Date(event.start).toLocaleString(UI_LOCALE)}? ` +
       `It's clashing with my focus time.\n\nThanks!`,
   );
   const mailto = organizer?.email
