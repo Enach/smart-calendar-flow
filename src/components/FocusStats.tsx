@@ -11,7 +11,8 @@ interface FocusStatsProps {
   focusColor: string;
 }
 
-function fmtHM(min: number) {
+function fmtHM(minutes: number) {
+  const min = Math.round(minutes);
   const h = Math.floor(min / 60);
   const m = min % 60;
   if (h === 0) return `${m} min`;
@@ -26,12 +27,14 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
   const blocks = Array.isArray(data) ? data : [];
   const showSkeleton = useDebouncedFlag(isLoading && blocks.length === 0 && !isError);
 
-  const weeklyTarget = dailyTargetMinutes * 5;
+  // A missing or invalid target must not render as "NaN%": show no percentage instead.
+  const hasTarget = Number.isFinite(dailyTargetMinutes) && dailyTargetMinutes > 0;
+  const weeklyTarget = hasTarget ? dailyTargetMinutes * 5 : 0;
   const totalMin = blocks.reduce(
     (acc, b) => acc + Math.max(0, (new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
     0,
   );
-  const pct = Math.min(100, Math.round((totalMin / Math.max(1, weeklyTarget)) * 100));
+  const pct = hasTarget ? Math.min(100, Math.round((totalMin / weeklyTarget) * 100)) : 0;
 
   // per-weekday minutes
   const weekStart = new Date(weekISO);
@@ -43,7 +46,7 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
       perDay[offset] += (new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000;
     }
   });
-  const dayMax = Math.max(dailyTargetMinutes, ...perDay, 1);
+  const dayMax = Math.max(hasTarget ? dailyTargetMinutes : 0, ...perDay, 1);
 
   return (
     <div className="rounded-xl border border-border bg-card p-4">
@@ -58,7 +61,7 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
           className="rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums"
           style={{ backgroundColor: `${focusColor}1A`, color: focusColor }}
         >
-          {pct}%
+          {hasTarget ? `${pct}%` : "—"}
         </span>
       </div>
 
@@ -92,7 +95,7 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
         <>
           <p className="font-serif text-[28px] leading-none tracking-tight text-foreground">{fmtHM(totalMin)}</p>
           <p className="mt-1.5 text-xs text-muted-foreground">
-            of {fmtHM(weeklyTarget)} weekly target
+            {hasTarget ? `of ${fmtHM(weeklyTarget)} weekly target` : "No weekly target set"}
           </p>
 
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">

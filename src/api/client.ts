@@ -522,6 +522,41 @@ export function normalizeLunchBreaks(raw: unknown): LunchBreaks | undefined {
   return Object.keys(days).length > 0 ? days : undefined;
 }
 
+/**
+ * Frontend snake_case field ↔ backend camelCase property, for every scalar
+ * setting that has a counterpart in the contract's `Settings` schema. The
+ * backend sends and accepts camelCase only; a snake_case key in a PUT body is
+ * ignored by its JSON decoder, so an unmapped field is silently not saved.
+ */
+const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
+  ["work_start", "workStart"],
+  ["work_end", "workEnd"],
+  ["focus_min_block_minutes", "focusMinBlockMinutes"],
+  ["focus_max_block_minutes", "focusMaxBlockMinutes"],
+  ["focus_daily_target_minutes", "focusDailyTargetMinutes"],
+  ["focus_label", "focusLabel"],
+  ["focus_color", "focusColor"],
+  ["lunch_start", "lunchStart"],
+  ["lunch_end", "lunchEnd"],
+  ["protect_lunch", "protectLunch"],
+  ["buffer_before_minutes", "bufferBeforeMinutes"],
+  ["buffer_after_minutes", "bufferAfterMinutes"],
+  ["compression_enabled", "compressionEnabled"],
+  ["auto_schedule_enabled", "autoScheduleEnabled"],
+  ["auto_schedule_cron", "autoScheduleCron"],
+  ["llm_provider", "llmProvider"],
+  ["llm_model", "llmModel"],
+  ["llm_api_key", "llmApiKey"],
+  ["llm_base_url", "llmBaseUrl"],
+  ["calendar_provider", "calendarProvider"],
+  ["webcal_url", "webcalUrl"],
+  ["aws_region", "awsRegion"],
+  ["aws_profile", "awsProfile"],
+  ["azure_endpoint", "azureEndpoint"],
+  ["azure_deployment", "azureDeployment"],
+  ["azure_api_version", "azureApiVersion"],
+];
+
 /** Normalize a GET/PUT /api/settings response (snake_case + camelCase fields). */
 export function normalizeSettings(raw: unknown): Settings {
   const r = (raw ?? {}) as Record<string, unknown> & Settings;
@@ -531,6 +566,12 @@ export function normalizeSettings(raw: unknown): Settings {
   delete bag.workingHours;
   delete bag.lunchBreaks;
   delete bag.focus_max_per_week;
+  for (const [snake, camel] of SETTINGS_FIELDS) {
+    if (camel in bag) {
+      bag[snake] = bag[camel];
+      delete bag[camel];
+    }
+  }
   const out = bag as unknown as Settings;
 
   const maxMeetings = r.outOfHoursMeetingsPerWeek ?? r.out_of_hours_meetings_per_week;
@@ -546,9 +587,19 @@ export function normalizeSettings(raw: unknown): Settings {
   return out;
 }
 
-/** Build the PUT /api/settings body: snake_case base + camelCase new fields. */
+/**
+ * Build the PUT /api/settings body in the backend's camelCase. Properties the
+ * frontend does not model (e.g. recap settings) pass through untouched: the
+ * PUT replaces the whole document, so dropping them would reset them.
+ */
 export function settingsRequestBody(s: Settings): Record<string, unknown> {
   const body: Record<string, unknown> = { ...s };
+  for (const [snake, camel] of SETTINGS_FIELDS) {
+    if (snake in body) {
+      body[camel] = body[snake];
+      delete body[snake];
+    }
+  }
   delete body.working_hours;
   delete body.lunch_breaks;
   delete body.focus_max_per_week;

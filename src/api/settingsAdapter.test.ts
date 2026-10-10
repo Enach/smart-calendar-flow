@@ -55,7 +55,67 @@ describe("settings adapter", () => {
     expect(body.workingHours).toBeTruthy();
     expect(body.lunchBreaks).toBeUndefined();
     expect(body.working_hours).toBeUndefined();
-    expect(body.work_start).toBe("09:00");
+    expect(body.workStart).toBe("09:00");
+    expect(body.work_start).toBeUndefined();
+  });
+
+  // Shape of a real GET /api/settings response (seeded e2e backend): every
+  // property is camelCase, per the contract's Settings schema.
+  const backendPayload = {
+    workStart: "09:00",
+    workEnd: "18:00",
+    timezone: "UTC",
+    focusMinBlockMinutes: 25,
+    focusMaxBlockMinutes: 120,
+    focusDailyTargetMinutes: 240,
+    outOfHoursMeetingsPerWeek: 0,
+    autoDeclineOutsideWorkingHours: false,
+    focusLabel: "Focus Time",
+    focusColor: "#4F46E5",
+    lunchStart: "12:00",
+    lunchEnd: "13:00",
+    protectLunch: true,
+    bufferBeforeMinutes: 5,
+    bufferAfterMinutes: 5,
+    workingHours: { mode: "all_days", default: { enabled: true, start: "09:00", end: "18:00" }, days: {} },
+    lunchBreaks: {},
+    compressionEnabled: false,
+    autoScheduleEnabled: false,
+    autoScheduleCron: "0 8 * * *",
+    llmProvider: "ollama",
+    llmModel: "",
+    calendarProvider: "google",
+    recapEnabled: false,
+  };
+
+  it("reads every camelCase setting from the backend payload", () => {
+    const out = normalizeSettings(backendPayload);
+    expect(out.work_start).toBe("09:00");
+    expect(out.focus_min_block_minutes).toBe(25);
+    expect(out.focus_max_block_minutes).toBe(120);
+    expect(out.focus_daily_target_minutes).toBe(240);
+    expect(out.focus_label).toBe("Focus Time");
+    expect(out.focus_color).toBe("#4F46E5");
+    expect(out.protect_lunch).toBe(true);
+    expect(out.buffer_before_minutes).toBe(5);
+    expect(out.auto_schedule_cron).toBe("0 8 * * *");
+    expect(out.llm_provider).toBe("ollama");
+    expect(out.calendar_provider).toBe("google");
+    const bag = out as unknown as Record<string, unknown>;
+    expect(bag.focusDailyTargetMinutes).toBeUndefined();
+    expect(bag.workStart).toBeUndefined();
+  });
+
+  it("sends an edited setting back under its camelCase name", () => {
+    const edited = { ...normalizeSettings(backendPayload), focus_daily_target_minutes: 180, protect_lunch: false };
+    const body = settingsRequestBody(edited);
+    expect(body.focusDailyTargetMinutes).toBe(180);
+    expect(body.protectLunch).toBe(false);
+    expect(body.focus_daily_target_minutes).toBeUndefined();
+    expect(body.protect_lunch).toBeUndefined();
+    // Properties the frontend does not model survive the round trip, because
+    // the PUT replaces the whole settings document.
+    expect(body.recapEnabled).toBe(false);
   });
 
   it("maps and persists the meeting policy fields", () => {
