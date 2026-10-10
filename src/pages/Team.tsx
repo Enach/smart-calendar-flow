@@ -74,6 +74,7 @@ import { AnalyticsTab } from "@/components/team/AnalyticsTab";
 import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
 import type { Attendee } from "@/api/types";
 import { localISODate } from "@/lib/localDate";
+import { UI_LOCALE } from "@/lib/locale";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20";
@@ -107,7 +108,7 @@ function fmtMin(min: number): string {
 }
 function fmtDateShort(iso?: string | null): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" });
 }
 
 // ============================================================================
@@ -634,7 +635,7 @@ function TeamTab({
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
             <span>
               {managerApi.lastScanAt()
-                ? `Last scan: ${new Date(managerApi.lastScanAt()!).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+                ? `Last scan: ${new Date(managerApi.lastScanAt()!).toLocaleString(UI_LOCALE, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                 : "Calendar has not been scanned yet."}
             </span>
             <button

@@ -6,6 +6,7 @@ import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/useAuth";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import type { SuggestedSlot } from "@/api/types";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface Props {
   defaultRangeStart: string; // ISO
@@ -26,14 +27,14 @@ function fromLocalInput(s: string) {
   return new Date(s);
 }
 function fmtDay(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString(UI_LOCALE, {
     weekday: "long",
     month: "short",
     day: "numeric",
   });
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClose }: Props) {

@@ -4,12 +4,13 @@ import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
 import { apiErrorMessage, DEFAULT_AUDIT_LIMIT } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
+import { UI_LOCALE } from "@/lib/locale";
 
 function formatTimestamp(iso: string) {
   if (!iso) return "Unknown date";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Unknown date";
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(UI_LOCALE, {
     year: "numeric",
     month: "short",
     day: "2-digit",

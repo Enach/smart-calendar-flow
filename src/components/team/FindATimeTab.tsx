@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
 import { localISODate } from "@/lib/localDate";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface Props {
   team: FormalTeam;
@@ -19,9 +20,9 @@ const todayISO = () => localISODate();
 function fmtSlot(iso: string, endIso: string) {
   const start = new Date(iso);
   const end = new Date(endIso);
-  const dayLabel = start.toLocaleDateString(undefined, { weekday: "long" });
-  const startTime = start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  const endTime = end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const dayLabel = start.toLocaleDateString(UI_LOCALE, { weekday: "long" });
+  const startTime = start.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
+  const endTime = end.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
   return `${dayLabel} ${startTime} – ${endTime}`;
 }
 

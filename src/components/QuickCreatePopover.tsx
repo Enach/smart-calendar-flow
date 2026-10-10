@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Minus, Plus, Sparkles, X } from "lucide-react";
+import { UI_LOCALE } from "@/lib/locale";
 
 export interface QuickCreatePopoverProps {
   /** Anchor position in viewport coordinates (px) */
@@ -30,14 +31,14 @@ const MIN_DURATION = 15;
 const MAX_DURATION = 8 * 60; // 8h
 
 function formatDateLabel(d: Date) {
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString(UI_LOCALE, {
     weekday: "long",
     month: "short",
     day: "numeric",
   });
 }
 function formatTime(d: Date) {
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
 }
 function formatDuration(min: number) {
   if (min < 60) return `${min} min`;

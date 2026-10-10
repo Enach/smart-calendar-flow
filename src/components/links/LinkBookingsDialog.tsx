@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { schedulingLinkKeys, schedulingLinksApi } from "@/api/schedulingLinks";
 import { apiErrorMessage } from "@/api/client";
 import type { SchedulingLink } from "@/api/types";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface LinkBookingsDialogProps {
   open: boolean;
@@ -16,8 +17,8 @@ interface LinkBookingsDialogProps {
 function formatRange(startIso: string, endIso: string): string {
   const start = new Date(startIso);
   const end = new Date(endIso);
-  const date = start.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  const time = (d: Date) => d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const date = start.toLocaleDateString(UI_LOCALE, { weekday: "short", day: "numeric", month: "short" });
+  const time = (d: Date) => d.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
   return `${date} · ${time(start)} – ${time(end)}`;
 }
 

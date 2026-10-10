@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api, apiErrorMessage } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { toast } from "@/hooks/useToast";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface QuickActionsProps {
   weekISO: string;
@@ -136,7 +137,7 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-foreground">{e.action}</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {new Date(e.created_at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(e.created_at).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </div>
                 <p className="truncate text-[11px] text-muted-foreground">{e.details}</p>
