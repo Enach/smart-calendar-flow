@@ -8,7 +8,13 @@ defines it (`docs/factory/README.md` §1).
 | file | generator | what it is |
 |---|---|---|
 | `types.ts` | `openapi-typescript` | request/response/schema TypeScript types, zero runtime cost |
-| `schemas.ts` | `typed-openapi --runtime zod` | standalone zod schemas for validating responses at runtime |
+| `schemas.ts` | `typed-openapi --runtime zod --schemas-only` | standalone zod schemas for validating responses at runtime |
+| `schemas.types.d.ts` | `typed-openapi` (same run) | the TypeScript types `schemas.ts` declares its schemas with |
+
+Both generators are pinned to exact versions in `package.json`. typed-openapi
+is at 4.1.0: 1.1.0 could not run without a workaround and emitted a
+`schemas.ts` that did not typecheck (it referenced `get_GetTeam` without
+defining it).
 
 ## Regenerate
 
