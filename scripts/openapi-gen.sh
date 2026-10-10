@@ -51,11 +51,13 @@ trap 'rm -rf "$tmp"' EXIT
 # schemas.ts — standalone zod schemas for validating what the server actually
 # sent. See src/api/generated/README.md for why this generator and not a client
 # generator.
-"$BIN/typed-openapi" "$CONTRACT" -o "$tmp/schemas.ts" --runtime zod
+# --schemas-only: schemas and their types, no API client. typed-openapi writes
+# the types to schemas.types.d.ts beside schemas.ts; both are committed.
+"$BIN/typed-openapi" "$CONTRACT" -o "$tmp/schemas.ts" --runtime zod --schemas-only
 
 if [ "$CHECK" -eq 1 ]; then
   rc=0
-  for f in types.ts schemas.ts; do
+  for f in types.ts schemas.ts schemas.types.d.ts; do
     if [ ! -f "$OUT_DIR/$f" ]; then
       echo "FAIL: src/api/generated/$f is missing; run \`make openapi\` and commit it" >&2
       rc=1
@@ -73,6 +75,6 @@ if [ "$CHECK" -eq 1 ]; then
   echo "OK: src/api/generated matches the contract"
 else
   mkdir -p "$OUT_DIR"
-  cp "$tmp/types.ts" "$tmp/schemas.ts" "$OUT_DIR/"
-  echo "wrote src/api/generated/{types.ts,schemas.ts} from ${CONTRACT}"
+  cp "$tmp/types.ts" "$tmp/schemas.ts" "$tmp/schemas.types.d.ts" "$OUT_DIR/"
+  echo "wrote src/api/generated/{types.ts,schemas.ts,schemas.types.d.ts} from ${CONTRACT}"
 fi

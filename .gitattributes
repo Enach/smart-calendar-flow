@@ -1,0 +1,3 @@
+# Generated from the OpenAPI contract and checked byte for byte by
+# `make openapi-check`: keep LF on every platform, including autocrlf checkouts.
+src/api/generated/*.ts text eol=lf

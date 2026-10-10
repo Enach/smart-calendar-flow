@@ -16,7 +16,7 @@ VERIFY_DIR := $(ROOT)/.verify
 
 SELF := $(MAKE) --no-print-directory -f $(ROOT)/Makefile
 
-# The coverage floor (70%, factory §3) is enforced inside vitest.config.ts, not
+# The coverage floor (a ratchet toward the 70% target, factory §3) is enforced inside vitest.config.ts, not
 # by parsing output here — see the comment there.
 
 REQUIRE_DEPS = @test -d "$(ROOT)/node_modules" || { echo "node_modules missing — run: npm install" >&2; exit 1; }
@@ -32,7 +32,7 @@ help:
 	@echo "  design-check   Impeccable detector over src/, ratcheted against .impeccable/baseline.json"
 	@echo "  design-baseline  rewrite the baseline from the current scan (new entries need a PAC issue)"
 	@echo "  test           vitest run"
-	@echo "  coverage       vitest run --coverage; the 70% floor is in vitest.config.ts"
+	@echo "  coverage       vitest run --coverage; the floor (ratchet toward 70%) is in vitest.config.ts"
 	@echo "  openapi        regenerate src/api/generated from $(CONTRACT)"
 	@echo "  openapi-check  the same, as a gate: fails on any drift"
 	@echo ""
@@ -89,7 +89,7 @@ verify:
 	@$(SELF) design-check  && echo "design-check   PASS (impeccable, ratcheted)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) openapi-check && echo "openapi-check  PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) test          && echo "test           PASS" >> "$(VERIFY_DIR)/steps.txt"
-	@$(SELF) coverage      && echo "coverage       PASS (floor 70%, enforced by vitest)" >> "$(VERIFY_DIR)/steps.txt"
+	@$(SELF) coverage      && echo "coverage       PASS (ratchet floor in vitest.config.ts, target 70%)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) verify-summary
 
 # Both SHAs, because a frontend PR is only meaningful against the contract
