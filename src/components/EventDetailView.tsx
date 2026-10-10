@@ -158,7 +158,7 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
               <span
                 className={
                   "inline-block h-2 w-2 rounded-full " +
-                  (allChecked ? "bg-[#5FC9A6]" : "bg-[#E9B949]")
+                  (allChecked ? "bg-success" : "bg-[#E9B949]")
                 }
                 aria-hidden
               />

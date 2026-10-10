@@ -24,11 +24,11 @@ function initials(name?: string, email?: string): string {
 }
 
 const PALETTE = [
-  "bg-[#5B7FFF]/15 text-[#5B7FFF]",
+  "bg-primary/15 text-primary",
   "bg-[#E9B949]/20 text-[#7A5A0F]",
-  "bg-[#9B7AE0]/20 text-[#5C3DA1]",
-  "bg-[#5FC9A6]/20 text-[#1F7A5C]",
-  "bg-[#E35D5D]/15 text-[#A33333]",
+  "bg-ai/20 text-[#5C3DA1]",
+  "bg-success/20 text-[#1F7A5C]",
+  "bg-destructive/15 text-[#A33333]",
 ];
 
 function paletteFor(seed: string) {

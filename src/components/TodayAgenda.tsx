@@ -113,7 +113,7 @@ export function TodayAgenda({ events, loading, error, notConnected, errorMessage
                       <span className="truncate">{e.title}</span>
                       {isGuest && (
                         <Users
-                          className="h-3 w-3 shrink-0 text-[#9B7AE0]"
+                          className="h-3 w-3 shrink-0 text-ai"
                           aria-label="You're a guest on this meeting"
                         />
                       )}
