@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { isApiHttpError, isUsingMocks, setMockMode } from "./client";
+import { DEMO_SESSION_KEY, isApiHttpError, isApiUnreachableError, isUsingMocks, setMockMode } from "./client";
 import { publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
@@ -430,6 +430,37 @@ describe("public booking contract", () => {
     expect(isApiHttpError(err)).toBe(true);
     expect((err as { status: number }).status).toBe(status);
     expect(isUsingMocks()).toBe(false);
+  });
+
+  it("never fakes a booking confirmation when the backend is unreachable", async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const input = { start: "2030-03-04T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" };
+    const err = await schedulingLinksApi.bookSlot("intro-chat", input).catch((e) => e);
+    expect(isApiUnreachableError(err)).toBe(true);
+
+    // Even after another call has flipped the app into preview mode.
+    setMockMode(true);
+    const again = await schedulingLinksApi.bookSlot("intro-chat", input).catch((e) => e);
+    expect(isApiUnreachableError(again)).toBe(true);
+    setMockMode(false);
+  });
+
+  it("books against preview data in an explicit demo session", async () => {
+    sessionStorage.setItem(DEMO_SESSION_KEY, "1");
+    try {
+      const conf = await schedulingLinksApi.bookSlot("intro-chat", {
+        start: "2030-03-04T09:00:00Z",
+        duration_minutes: 30,
+        name: "Demo",
+        email: "demo@co.com",
+      });
+      expect(conf.link_slug).toBe("intro-chat");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      sessionStorage.removeItem(DEMO_SESSION_KEY);
+    }
   });
 
   it("falls back to preview data only when the backend is unreachable", async () => {

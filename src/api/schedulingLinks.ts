@@ -7,7 +7,7 @@
  * fully exercisable.
  */
 
-import { requestApi, withFallback } from "./client";
+import { isDemoSession, requestApi, withFallback } from "./client";
 import type {
   BookingConfirmation,
   BookingSlot,
@@ -419,6 +419,11 @@ function assertValidLinkBody(v: LinkFormValues): void {
 
 // ---------- Public API ----------
 
+/** Run `demo` in an explicit demo session, `real` otherwise. Never falls back. */
+function demoOrReal<T>(real: () => Promise<T>, demo: () => T | Promise<T>): Promise<T> {
+  return isDemoSession() ? Promise.resolve().then(demo) : real();
+}
+
 
 
 
@@ -678,11 +683,16 @@ export const schedulingLinksApi = {
   },
 
 
+  // Booking is the one public action that must never be faked. If the backend
+  // is unreachable, falling back would tell an external booker "You are
+  // confirmed!" for a booking that does not exist. Preview data is used only
+  // in an explicit demo session; otherwise the real call's error reaches the
+  // page, which already says it can't reach the scheduling service.
   bookSlot: (
     slug: string,
     input: { start: string; duration_minutes: number; name: string; email: string; notes?: string },
   ) =>
-    withFallback<BookingConfirmation>(
+    demoOrReal<BookingConfirmation>(
       async () => {
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
         const raw = await requestApi<BackendBooking>("POST", `/book/${slug}`, {
