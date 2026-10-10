@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X, Calendar, Clock, Users, Loader2 } from "lucide-react";
 import type { ParseResult } from "@/api/types";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
@@ -23,18 +24,18 @@ export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NL
   const [selected, setSelected] = useState(0);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-2xl bg-card shadow-xl ring-1 ring-border"
-        onClick={(e) => e.stopPropagation()}
-      >
+    // Radix gives the dialog its role, aria-modal, a focus trap, Escape to
+    // close and focus restore; the markup inside is unchanged.
+    <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-card shadow-xl ring-1 ring-border focus:outline-none">
         <div className="flex items-start justify-between border-b border-border p-5">
           <div>
-            <h2 className="text-base font-semibold tracking-tight">Confirm meeting</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Pick a time slot to schedule.</p>
+            <DialogPrimitive.Title className="text-base font-semibold tracking-tight">Confirm meeting</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="mt-0.5 text-xs text-muted-foreground">
+              Pick a time slot to schedule.
+            </DialogPrimitive.Description>
           </div>
           <button
             onClick={onClose}
@@ -136,7 +137,8 @@ export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NL
             Confirm
           </button>
         </div>
-      </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }

@@ -42,16 +42,27 @@ function formatRelative(iso?: string) {
   return `${Math.floor(diff / 86_400_000)} d ago`;
 }
 
-function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={checked}
-      aria-label={checked ? "Disable calendar" : "Enable calendar"}
+      aria-checked={!!checked}
+      // A stable name; on/off is conveyed by aria-checked, not by renaming.
+      aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 ${checked ? "bg-primary" : "bg-muted"}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition disabled:opacity-50 ${checked ? "bg-primary" : "bg-muted-foreground/80"}`}
     >
       <span
         className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${
@@ -222,6 +233,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
       </div>
 
       <Toggle
+        label={`Sync ${cal.label}`}
         checked={cal.enabled}
         disabled={busy}
         onChange={(v) =>
