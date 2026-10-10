@@ -88,7 +88,7 @@ export function FindATimeTab({ team }: Props) {
             value={date}
             min={todayISO()}
             onChange={(e) => setDate(e.target.value)}
-            className="mt-1 h-10 rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+            className="mt-1 h-10 rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
         </label>
         <label className="block text-xs font-medium text-foreground">
@@ -96,7 +96,7 @@ export function FindATimeTab({ team }: Props) {
           <select
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value))}
-            className="mt-1 h-10 rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+            className="mt-1 h-10 rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
           >
             {DURATIONS.map((d) => (
               <option key={d} value={d}>
@@ -108,14 +108,14 @@ export function FindATimeTab({ team }: Props) {
         <Button
           onClick={run}
           disabled={findMut.isPending}
-          className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+          className="bg-primary text-white hover:bg-primary/90"
         >
           {findMut.isPending ? "Finding…" : "Find slots"}
         </Button>
       </div>
 
       {error && (
-        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/8 px-4 py-3">
           <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">{error}</p>
           <Button size="sm" variant="outline" onClick={run} disabled={findMut.isPending}>
             Retry
@@ -156,7 +156,7 @@ export function FindATimeTab({ team }: Props) {
                     </div>
                   </div>
                   {i === 0 && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-[#5B7FFF]/12 px-2 py-0.5 text-[10px] font-semibold text-[#5B7FFF]">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-semibold text-primary">
                       <Sparkles className="h-3 w-3" /> Recommended
                     </span>
                   )}
@@ -164,7 +164,7 @@ export function FindATimeTab({ team }: Props) {
                 <Button
                   size="sm"
                   onClick={() => onSchedule(s)}
-                  className="gap-1.5 bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+                  className="gap-1.5 bg-primary text-white hover:bg-primary/90"
                 >
                   <CalendarPlus className="h-3.5 w-3.5" />
                   Schedule meeting

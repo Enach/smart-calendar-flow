@@ -790,7 +790,7 @@ function ProfileSection() {
           className={
             "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
             (!profile.is_manager
-              ? "border-transparent bg-[#5B7FFF] text-white"
+              ? "border-transparent bg-primary text-white"
               : "border-border bg-background text-foreground hover:bg-muted")
           }
         >
@@ -803,7 +803,7 @@ function ProfileSection() {
           className={
             "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
             (profile.is_manager
-              ? "border-transparent bg-[#9B7AE0] text-white"
+              ? "border-transparent bg-ai text-white"
               : "border-border bg-background text-foreground hover:bg-muted")
           }
         >
@@ -817,7 +817,7 @@ function ProfileSection() {
           <button
             type="button"
             onClick={() => navigate("/app/team?tab=team")}
-            className="inline-flex items-center gap-1.5 text-[#5B7FFF] hover:underline"
+            className="inline-flex items-center gap-1.5 text-primary hover:underline"
           >
             Choose a team and scan calendar
           </button>
@@ -825,7 +825,7 @@ function ProfileSection() {
             <button
               type="button"
               onClick={() => navigate("/app/team")}
-              className="text-[#5B7FFF] hover:underline"
+              className="text-primary hover:underline"
             >
               Open My Team →
             </button>
@@ -845,7 +845,7 @@ function ProfileSection() {
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmSwitchToIC}
-              className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+              className="bg-primary text-white hover:bg-primary/90"
             >
               Switch
             </AlertDialogAction>

@@ -163,14 +163,14 @@ export default function Onboarding() {
                     className={
                       "flex w-full items-center gap-3 rounded-xl border bg-card p-4 text-left transition " +
                       (selected
-                        ? "border-[#5B7FFF] ring-2 ring-[#5B7FFF]/20"
+                        ? "border-primary ring-2 ring-primary/20"
                         : "border-border hover:border-muted-foreground/30")
                     }
                   >
                     <span
                       className={
                         "flex h-9 w-9 items-center justify-center rounded-lg " +
-                        (selected ? "bg-[#5B7FFF]/10 text-[#5B7FFF]" : "bg-muted text-muted-foreground")
+                        (selected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")
                       }
                     >
                       <p.icon className="h-4 w-4" />
@@ -179,7 +179,7 @@ export default function Onboarding() {
                       <span className="block text-sm font-medium text-foreground">{p.label}</span>
                       <span className="block text-xs text-muted-foreground">{p.hint}</span>
                     </span>
-                    {selected && <Check className="h-4 w-4 text-[#5B7FFF]" />}
+                    {selected && <Check className="h-4 w-4 text-primary" />}
                   </button>
                 );
               })}
@@ -195,7 +195,7 @@ export default function Onboarding() {
               <Button
                 onClick={continueFromConnect}
                 disabled={busy || availabilityLoading || !!availabilityError || availableProviders.length === 0}
-                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <>Continue<ChevronRight className="ml-1 h-4 w-4" /></>}
               </Button>
@@ -240,7 +240,7 @@ export default function Onboarding() {
               <Button
                 onClick={finish}
                 disabled={!role || busy}
-                className="h-10 w-full justify-center bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[210px]"
+                className="h-10 w-full justify-center bg-primary text-white hover:bg-primary/90 sm:w-[210px]"
               >
                 {busy ? (
                   <span className="flex items-center gap-2 truncate">

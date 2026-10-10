@@ -82,7 +82,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
       )}
 
       {activeTeam && teamAnalyticsQ.isError && (
-        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+        <div className="flex flex-wrap items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/8 px-4 py-3">
           <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">
             {apiErrorMessage(teamAnalyticsQ.error)}
           </p>
@@ -100,7 +100,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
             onClick={() => setSub(t.key)}
             className={
               "border-b-2 px-3 py-2 text-sm font-medium transition " +
-              (sub === t.key ? "border-[#5B7FFF] text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")
+              (sub === t.key ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground")
             }
           >
             {t.label}
@@ -123,7 +123,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
           </div>
           <p className="text-sm text-muted-foreground">No team data yet.</p>
           {!activeTeam && (
-            <Button onClick={onCreateTeam} className="mt-3 bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+            <Button onClick={onCreateTeam} className="mt-3 bg-primary text-white hover:bg-primary/90">
               Create team
             </Button>
           )}
@@ -238,7 +238,7 @@ function ThisWeek({ data }: { data: RowData[] }) {
       {insights.length > 0 && (
         <div className="space-y-2">
           {insights.map((line, i) => (
-            <div key={i} className="rounded-xl border border-border bg-[#5B7FFF]/5 px-4 py-3 text-sm text-foreground">
+            <div key={i} className="rounded-xl border border-border bg-primary/5 px-4 py-3 text-sm text-foreground">
               {line}
             </div>
           ))}
@@ -251,10 +251,13 @@ function ThisWeek({ data }: { data: RowData[] }) {
 function Stat({ label, value, color }: { label: string; value: string; color: string }) {
   return (
     <div className="rounded-2xl border border-border bg-card p-5">
-      <div className="text-2xl font-semibold tracking-tight" style={{ color }}>
-        {value}
+      {/* The colour is a key to the charts, not text: yellow and blue figures
+          were unreadable (as low as 1.9:1), so the number stays in ink. */}
+      <div className="text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <span className="h-2 w-2 shrink-0 rounded-sm" style={{ backgroundColor: color }} aria-hidden="true" />
+        {label}
       </div>
-      <div className="mt-1 text-xs text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -297,7 +300,7 @@ function Trends({ data }: { data: RowData[] }) {
               onClick={() => setMetric(m)}
               className={
                 "rounded-md px-3 py-1.5 font-medium transition " +
-                (metric === m ? "bg-[#5B7FFF] text-white" : "text-muted-foreground hover:text-foreground")
+                (metric === m ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")
               }
             >
               {m === "focus" ? "Focus" : "Meetings"}
@@ -402,7 +405,7 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
               onClick={() => setSelectedEmail(m.email)}
               className={
                 "flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition " +
-                (m.email === member.email ? "bg-[#5B7FFF]/10 text-foreground" : "text-foreground hover:bg-muted")
+                (m.email === member.email ? "bg-primary/10 text-foreground" : "text-foreground hover:bg-muted")
               }
             >
               <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">

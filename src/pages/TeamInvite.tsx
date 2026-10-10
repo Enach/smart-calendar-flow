@@ -44,7 +44,7 @@ export default function TeamInvite() {
       <Navbar />
       <main className="mx-auto w-full max-w-xl px-4 py-12 sm:px-6 sm:py-16">
         <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
-          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full bg-[#9B7AE0]/10 text-[#9B7AE0]">
+          <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-full bg-ai/10 text-ai">
             <Users className="h-5 w-5" />
           </div>
           <h1 className="font-serif text-2xl tracking-tight text-foreground">Team invitation</h1>
@@ -87,7 +87,7 @@ export default function TeamInvite() {
                 <Button
                   onClick={() => acceptMut.mutate()}
                   disabled={acceptMut.isPending}
-                  className="min-w-[170px] bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+                  className="min-w-[170px] bg-primary text-white hover:bg-primary/90"
                 >
                   {acceptMut.isPending ? (
                     <>
