@@ -147,7 +147,7 @@ function LinkCard({
               <Switch
                 checked={link.active}
                 onCheckedChange={(v) => onToggleActive(link, v)}
-                aria-label="Toggle active"
+                aria-label={`${link.title} active`}
               />
             </div>
           )}
@@ -155,11 +155,11 @@ function LinkCard({
             {link.is_owner ? (
               <>
                 {onViewBookings && (
-                  <Button size="sm" variant="ghost" onClick={() => onViewBookings(link)} aria-label="Bookings">
+                  <Button size="sm" variant="ghost" onClick={() => onViewBookings(link)} aria-label={`Bookings for ${link.title}`}>
                     <CalendarDays className="h-3.5 w-3.5" /> Bookings
                   </Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => onEdit?.(link)} aria-label="Edit">
+                <Button size="sm" variant="ghost" onClick={() => onEdit?.(link)} aria-label={`Edit ${link.title}`}>
                   <Pencil className="h-3.5 w-3.5" /> Edit
                 </Button>
 
@@ -168,7 +168,7 @@ function LinkCard({
                   variant="ghost"
                   onClick={() => onDelete?.(link)}
                   className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  aria-label="Delete"
+                  aria-label={`Delete ${link.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" /> Delete
                 </Button>

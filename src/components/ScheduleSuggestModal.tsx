@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Calendar, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
@@ -130,22 +131,20 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
   }, [attendees, isDemo, onClose, qc, selected, slots, title]);
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={() => !applying && onClose()}
-    >
-      <div
-        className="w-full max-w-2xl overflow-hidden rounded-2xl bg-card shadow-xl ring-1 ring-border"
-        onClick={(e) => e.stopPropagation()}
-      >
+    // Radix gives the dialog its role, aria-modal, a focus trap, Escape to
+    // close and focus restore; the markup inside is unchanged.
+    <DialogPrimitive.Root open onOpenChange={(open) => !open && !applying && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/40" />
+        <DialogPrimitive.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-2xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-card shadow-xl ring-1 ring-border focus:outline-none">
         <div className="flex items-start justify-between border-b border-border p-5">
           <div className="flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-primary" />
             <div>
-              <h2 className="text-base font-semibold tracking-tight">Schedule meeting</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
+              <DialogPrimitive.Title className="text-base font-semibold tracking-tight">Schedule meeting</DialogPrimitive.Title>
+              <DialogPrimitive.Description className="mt-0.5 text-xs text-muted-foreground">
                 Preview AI-suggested slots, then pick one to apply.
-              </p>
+              </DialogPrimitive.Description>
             </div>
           </div>
           <button
@@ -160,11 +159,12 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
         {/* Form */}
         <div className="space-y-3 border-b border-border p-5">
           <div>
-            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <label htmlFor="ssm-title" className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               Title
             </label>
             <input
               type="text"
+              id="ssm-title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Design review with Sarah"
@@ -174,15 +174,16 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span id="ssm-duration" className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Duration
-              </label>
-              <div className="flex flex-wrap gap-1.5">
+              </span>
+              <div role="group" aria-labelledby="ssm-duration" className="flex flex-wrap gap-1.5">
                 {DURATIONS.map((d) => (
                   <button
                     key={d}
                     type="button"
                     onClick={() => setDuration(d)}
+                    aria-pressed={duration === d}
                     className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
                       duration === d
                         ? "border-primary bg-primary-muted text-primary"
@@ -195,11 +196,12 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <label htmlFor="ssm-attendees" className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Attendees
               </label>
               <input
                 type="text"
+                id="ssm-attendees"
                 value={attendeesInput}
                 onChange={(e) => setAttendeesInput(e.target.value)}
                 placeholder="sarah@acme.com, alex@acme.com"
@@ -210,24 +212,26 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <label htmlFor="ssm-from" className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Search from
               </label>
               <input
                 type="datetime-local"
                 step="900"
+                id="ssm-from"
                 value={rangeStart}
                 onChange={(e) => setRangeStart(e.target.value)}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
               />
             </div>
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <label htmlFor="ssm-until" className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Search until
               </label>
               <input
                 type="datetime-local"
                 step="900"
+                id="ssm-until"
                 value={rangeEnd}
                 onChange={(e) => setRangeEnd(e.target.value)}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -357,7 +361,8 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
             </button>
           </div>
         </div>
-      </div>
-    </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
