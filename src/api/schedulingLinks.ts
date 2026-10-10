@@ -397,6 +397,14 @@ export function publicBookingUrl(slug: string, origin: string = window.location.
 }
 
 /**
+ * The same URL without its scheme, for display. Derived from publicBookingUrl
+ * so what a card shows is always exactly what Copy puts on the clipboard.
+ */
+export function publicBookingDisplayUrl(slug: string, origin?: string): string {
+  return publicBookingUrl(slug, origin).replace(/^https?:\/\//, "");
+}
+
+/**
  * Guard mirroring the backend's strict 422 validation. We never send a body the
  * backend would reject (empty arrays, inverted window, negative buffers/notice,
  * invalid usage_type, recurring without a positive max_uses).
