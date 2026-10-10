@@ -15,6 +15,7 @@ import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
+import { UI_LOCALE } from "@/lib/locale";
 
 function pad(n: number) {
   return n < 10 ? `0${n}` : `${n}`;
@@ -23,10 +24,10 @@ function dateOnlyStr(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
 }
 function fmtDateLong(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
+  return new Date(iso).toLocaleDateString(UI_LOCALE, {
     weekday: "long",
     month: "long",
     day: "numeric",

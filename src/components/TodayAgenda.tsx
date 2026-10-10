@@ -5,6 +5,7 @@ import { InlineError } from "@/components/ui/inline-error";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 import { useAuth } from "@/contexts/useAuth";
 import { getEventOwnership } from "@/lib/eventOwnership";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
@@ -18,7 +19,7 @@ interface TodayAgendaProps {
 }
 
 function fmt(iso: string) {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
 }
 
 export function TodayAgenda({ events, loading, error, notConnected, errorMessage, onRetry, retrying }: TodayAgendaProps) {
@@ -49,7 +50,7 @@ export function TodayAgenda({ events, loading, error, notConnected, errorMessage
           </h3>
         </div>
         <span className="text-[11px] font-medium text-muted-foreground/80">
-          {today.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+          {today.toLocaleDateString(UI_LOCALE, { weekday: "short", month: "short", day: "numeric" })}
         </span>
       </div>
 

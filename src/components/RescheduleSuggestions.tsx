@@ -4,6 +4,7 @@ import { ArrowRight, ChevronDown, ChevronUp, Loader2, Minus, TrendingDown, Trend
 import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent } from "@/api/types";
+import { UI_LOCALE } from "@/lib/locale";
 
 interface Props {
   event: CalendarEvent;
@@ -111,8 +112,8 @@ function fmtDeltaMinutes(min: number): string {
 }
 
 function fmtSlotLabel(d: Date) {
-  const day = d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
-  const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const day = d.toLocaleDateString(UI_LOCALE, { weekday: "short", day: "numeric", month: "short" });
+  const time = d.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
   return `${day} · ${time}`;
 }
 
