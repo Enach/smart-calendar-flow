@@ -5,7 +5,8 @@ import { ArrowUpRight, ArrowDownRight, Minus, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { teamsApi, teamKeys, type FormalTeam } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
-import { managerApi, type TeamMember } from "@/api/manager";
+import { managerApi, managerKeys } from "@/api/manager";
+import { localISODate, mondayOf } from "@/lib/localDate";
 
 interface Props {
   activeTeam: FormalTeam | null;
@@ -32,11 +33,7 @@ function initials(name: string): string {
   return name.split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
-function todayISO() {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString().slice(0, 10);
-}
+const todayISO = () => localISODate();
 
 export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
   const [sub, setSub] = useState<SubTab>("week");
@@ -50,18 +47,12 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
     // Keep the previous week's data visible while a refetch is in flight.
     placeholderData: (prev) => prev,
   });
-  const teamData = useMemo(() => {
-    if (activeTeam) return teamAnalyticsQ.data ?? [];
-    return managerApi.listTeam().map((m) => {
-      const a = managerApi.analytics(m.email);
-      return {
-        email: m.email,
-        display_name: m.display_name,
-        is_paceday_user: m.is_paceday_user,
-        weeks: a?.weeks ?? [],
-      };
-    });
-  }, [activeTeam, teamAnalyticsQ.data]);
+  // Without a team there is no real data to show. Never substitute generated
+  // numbers: a manager would read them as facts about a real person.
+  const teamData = useMemo(
+    () => (activeTeam ? teamAnalyticsQ.data ?? [] : []),
+    [activeTeam, teamAnalyticsQ.data],
+  );
 
   const sourceLabel = activeTeam ? activeTeam.name : "your manager team";
 
@@ -140,7 +131,9 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
 
       {teamData.length > 0 && sub === "week" && <ThisWeek data={teamData} />}
       {teamData.length > 0 && sub === "trends" && <Trends data={teamData} />}
-      {teamData.length > 0 && sub === "members" && <MembersPanel members={managerApi.listTeam()} />}
+      {activeTeam && teamData.length > 0 && sub === "members" && (
+        <MembersPanel teamId={activeTeam.id} week={mondayOf(date)} members={teamData} />
+      )}
     </div>
   );
 }
@@ -378,7 +371,11 @@ function Trends({ data }: { data: RowData[] }) {
 // Members panel — per-member 12-week chart + history
 // ============================================================================
 
-function MembersPanel({ members }: { members: TeamMember[] }) {
+function MembersPanel({ teamId, week, members }: { teamId: string; week: string; members: RowData[] }) {
+  const analyticsQ = useQuery({
+    queryKey: managerKeys.analytics(week, teamId),
+    queryFn: () => managerApi.remote.analytics(week, teamId),
+  });
   const [selectedEmail, setSelectedEmail] = useState<string>(members[0]?.email ?? "");
   const member = members.find((m) => m.email === selectedEmail) ?? members[0];
 
@@ -390,9 +387,10 @@ function MembersPanel({ members }: { members: TeamMember[] }) {
     );
   }
 
-  const data = managerApi.analytics(member.email);
-  if (!data) return null;
-  const maxMin = Math.max(...data.weeks.map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes), 1);
+  const data = analyticsQ.data?.find((a) => a.email.toLowerCase() === member.email.toLowerCase());
+  // Oldest week first, so the chart reads left to right.
+  const weeks = (data?.weeks ?? []).slice().sort((a, b) => a.week_start.localeCompare(b.week_start));
+  const maxMin = Math.max(...weeks.map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes), 1);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
@@ -417,48 +415,66 @@ function MembersPanel({ members }: { members: TeamMember[] }) {
 
       <div className="rounded-2xl border border-border bg-card p-5">
         <div className="mb-1 text-sm font-semibold text-foreground">{member.display_name}</div>
-        <div className="mb-4 text-xs text-muted-foreground">12-week breakdown</div>
+        <div className="mb-4 text-xs text-muted-foreground">Weekly breakdown</div>
 
-        <div className="flex h-40 items-end gap-1.5">
-          {data.weeks.map((w) => {
-            const totalH = (w.meeting_minutes + w.focus_minutes + w.free_minutes) / maxMin;
-            const mtgH = w.meeting_minutes / maxMin;
-            const focH = w.focus_minutes / maxMin;
-            const freH = w.free_minutes / maxMin;
-            return (
-              <div
-                key={w.week_start}
-                className="relative flex flex-1 flex-col-reverse"
-                title={`Week of ${new Date(w.week_start).toLocaleDateString(undefined, { month: "short", day: "numeric" })} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
-                style={{ height: `${totalH * 100}%` }}
-              >
-                <div style={{ height: `${(mtgH / totalH) * 100}%`, backgroundColor: "#E9B949" }} />
-                <div style={{ height: `${(focH / totalH) * 100}%`, backgroundColor: "#5B7FFF" }} />
-                <div style={{ height: `${(freH / totalH) * 100}%`, backgroundColor: "#EDEEE9" }} />
-              </div>
-            );
-          })}
-        </div>
+        {analyticsQ.isLoading ? (
+          <div className="h-40 animate-pulse rounded-lg bg-muted" />
+        ) : analyticsQ.isError ? (
+          <div className="flex flex-wrap items-start gap-3">
+            <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">
+              {apiErrorMessage(analyticsQ.error)}
+            </p>
+            <Button size="sm" variant="outline" onClick={() => analyticsQ.refetch()} disabled={analyticsQ.isFetching}>
+              Retry
+            </Button>
+          </div>
+        ) : weeks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No analytics for this member yet.</p>
+        ) : (
+          <>
+            <div className="flex h-40 items-end gap-1.5">
+              {weeks.map((w) => {
+                const totalH = (w.meeting_minutes + w.focus_minutes + w.free_minutes) / maxMin;
+                const mtgH = w.meeting_minutes / maxMin;
+                const focH = w.focus_minutes / maxMin;
+                const freH = w.free_minutes / maxMin;
+                return (
+                  <div
+                    key={w.week_start}
+                    className="relative flex flex-1 flex-col-reverse"
+                    title={`Week of ${new Date(w.week_start).toLocaleDateString(undefined, { month: "short", day: "numeric" })} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
+                    style={{ height: `${totalH * 100}%` }}
+                  >
+                    <div style={{ height: `${(mtgH / totalH) * 100}%`, backgroundColor: "#E9B949" }} />
+                    <div style={{ height: `${(focH / totalH) * 100}%`, backgroundColor: "#5B7FFF" }} />
+                    <div style={{ height: `${(freH / totalH) * 100}%`, backgroundColor: "#EDEEE9" }} />
+                  </div>
+                );
+              })}
+            </div>
 
-        <div className="mt-3 flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#5B7FFF" }} /> Focus
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#E9B949" }} /> Meetings
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#EDEEE9" }} /> Free
-          </span>
-        </div>
+            <div className="mt-3 flex items-center gap-3 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#5B7FFF" }} /> Focus
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#E9B949" }} /> Meetings
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#EDEEE9" }} /> Free
+              </span>
+            </div>
+          </>
+        )}
 
-        {data.one_on_ones.length > 0 && (
+        {data && data.one_on_ones.length > 0 && (
           <div className="mt-5">
             <div className="mb-2 text-xs font-semibold text-foreground">1:1 history</div>
             <ul className="space-y-1.5">
               {data.one_on_ones.map((o, i) => (
                 <li key={i} className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-xs">
-                  <span className="text-foreground">{o.title}</span>
+                  {/* A fixed label, never the event title: managers see aggregates, not titles. */}
+                  <span className="text-foreground">1:1</span>
                   <span className="text-muted-foreground">
                     {new Date(o.date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                   </span>

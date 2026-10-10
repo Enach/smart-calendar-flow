@@ -73,6 +73,7 @@ import { FindATimeTab } from "@/components/team/FindATimeTab";
 import { AnalyticsTab } from "@/components/team/AnalyticsTab";
 import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
 import type { Attendee } from "@/api/types";
+import { localISODate } from "@/lib/localDate";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20";
@@ -440,7 +441,7 @@ function TeamTab({
   }, [activeTeam.id, teamQ.data, teamQ.error, teamQ.isError, teamQ.isLoading]);
   const team: TeamMember[] = teamState.members;
 
-  const week = useMemo(() => weekStart(weekOffset).toISOString().slice(0, 10), [weekOffset]);
+  const week = useMemo(() => localISODate(weekStart(weekOffset)), [weekOffset]);
 
   const gapsQ = useQuery({
     queryKey: managerKeys.gaps(activeTeam.id),
