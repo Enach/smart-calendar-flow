@@ -333,6 +333,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                     key={d}
                     type="button"
                     onClick={() => toggleDuration(d)}
+                    aria-pressed={on}
                     className={`rounded-full border px-3 py-1.5 text-sm font-medium transition ${
                       on
                         ? "border-primary bg-primary text-primary-foreground"
@@ -357,6 +358,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                     key={d.value}
                     type="button"
                     onClick={() => toggleDay(d.value)}
+                    aria-pressed={on}
                     className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${
                       on
                         ? "border-primary bg-primary text-primary-foreground"
@@ -441,6 +443,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                     key={opt.value}
                     type="button"
                     onClick={() => setUsageType(opt.value)}
+                    aria-pressed={on}
                     className={`rounded-lg border p-3 text-left transition ${
                       on
                         ? "border-primary bg-primary-muted"

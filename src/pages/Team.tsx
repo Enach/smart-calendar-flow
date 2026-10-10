@@ -601,6 +601,7 @@ function TeamTab({
                 <input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                  aria-label="Search team members"
                   placeholder="Search"
                   className="h-9 w-44 rounded-full border border-border bg-background pl-7 pr-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
                 />
@@ -964,8 +965,11 @@ function MemberRow({
 
         <div className="flex min-w-0 flex-col gap-1.5 md:w-[35%]">
           <div className="flex items-center gap-2">
-            <label className="text-[11px] text-muted-foreground">1:1 cadence:</label>
+            <label htmlFor={`cadence-${member.email}`} className="text-[11px] text-muted-foreground">
+              1:1 cadence:
+            </label>
             <select
+              id={`cadence-${member.email}`}
               value={member.cadence}
               onChange={(e) => onCadenceChange(e.target.value as Cadence, member.custom_cadence_days)}
               className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
@@ -981,6 +985,7 @@ function MemberRow({
                 <input
                   type="number"
                   min={1}
+                  aria-label={`Days between 1:1s with ${member.display_name}`}
                   value={member.custom_cadence_days ?? 7}
                   onChange={(e) => onCadenceChange("custom", Number(e.target.value))}
                   className="h-8 w-14 rounded-md border border-input bg-background px-2 text-xs"
