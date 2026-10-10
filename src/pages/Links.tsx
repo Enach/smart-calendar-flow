@@ -71,7 +71,7 @@ function formatNotice(min: number): string {
 function UsageBadge({ link }: { link: SchedulingLink }) {
   if (link.usage_type === "single_use") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-2 py-0.5 text-[11px] font-medium text-[#5C3DA1]">
+      <span className="inline-flex items-center gap-1 rounded-full border border-ai/30 bg-ai/10 px-2 py-0.5 text-[11px] font-medium text-[#5C3DA1]">
         <Zap className="h-3 w-3" /> Single use
       </span>
     );
@@ -79,7 +79,7 @@ function UsageBadge({ link }: { link: SchedulingLink }) {
   if (link.usage_type === "recurring") {
     const left = link.max_uses ? Math.max(0, link.max_uses - link.uses_count) : null;
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-[#5B7FFF]/30 bg-[#5B7FFF]/10 px-2 py-0.5 text-[11px] font-medium text-[#3a5cd9]">
+      <span className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-[#3a5cd9]">
         <Repeat className="h-3 w-3" />
         {link.max_uses
           ? `${link.uses_count}/${link.max_uses} used${left === 0 ? " · ended" : ""}`

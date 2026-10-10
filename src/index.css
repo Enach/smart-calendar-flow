@@ -4,7 +4,9 @@
 
 @layer base {
   :root {
-    /* Paceday brand palette — light, calm, structured */
+    /* Paceday brand palette — light, calm, structured.
+       Every colour that carries text meets WCAG AA (4.5:1) against what it
+       sits on; src/lib/tokens.test.ts checks this. */
     --background: 72 22% 96%;            /* #F7F8F4 off-white */
     --foreground: 90 7% 17%;             /* #2B2F2A deep ink */
 
@@ -14,7 +16,7 @@
     --popover: 0 0% 100%;
     --popover-foreground: 90 7% 17%;
 
-    --primary: 226 100% 68%;             /* #5B7FFF focus blue */
+    --primary: 226 100% 58%;             /* #295BFF focus blue, 4.5:1 under white text (was 68%, 3.4:1) */
     --primary-foreground: 0 0% 100%;
     --primary-muted: 226 100% 96%;
 
@@ -22,40 +24,40 @@
     --secondary-foreground: 90 7% 17%;
 
     --muted: 72 18% 92%;
-    --muted-foreground: 96 5% 43%;       /* #6B7366 secondary text */
+    --muted-foreground: 96 5% 41%;       /* #686E63 secondary text, 4.5:1 on --muted (was 43%) */
 
     --accent: 226 100% 96%;
     --accent-foreground: 226 80% 50%;
 
-    --destructive: 0 71% 63%;            /* #E35D5D conflict red */
+    --destructive: 0 71% 50%;            /* #DA2525 conflict red, 4.5:1 (was 63%, 3.2:1) */
     --destructive-foreground: 0 0% 100%;
 
-    --success: 162 49% 58%;              /* #5FC9A6 */
+    --success: 162 49% 34%;              /* #2C8168, 4.7:1 under white text (was 58%, 2.0:1) */
     --success-foreground: 0 0% 100%;
 
     --warning: 42 78% 60%;               /* #E9B949 meeting yellow */
     --warning-foreground: 90 7% 17%;
 
-    --info: 226 100% 68%;
+    --info: 226 100% 58%;
     --info-foreground: 0 0% 100%;
 
-    --ai: 261 60% 68%;                   /* #9B7AE0 purple */
+    --ai: 261 60% 60%;                   /* #875CD6 purple, 4.6:1 (was 68%, 3.3:1) */
     --ai-foreground: 0 0% 100%;
 
     --border: 84 17% 88%;                /* #E3E6DC borders */
     --input: 84 17% 88%;
-    --ring: 226 100% 68%;
+    --ring: 226 100% 58%;
 
     --radius: 0.625rem;
 
     --sidebar-background: 72 22% 96%;
     --sidebar-foreground: 90 7% 17%;
-    --sidebar-primary: 226 100% 68%;
+    --sidebar-primary: 226 100% 58%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 72 18% 92%;
     --sidebar-accent-foreground: 90 7% 17%;
     --sidebar-border: 84 17% 88%;
-    --sidebar-ring: 226 100% 68%;
+    --sidebar-ring: 226 100% 58%;
 
     --font-serif: "Playfair Display", ui-serif, Georgia, "Times New Roman", serif;
     --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

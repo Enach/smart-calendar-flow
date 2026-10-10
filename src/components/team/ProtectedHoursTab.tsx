@@ -133,7 +133,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setManageOpen(true)}
-            className="text-xs text-[#5B7FFF] hover:underline"
+            className="text-xs text-primary hover:underline"
           >
             Manage members
           </button>
@@ -155,7 +155,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
       <div className="flex sm:hidden">
         <Button
           onClick={() => setMobileFormOpen(true)}
-          className="w-full gap-1.5 bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+          className="w-full gap-1.5 bg-primary text-white hover:bg-primary/90"
         >
           <Plus className="h-4 w-4" /> Add protected block
         </Button>
@@ -245,7 +245,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
               <input
                 value={labelInput}
                 onChange={(e) => setLabelInput(e.target.value)}
-                className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+                className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 placeholder="Deep work"
               />
             </label>
@@ -267,7 +267,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
                   updateMut.mutate({ id: editingId, patch: { label: labelInput || "Protected" } });
                 setEditingId(null);
               }}
-              className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+              className="bg-primary text-white hover:bg-primary/90"
             >
               Save
             </Button>
@@ -401,7 +401,7 @@ function Grid({
                       onZoneClick(z.id);
                     }}
                     onMouseDown={(e) => e.stopPropagation()}
-                    className="absolute left-0 right-0 cursor-pointer rounded border border-[#9B7AE0]/40 bg-[#9B7AE0]/20 px-1 py-0.5 text-left text-[10px] font-medium text-[#5A3F9C] hover:bg-[#9B7AE0]/30"
+                    className="absolute left-0 right-0 cursor-pointer rounded border border-ai/40 bg-ai/20 px-1 py-0.5 text-left text-[10px] font-medium text-[#5A3F9C] hover:bg-ai/30"
                     style={{
                       top: minToY(z.start_min),
                       height: minToY(z.end_min) - minToY(z.start_min),
@@ -414,7 +414,7 @@ function Grid({
                 {/* Draft */}
                 {draft?.day_of_week === day && (
                   <div
-                    className="pointer-events-none absolute left-0 right-0 rounded border-2 border-[#9B7AE0] bg-[#9B7AE0]/20"
+                    className="pointer-events-none absolute left-0 right-0 rounded border-2 border-ai bg-ai/20"
                     style={{
                       top: minToY(draft.start_min),
                       height: minToY(draft.end_min) - minToY(draft.start_min),
@@ -465,14 +465,14 @@ function DraftDialog({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Deep work"
-          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
           onKeyDown={(e) => e.key === "Enter" && onSave(label)}
         />
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button onClick={() => onSave(label)} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={() => onSave(label)} className="bg-primary text-white hover:bg-primary/90">
             Save
           </Button>
         </DialogFooter>
@@ -549,7 +549,7 @@ function MobileAddForm({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={submit} className="bg-primary text-white hover:bg-primary/90">
             Save
           </Button>
         </DialogFooter>
@@ -619,16 +619,16 @@ function InviteDialog({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()}
-              className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+              className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
               placeholder="alex@team.com"
             />
           </label>
           <label className="block text-xs font-medium text-foreground">
             Display name <span className="text-muted-foreground">(optional)</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20" placeholder="Alex Carter" />
+            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Alex Carter" />
           </label>
           {error && (
-            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+            <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
               {error}
             </div>
           )}
@@ -637,7 +637,7 @@ function InviteDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={inviteMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={submit} disabled={inviteMut.isPending} className="bg-primary text-white hover:bg-primary/90">
             {inviteMut.isPending ? "Sending…" : "Send invite"}
           </Button>
         </DialogFooter>
@@ -691,7 +691,7 @@ function ManageMembersSheet({
                 <div className="flex items-center gap-2 text-sm text-foreground">
                   <span className="truncate font-medium">{m.display_name}</span>
                   {m.role === "owner" && (
-                    <span className="inline-flex items-center gap-0.5 rounded bg-[#9B7AE0]/12 px-1.5 py-0.5 text-[9px] font-semibold text-[#5A3F9C]">
+                    <span className="inline-flex items-center gap-0.5 rounded bg-ai/12 px-1.5 py-0.5 text-[9px] font-semibold text-[#5A3F9C]">
                       <ShieldCheck className="h-2.5 w-2.5" /> Owner
                     </span>
                   )}

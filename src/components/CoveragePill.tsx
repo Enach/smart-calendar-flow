@@ -25,7 +25,7 @@ export function CoveragePill({ coverage, compactPrivate }: CoveragePillProps) {
 
   if (allChecked) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-[#5FC9A6]/15 px-2.5 py-1 text-[11px] font-semibold text-[#2F8B70]">
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-[11px] font-semibold text-[#2F8B70]">
         <CheckCircle2 className="h-3 w-3" />
         All participants checked
       </span>

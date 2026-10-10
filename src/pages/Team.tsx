@@ -77,7 +77,7 @@ import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 
 const inputCls =
-  "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-[#5B7FFF] focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20";
+  "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
 const CADENCE_OPTIONS: Array<{ value: Cadence; label: string }> = [
   { value: "weekly", label: "Weekly" },
@@ -170,7 +170,7 @@ export default function Team() {
         />
         <main className="mx-auto w-full max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
           <div className="rounded-2xl border border-border bg-card p-8 text-center">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#9B7AE0]/10 text-[#9B7AE0]">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-ai/10 text-ai">
               <Users className="h-6 w-6" />
             </div>
             <h1 className="font-serif text-2xl tracking-tight text-foreground">
@@ -187,7 +187,7 @@ export default function Team() {
                   setProfile(managerApi.getProfile());
                   toast.success("Manager mode enabled. Select a team, then scan to preview candidates.");
                 }}
-                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 Enable Manager mode
               </Button>
@@ -226,7 +226,7 @@ export default function Team() {
         {teamsError && (
           <div
             role="alert"
-            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/5 px-4 py-3 text-sm text-foreground"
+            className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-foreground"
           >
             <span className="flex-1">
               Couldn't refresh your teams: {apiErrorMessage(teamsError)}
@@ -273,7 +273,7 @@ export default function Team() {
 
 function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
   return (
-    <div className="mb-4 flex flex-wrap items-start gap-3 rounded-xl border border-[#E35D5D]/40 bg-[#E35D5D]/8 px-4 py-3">
+    <div className="mb-4 flex flex-wrap items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/8 px-4 py-3">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B91C1C]" />
       <p className="min-w-0 flex-1 text-sm text-foreground">{message}</p>
       <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="gap-1.5">
@@ -348,7 +348,7 @@ function PageHeader({
                   setOpen(false);
                   onCreateTeam();
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-[#5B7FFF] hover:bg-[#5B7FFF]/10"
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10"
               >
                 <Plus className="h-3.5 w-3.5" />
                 New team
@@ -366,7 +366,7 @@ function PageHeader({
               className={
                 "whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium transition " +
                 (tab === t.key
-                  ? "border-[#5B7FFF] text-foreground"
+                  ? "border-primary text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground")
               }
             >
@@ -391,7 +391,7 @@ function RequireFormalTeam({
   if (!team) {
     return (
       <div className="mx-auto max-w-md rounded-2xl border border-border bg-card p-8 text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#9B7AE0]/10 text-[#9B7AE0]">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-ai/10 text-ai">
           <Users className="h-6 w-6" />
         </div>
         <h3 className="font-serif text-lg text-foreground">Create a team to access this feature</h3>
@@ -400,7 +400,7 @@ function RequireFormalTeam({
         </p>
         <Button
           onClick={onCreateTeam}
-          className="mt-5 bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+          className="mt-5 bg-primary text-white hover:bg-primary/90"
         >
           Create team
         </Button>
@@ -556,7 +556,7 @@ function TeamTab({
       )}
 
       {team.length > 0 && allAuto && !autoBannerDismissed && (
-        <div className="mb-4 flex items-start gap-3 rounded-xl border border-[#5FC9A6]/40 bg-[#5FC9A6]/10 px-4 py-3 text-sm text-foreground">
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-success/40 bg-success/10 px-4 py-3 text-sm text-foreground">
           <Info className="mt-0.5 h-4 w-4 text-[#2F8B70]" />
           <p className="flex-1">Team auto-detected from your recurring 1:1s. You can add or remove people below.</p>
           <button onClick={() => setAutoBannerDismissed(true)} className="text-muted-foreground hover:text-foreground">
@@ -602,7 +602,7 @@ function TeamTab({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search"
-                  className="h-9 w-44 rounded-full border border-border bg-background pl-7 pr-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+                  className="h-9 w-44 rounded-full border border-border bg-background pl-7 pr-3 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
               </div>
               <Button variant="outline" size="sm" onClick={() => setAddOpen(true)} className="gap-1.5">
@@ -641,7 +641,7 @@ function TeamTab({
             <button
               onClick={() => detectMut.mutate()}
               disabled={detectMut.isPending}
-              className="inline-flex items-center gap-1.5 text-[#5B7FFF] hover:underline disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 text-primary hover:underline disabled:opacity-60"
             >
               {detectMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
               Re-scan calendar for team members
@@ -741,7 +741,7 @@ export function ScanPreviewDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={confirming}>Cancel</Button>
-          <Button onClick={onConfirm} disabled={confirming || selected.length === 0} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={onConfirm} disabled={confirming || selected.length === 0} className="bg-primary text-white hover:bg-primary/90">
             {confirming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
             Add {selected.length} selected
           </Button>
@@ -762,7 +762,7 @@ function DetectionPrompt({
 }) {
   return (
     <div className="mx-auto max-w-md rounded-2xl border border-border bg-card p-8 text-center">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#9B7AE0]/10 text-[#9B7AE0]">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-ai/10 text-ai">
         <Users className="h-6 w-6" />
       </div>
       <h3 className="font-serif text-lg text-foreground">No team members yet</h3>
@@ -774,7 +774,7 @@ function DetectionPrompt({
         <Button
           onClick={onScan}
           disabled={isDetecting}
-          className="h-10 w-full justify-center overflow-hidden bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90 sm:w-[200px]"
+          className="h-10 w-full justify-center overflow-hidden bg-primary text-white hover:bg-primary/90 sm:w-[200px]"
         >
           {isDetecting ? (
             <span className="flex items-center gap-1.5 truncate">
@@ -824,7 +824,7 @@ function GapsSection({
 
   if (gaps.length === 0) {
     return (
-      <div className="mb-4 flex items-center gap-2 rounded-xl border border-[#5FC9A6]/30 bg-[#5FC9A6]/5 px-4 py-3 text-sm text-[#2F8B70]">
+      <div className="mb-4 flex items-center gap-2 rounded-xl border border-success/30 bg-success/5 px-4 py-3 text-sm text-[#2F8B70]">
         <CheckCircle2 className="h-4 w-4" />
         All 1:1s on track
       </div>
@@ -868,7 +868,7 @@ function GapsSection({
                     ? "bg-[#EF4444]/12 text-[#B91C1C]"
                     : g.days_overdue >= -7
                       ? "bg-[#E9B949]/15 text-[#8A6A14]"
-                      : "bg-[#5FC9A6]/15 text-[#2F8B70]")
+                      : "bg-success/15 text-[#2F8B70]")
                 }
               >
                 {g.days_overdue > 0
@@ -883,7 +883,7 @@ function GapsSection({
                 size="sm"
                 onClick={() => onSchedule(g.email)}
                 disabled={schedulingEmail === g.email}
-                className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90"
+                className="bg-primary text-white hover:bg-primary/90"
               >
                 {schedulingEmail === g.email ? "Opening…" : "Schedule"}
               </Button>
@@ -941,7 +941,7 @@ function MemberRow({
             <div className="flex items-center gap-1.5">
               <span className="truncate text-sm font-semibold text-foreground">{member.display_name}</span>
               {member.is_paceday_user && (
-                <span className="rounded bg-[#5B7FFF]/12 px-1.5 py-0.5 text-[9px] font-semibold text-[#5B7FFF]">On Paceday</span>
+                <span className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary">On Paceday</span>
               )}
             </div>
             <div className="truncate text-[11px] text-muted-foreground">{member.email}</div>
@@ -949,7 +949,7 @@ function MemberRow({
               <span
                 className={
                   "inline-block rounded px-1.5 py-0.5 text-[9px] font-medium " +
-                  (member.source === "auto" ? "bg-muted text-muted-foreground" : "border border-[#5B7FFF]/40 text-[#5B7FFF]")
+                  (member.source === "auto" ? "bg-muted text-muted-foreground" : "border border-primary/40 text-primary")
                 }
               >
                 {member.source === "auto"
@@ -968,7 +968,7 @@ function MemberRow({
             <select
               value={member.cadence}
               onChange={(e) => onCadenceChange(e.target.value as Cadence, member.custom_cadence_days)}
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-[#5B7FFF]/20"
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
             >
               {CADENCE_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -1001,7 +1001,7 @@ function MemberRow({
                   : status.kind === "due"
                     ? "bg-[#E9B949]/15 text-[#8A6A14]"
                     : status.kind === "ok"
-                      ? "bg-[#5FC9A6]/15 text-[#2F8B70]"
+                      ? "bg-success/15 text-[#2F8B70]"
                       : "bg-muted text-muted-foreground")
               }
             >
@@ -1017,7 +1017,7 @@ function MemberRow({
             ) : member.data_available && analytics ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
-                  <span className="text-2xl font-semibold text-[#5B7FFF]">{fmtMin(focusMin)}</span>
+                  <span className="text-2xl font-semibold text-primary">{fmtMin(focusMin)}</span>
                   <TrendArrow pct={trendPct} />
                 </div>
                 <div className="text-[10px] text-muted-foreground">focus this week</div>
@@ -1244,7 +1244,7 @@ export function AddPersonDialog({
           )}
           {note && <div className="rounded-lg bg-[#E9B949]/10 px-3 py-2 text-xs text-[#8A6A14]">{note}</div>}
           {error && (
-            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+            <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
               {error}
             </div>
           )}
@@ -1254,7 +1254,7 @@ export function AddPersonDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={addMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={submit} disabled={addMut.isPending} className="bg-primary text-white hover:bg-primary/90">
             {addMut.isPending ? "Adding…" : "Add to team"}
           </Button>
         </DialogFooter>
@@ -1330,7 +1330,7 @@ function CreateTeamDialog({
             />
           </label>
           {error && (
-            <div className="rounded-lg bg-[#E35D5D]/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+            <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
               {error}
             </div>
           )}
@@ -1342,7 +1342,7 @@ function CreateTeamDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={createMut.isPending} className="bg-[#5B7FFF] text-white hover:bg-[#5B7FFF]/90">
+          <Button onClick={submit} disabled={createMut.isPending} className="bg-primary text-white hover:bg-primary/90">
             {createMut.isPending ? "Creating…" : "Create team"}
           </Button>
         </DialogFooter>

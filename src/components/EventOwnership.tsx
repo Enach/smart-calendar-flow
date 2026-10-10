@@ -19,7 +19,7 @@ export function OwnershipPill({ ownership, organizer }: Props) {
   if (ownership === "owned") {
     return (
       <span
-        className="inline-flex items-center gap-1 rounded-full border border-[#5FC9A6]/30 bg-[#5FC9A6]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2F8F73]"
+        className="inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#2F8F73]"
         title="You organized this meeting — you can reschedule it directly."
       >
         <UserCheck className="h-3 w-3" />
@@ -31,7 +31,7 @@ export function OwnershipPill({ ownership, organizer }: Props) {
   const who = organizer?.name || organizer?.email || "the organizer";
   return (
     <span
-      className="inline-flex items-center gap-1 rounded-full border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6F4FB8]"
+      className="inline-flex items-center gap-1 rounded-full border border-ai/30 bg-ai/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#6F4FB8]"
       title={`Hosted by ${who} — they need to move it.`}
     >
       <Users className="h-3 w-3" />
@@ -59,9 +59,9 @@ export function ParticipantNotice({
     : null;
 
   return (
-    <div className="rounded-xl border border-[#9B7AE0]/25 bg-[#9B7AE0]/5 p-4">
+    <div className="rounded-xl border border-ai/25 bg-ai/5 p-4">
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#9B7AE0]/15 text-[#6F4FB8]">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-ai/15 text-[#6F4FB8]">
           <Users className="h-4 w-4" />
         </div>
         <div className="min-w-0 flex-1">
@@ -80,7 +80,7 @@ export function ParticipantNotice({
           {mailto && (
             <a
               href={mailto}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-[#9B7AE0] px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-[#8A6BD0]"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-ai px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-[#8A6BD0]"
             >
               <Mail className="h-3 w-3" />
               Ask to reschedule
