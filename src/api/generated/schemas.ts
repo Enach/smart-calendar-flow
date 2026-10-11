@@ -26,7 +26,7 @@ export type MeetingTitle = __TypedOpenapi.Schemas.MeetingTitle;
 export const MeetingTitle = z.strictObject({ title: z.string(), duration_minutes: z.number().int() });
 
 export type AnalyticsWeekRow = __TypedOpenapi.Schemas.AnalyticsWeekRow;
-export const AnalyticsWeekRow = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.datetime(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number(), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5).nullable(), focus_score: z.number().int(), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime() });
+export const AnalyticsWeekRow = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.datetime(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number(), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int(), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime() });
 
 export type AnalyticsWeekWithBreakdown = __TypedOpenapi.Schemas.AnalyticsWeekWithBreakdown;
 export const AnalyticsWeekWithBreakdown = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.date(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number(), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int().min(0).max(100), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime(), breakdown: z.array(AnalyticsBreakdownEntry).min(5).max(5) });
@@ -68,7 +68,7 @@ export type CompressionApplyRequest = __TypedOpenapi.Schemas.CompressionApplyReq
 export const CompressionApplyRequest = z.object({ proposals: z.array(CompressionApplyProposal) }).partial().catchall(z.unknown());
 
 export type CompressionApplyResult = __TypedOpenapi.Schemas.CompressionApplyResult;
-export const CompressionApplyResult = z.strictObject({ applied: z.array(z.string()).nullable(), failed: z.array(z.string()).nullable() });
+export const CompressionApplyResult = z.strictObject({ applied: z.array(z.string()), failed: z.array(z.string()) });
 
 export type CompressionRequest = __TypedOpenapi.Schemas.CompressionRequest;
 export const CompressionRequest = z.object({ date: z.iso.date(), week: z.iso.date() }).partial().catchall(z.unknown());
@@ -77,7 +77,7 @@ export type MoveProposal = __TypedOpenapi.Schemas.MoveProposal;
 export const MoveProposal = z.strictObject({ eventId: z.string(), eventTitle: z.string(), currentStart: z.iso.datetime(), currentEnd: z.iso.datetime(), proposedStart: z.iso.datetime(), proposedEnd: z.iso.datetime(), reason: z.string(), focusGainMinutes: z.number().int() });
 
 export type CompressionResult = __TypedOpenapi.Schemas.CompressionResult;
-export const CompressionResult = z.strictObject({ date: z.string(), proposals: z.array(MoveProposal).nullable(), totalFocusGainMinutes: z.number().int() });
+export const CompressionResult = z.strictObject({ date: z.string(), proposals: z.array(MoveProposal), totalFocusGainMinutes: z.number().int() });
 
 export type ConferenceMeetingDetails = __TypedOpenapi.Schemas.ConferenceMeetingDetails;
 export const ConferenceMeetingDetails = z.strictObject({ provider: z.string(), joinUrl: z.url(), meetingId: z.string().optional(), password: z.string().optional() });
@@ -107,7 +107,7 @@ export type SlackBlock = __TypedOpenapi.Schemas.SlackBlock;
 export const SlackBlock = z.object({ type: z.enum(["header", "context", "section", "divider"]) }).partial().catchall(z.unknown());
 
 export type DailyRecapPreview = __TypedOpenapi.Schemas.DailyRecapPreview;
-export const DailyRecapPreview = z.strictObject({ blocks: z.array(SlackBlock).nullable() });
+export const DailyRecapPreview = z.strictObject({ blocks: z.array(SlackBlock) });
 
 export type DailyRecapSettings = __TypedOpenapi.Schemas.DailyRecapSettings;
 export const DailyRecapSettings = z.strictObject({ enabled: z.boolean(), send_time: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), send_to: z.enum(["dm", "channel"]), channel_id: z.string(), include_briefs: z.boolean(), include_focus_blocks: z.boolean(), include_habits: z.boolean() });
@@ -140,7 +140,7 @@ export type FocusRunRequest = __TypedOpenapi.Schemas.FocusRunRequest;
 export const FocusRunRequest = z.object({ week: z.iso.date() }).partial().catchall(z.unknown());
 
 export type FocusRunResult = __TypedOpenapi.Schemas.FocusRunResult;
-export const FocusRunResult = z.strictObject({ weekStart: z.iso.datetime(), createdBlocks: z.array(FocusRunBlock).nullable(), skippedDays: z.array(z.string()).nullable(), totalMinutes: z.number().int(), errors: z.array(z.string()).nullable() });
+export const FocusRunResult = z.strictObject({ weekStart: z.iso.datetime(), createdBlocks: z.array(FocusRunBlock), skippedDays: z.array(z.string()), totalMinutes: z.number().int(), errors: z.array(z.string()) });
 
 export type RawGoogleBusyWindow = __TypedOpenapi.Schemas.RawGoogleBusyWindow;
 export const RawGoogleBusyWindow = z.strictObject({ Start: z.iso.datetime(), End: z.iso.datetime() });
@@ -359,7 +359,7 @@ export type ScheduleSuggestRequest = __TypedOpenapi.Schemas.ScheduleSuggestReque
 export const ScheduleSuggestRequest = z.object({ duration_minutes: z.number().int().optional(), attendees: z.array(z.email()).optional(), range_start: z.iso.datetime(), range_end: z.iso.datetime(), title: z.string().optional() }).catchall(z.unknown());
 
 export type ScheduleSuggestions = __TypedOpenapi.Schemas.ScheduleSuggestions;
-export const ScheduleSuggestions = z.strictObject({ slots: z.array(SuggestedSlot).nullable() });
+export const ScheduleSuggestions = z.strictObject({ slots: z.array(SuggestedSlot) });
 
 export type SchedulingErrorResponse = __TypedOpenapi.Schemas.SchedulingErrorResponse;
 export const SchedulingErrorResponse = z.strictObject({ error: z.string() });
@@ -413,13 +413,13 @@ export type Team = __TypedOpenapi.Schemas.Team;
 export const Team = z.strictObject({ id: z.uuid(), orgId: z.uuid().optional(), name: z.string(), createdBy: z.uuid(), createdAt: z.iso.datetime() });
 
 export type TeamAnalytics = __TypedOpenapi.Schemas.TeamAnalytics;
-export const TeamAnalytics = z.strictObject({ avg_meeting_minutes: z.number().int(), avg_focus_minutes: z.number().int(), member_breakdown: z.array(MemberAnalyticsSummary).nullable() });
+export const TeamAnalytics = z.strictObject({ avg_meeting_minutes: z.number().int(), avg_focus_minutes: z.number().int(), member_breakdown: z.array(MemberAnalyticsSummary) });
 
 export type TeamMember = __TypedOpenapi.Schemas.TeamMember;
 export const TeamMember = z.strictObject({ teamId: z.uuid(), userId: z.uuid(), role: z.enum(["owner", "member"]), joinedAt: z.iso.datetime(), name: z.string().optional(), email: z.email().optional() });
 
 export type TeamDetail = __TypedOpenapi.Schemas.TeamDetail;
-export const TeamDetail = z.strictObject({ team: Team, members: z.array(TeamMember).nullable() });
+export const TeamDetail = z.strictObject({ team: Team, members: z.array(TeamMember) });
 
 export type TeamInvite = __TypedOpenapi.Schemas.TeamInvite;
 export const TeamInvite = z.strictObject({ id: z.uuid(), teamId: z.uuid(), inviteeEmail: z.email(), invitedBy: z.uuid(), token: z.string(), status: z.enum(["pending", "accepted", "declined", "expired"]), createdAt: z.iso.datetime(), expiresAt: z.iso.datetime() });

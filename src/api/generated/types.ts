@@ -1257,7 +1257,7 @@ export interface paths {
         };
         /**
          * Members whose 1:1 cadence is overdue or due within 7 days.
-         * @description The engine always computes gaps over the manager's GLOBAL roster; when `team_id` is supplied the handler post-filters that list to emails present in the team-scoped roster (case-insensitive). Members with cadence="none" never appear. A member with a recorded 1:1 occurrence in the next 14 days is suppressed. Sorted by days_overdue descending. `gaps` is always an array, never null.
+         * @description Gaps are computed over the roster in scope: the manager's global roster, or, when `team_id` is supplied, the team-scoped roster with that team's cadences. Members with cadence="none" never appear. A member never met is due now. A member with a recorded 1:1 occurrence in the next 14 days is suppressed. Sorted by days_overdue descending. `gaps` is always an array, never null.
          *
          */
         get: operations["getManagerCadenceGaps"];
@@ -1643,7 +1643,7 @@ export interface paths {
         put?: never;
         /**
          * Preview meeting-compression proposals
-         * @description Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and can return `null` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+         * @description Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
          *
          */
         post: operations["previewCompression"];
@@ -2147,7 +2147,7 @@ export interface paths {
         };
         /**
          * One team plus its members.
-         * @description Membership required. `members` is the raw result of ListTeamMembers with its error discarded, ordered by joined_at ASC, and is JSON `null` (not []) whenever the list is empty or the query failed.
+         * @description Membership required. `members` is the raw result of ListTeamMembers with its error discarded, ordered by joined_at ASC, and is `[]` whenever the list is empty or the query failed (PAC-28).
          *
          */
         get: operations["getTeam"];
@@ -2394,8 +2394,8 @@ export interface components {
              */
             habit_completion_rate: number;
             largest_focus_block_minutes: number;
-            /** @description May serialise as `null` rather than `[]`: it is populated by a failure-swallowing `json.Unmarshal` of the JSONB column into a nil slice. */
-            top_meeting_titles: components["schemas"]["MeetingTitle"][] | null;
+            /** @description `[]` when the week has no titles, including when the JSONB column holds `null` or fails to unmarshal (PAC-28). */
+            top_meeting_titles: components["schemas"]["MeetingTitle"][];
             focus_score: number;
             estimated_meeting_cost_minutes: number;
             /** Format: date-time */
@@ -2529,7 +2529,7 @@ export interface components {
             last_one_on_one_at: string | null;
             /**
              * Format: date-time
-             * @description last_one_on_one_at (or now, when never met) plus the cadence interval. Monthly uses calendar-month arithmetic; the rest use day addition.
+             * @description last_one_on_one_at plus the cadence interval; now when the member was never met. Monthly uses calendar-month arithmetic; the rest use day addition.
              *
              */
             next_expected_by: string;
@@ -2619,10 +2619,10 @@ export interface components {
         /** @description Literal map with keys `applied` and `failed`. */
         CompressionApplyResult: {
             /** @description Event ids the engine moved. */
-            applied: string[] | null;
+            applied: string[];
             /** @description Mixed contents: handler-side entries read `"<event_id>: invalid time format"`, engine-side entries are appended verbatim by Compressor.Apply.
              *      */
-            failed: string[] | null;
+            failed: string[];
         };
         /** @description Both fields optional; `week` takes precedence over `date` when non-empty.
          *      */
@@ -2645,7 +2645,7 @@ export interface components {
         CompressionResult: {
             /** @description `YYYY-MM-DD` as produced by the engine. */
             date: string;
-            proposals: components["schemas"]["MoveProposal"][] | null;
+            proposals: components["schemas"]["MoveProposal"][];
             totalFocusGainMinutes: number;
         };
         /** @description backend/conference/provider.go Details. camelCase json tags, unlike every other response in this domain. */
@@ -2797,7 +2797,7 @@ export interface components {
         };
         /** @description Literal `{"blocks": [...]}`. */
         DailyRecapPreview: {
-            blocks: components["schemas"]["SlackBlock"][] | null;
+            blocks: components["schemas"]["SlackBlock"][];
         };
         /** @description Hand-built map in dailyRecapHandlers.getSettings. snake_case, and the key names do not mirror the camelCase Settings keys one-to-one.
          *      */
@@ -2923,13 +2923,13 @@ export interface components {
              * @description RFC3339 (Go time.Time).
              */
             weekStart: string;
-            /** @description `null` when the engine created nothing. */
-            createdBlocks: components["schemas"]["FocusRunBlock"][] | null;
+            /** @description `[]` when the engine created nothing. */
+            createdBlocks: components["schemas"]["FocusRunBlock"][];
             /** @description x-uncertain at field level - the format of each entry is not pinned by a struct tag; it is whatever the engine appends.
              *      */
-            skippedDays: string[] | null;
+            skippedDays: string[];
             totalMinutes: number;
-            errors: string[] | null;
+            errors: string[];
         };
         /** @description engine.ParticipantBusy, as emitted under the `results` key. */
         FreeBusyLegacyResult: {
@@ -3844,8 +3844,8 @@ export interface components {
         };
         /** @description engine.ScheduleSuggestions. */
         ScheduleSuggestions: {
-            /** @description At most 3 entries; `null` when no candidate survived. */
-            slots: components["schemas"]["SuggestedSlot"][] | null;
+            /** @description At most 3 entries; `[]` when no candidate survived. */
+            slots: components["schemas"]["SuggestedSlot"][];
         };
         /** @description The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
          *      */
@@ -4253,14 +4253,13 @@ export interface components {
             /** @description Integer division by member count (or by 1 for an empty team). */
             avg_meeting_minutes: number;
             avg_focus_minutes: number;
-            /** @description JSON null (not []) when the team has no members — the slice is appended to without pre-initialisation and has no omitempty.
-             *      */
-            member_breakdown: components["schemas"]["MemberAnalyticsSummary"][] | null;
+            /** @description `[]` when the team has no members. */
+            member_breakdown: components["schemas"]["MemberAnalyticsSummary"][];
         };
         TeamDetail: {
             team: components["schemas"]["Team"];
-            /** @description JSON null (not []) when the team has no members or the query failed. */
-            members: components["schemas"]["TeamMember"][] | null;
+            /** @description `[]` when the team has no members or the query failed. */
+            members: components["schemas"]["TeamMember"][];
         };
         /** @description storage.TeamInvite, returned in full (token included) by inviteTeamMember. */
         TeamInvite: {
@@ -6132,14 +6131,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Focus block rows. `null` (not `[]`) when the week has no rows, because the handler encodes a nil slice.
+            /** @description Focus block rows. `[]` when the week has no rows (PAC-28).
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FocusBlockRecord"][] | null;
+                    "application/json": components["schemas"]["FocusBlockRecord"][];
                 };
             };
             /** @description `invalid week format` - JSON error shape (writeError). */
@@ -8021,14 +8020,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Array of per-day results. `null` when the slice stayed empty (week mode with every day failing).
+            /** @description Array of per-day results. `[]` when the slice stayed empty (week mode with every day failing).
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CompressionResult"][] | null;
+                    "application/json": components["schemas"]["CompressionResult"][];
                 };
             };
             /** @description `invalid week format` or `invalid date format` - JSON error shape (writeError).
