@@ -9,7 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
 import { LinkBookingsDialog } from "@/components/links/LinkBookingsDialog";
-import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl } from "@/api/schedulingLinks";
+import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl, publicBookingDisplayUrl } from "@/api/schedulingLinks";
 import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { SchedulingLink } from "@/api/types";
@@ -117,7 +117,7 @@ function LinkCard({
           <div>
             <h3 className="font-serif text-lg leading-snug text-foreground">{link.title}</h3>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="truncate font-mono">paceday.com/book/{link.slug}</span>
+              <span className="truncate font-mono">{publicBookingDisplayUrl(link.slug)}</span>
               <CopyButton slug={link.slug} />
             </div>
           </div>

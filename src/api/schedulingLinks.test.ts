@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEMO_SESSION_KEY, isApiHttpError, isApiUnreachableError, isUsingMocks, setMockMode } from "./client";
-import { publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
+import { publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -202,6 +202,14 @@ describe("scheduling link form validation", () => {
 
   it("builds the public URL deterministically from the slug", () => {
     expect(publicBookingUrl("intro-chat", "https://app.test/")).toBe("https://app.test/book/intro-chat");
+  });
+
+  it("displays exactly the URL that is copied, minus the scheme", () => {
+    expect(publicBookingDisplayUrl("intro-chat", "https://app.test/")).toBe("app.test/book/intro-chat");
+    expect(publicBookingDisplayUrl("intro-chat", "http://localhost:8080")).toBe("localhost:8080/book/intro-chat");
+    expect(`https://${publicBookingDisplayUrl("x", "https://staging.example.com")}`).toBe(
+      publicBookingUrl("x", "https://staging.example.com"),
+    );
   });
 });
 
