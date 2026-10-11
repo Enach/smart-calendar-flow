@@ -114,6 +114,34 @@ describe("scheduling links contract", () => {
     expect(JSON.parse(String(hostCall?.[1]?.body))).toEqual({ email: "mate@co.com" });
   });
 
+  it("invites only new co-hosts when a link is saved, never existing ones", async () => {
+    const posted: string[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/l1/hosts") {
+        posted.push(JSON.parse(String(init?.body)).email);
+        return jsonResponse({}, 201);
+      }
+      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") return jsonResponse({});
+      if (path === "/api/scheduling-links/l1") {
+        return jsonResponse({
+          ...BACKEND_LINK,
+          hosts: [
+            { email: "owner@co.com", is_owner: true, status: "accepted" },
+            { email: "Accepted@co.com", status: "accepted" },
+          ],
+        });
+      }
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+
+    await schedulingLinksApi.updateLink("l1", {
+      title: "Renamed",
+      co_host_emails: ["accepted@co.com", "new@co.com"],
+    });
+    expect(posted).toEqual(["new@co.com"]);
+  });
+
   it("returns the server response after an update, not the local form state", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = requestPath(input);
