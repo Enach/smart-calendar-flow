@@ -550,7 +550,13 @@ export const schedulingLinksApi = {
         await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
 
         if (input.co_host_emails) {
-          await Promise.allSettled(input.co_host_emails.map((email) =>
+          // Invite only people who are not hosts yet. Re-inviting an existing
+          // co-host used to reset an accepted one to pending, dropping their
+          // calendar from the link's slots (PAC-61); the server no longer does
+          // that, but there is no reason to send the request at all.
+          const existing = new Set((current.hosts ?? []).map((h) => h.email.toLowerCase()));
+          const added = input.co_host_emails.filter((email) => !existing.has(email.trim().toLowerCase()));
+          await Promise.allSettled(added.map((email) =>
             requestApi("POST", `/scheduling-links/${id}/hosts`, { email }),
           ));
         }
