@@ -15,14 +15,15 @@ const PROVIDER_LABEL: Record<ConferenceProvider, string> = {
   custom: "Custom URL",
 };
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <button
       type="button"
       role="switch"
-      aria-checked={checked}
+      aria-checked={!!checked}
+      aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-primary" : "bg-muted"}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition ${checked ? "bg-primary" : "bg-muted-foreground/80"}`}
     >
       <span
         className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition ${
@@ -263,6 +264,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
             </p>
           </div>
           <Toggle
+            label="Attach Microsoft Teams links"
             checked={isOutlook ? true : !!settings.teams_enabled}
             onChange={(v) => onPatch({ teams_enabled: v })}
           />

@@ -24,6 +24,7 @@ export function NLPBar({ initialValue, loading, error, onSubmit }: NLPBarProps) 
         <input
           value={text}
           onChange={(e) => setText(e.target.value)}
+          aria-label="Describe what to schedule"
           placeholder="Schedule a meeting… e.g. '30 min with alice@co.com this week'"
           className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           disabled={loading}
