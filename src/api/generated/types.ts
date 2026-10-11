@@ -1843,7 +1843,7 @@ export interface paths {
         head?: never;
         /**
          * Partially update a scheduling link (owner only).
-         * @description Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) ALL non-owner hosts are deleted first, then the listed emails are re-added as `pending` -- accepted co-hosts are silently reset to pending.
+         * @description Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
          */
         patch: operations["updateSchedulingLink"];
         trace?: never;
@@ -1919,7 +1919,7 @@ export interface paths {
         put?: never;
         /**
          * Invite an existing user as a co-host (owner only).
-         * @description The invitee must already have an account; the email is lowercased and trimmed. Upsert on (link_id, user_id), so re-inviting an accepted host resets them to `pending`. Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
+         * @description The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
          */
         post: operations["inviteSchedulingLinkHost"];
         delete?: never;
@@ -4358,7 +4358,7 @@ export interface components {
             max_uses?: number | null;
             /** @description Setting false is the same soft-deactivation that DELETE performs. */
             active?: boolean | null;
-            /** @description Destructive when present: every non-owner host row is deleted first, then these emails are added as `pending`. Unknown emails are skipped silently. */
+            /** @description When present, the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Unknown emails are skipped silently. */
             co_host_emails?: string[];
         };
         /** @description storage.UserProfile marshalled with no json tags — Go field names verbatim. Do not rename these keys in the spec; they are literally what the server sends.
@@ -8749,7 +8749,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Host row created or reset to pending. */
+            /** @description Already a host of this link; their row, unchanged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulingLinkHostRecord"];
+                };
+            };
+            /** @description New invitee; a `pending` host row was created. */
             201: {
                 headers: {
                     [name: string]: unknown;
