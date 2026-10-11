@@ -53,7 +53,7 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
 
   if (state.kind === "paceday-accepted") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-[#5B7FFF]/12 px-2 py-0.5 text-[10px] font-semibold text-[#5B7FFF]">
+      <span className="inline-flex items-center gap-1 rounded-full bg-primary/12 px-2 py-0.5 text-[10px] font-semibold text-primary">
         <UserCheck className="h-2.5 w-2.5" />
         On Paceday
       </span>
@@ -74,7 +74,7 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
       <TooltipProvider delayDuration={150}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#5FC9A6]/15 px-2 py-0.5 text-[10px] font-semibold text-[#2F8B70]">
+            <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-[#2F8B70]">
               <Check className="h-2.5 w-2.5" />
               Availability synced
               <ProviderLogo provider={state.provider} />

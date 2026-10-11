@@ -364,7 +364,7 @@ export default function PublicBooking() {
                 </div>
               )}
               {link.usage_type === "single_use" && (
-                <div className="rounded-md border border-[#9B7AE0]/30 bg-[#9B7AE0]/10 px-3 py-2 text-xs text-[#5C3DA1]">
+                <div className="rounded-md border border-ai/30 bg-ai/10 px-3 py-2 text-xs text-[#5C3DA1]">
                   This is a one-time link — only one booking is allowed.
                 </div>
               )}
