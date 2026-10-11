@@ -405,6 +405,15 @@ export default function PublicBooking() {
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {selectedDate ? fmtDateLong(selectedDate.toISOString()) : "Available times"}
                   </p>
+                  {/* A 409 (or 422) on submit clears the chosen slot and returns
+                      here, so the reason must be shown here too: it used to live
+                      only in the details step, and a visitor who lost the race
+                      to a slot was sent back with no explanation. */}
+                  {submitError && (
+                    <p role="alert" className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {submitError}
+                    </p>
+                  )}
                   {slotsErrorMessage && (
                     <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                       <span>{slotsErrorMessage}</span>
@@ -433,7 +442,10 @@ export default function PublicBooking() {
                         <button
                           key={s.start}
                           type="button"
-                          onClick={() => setSelectedSlot(s)}
+                          onClick={() => {
+                            setSelectedSlot(s);
+                            setSubmitError(null);
+                          }}
                           className="min-h-[44px] rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary hover:bg-primary-muted"
                         >
                           {fmtTime(s.start)}
@@ -503,7 +515,7 @@ export default function PublicBooking() {
                   </div>
 
                   {submitError && (
-                    <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
                       {submitError}
                     </p>
                   )}
