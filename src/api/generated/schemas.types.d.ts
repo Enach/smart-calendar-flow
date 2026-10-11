@@ -2204,7 +2204,7 @@ export type UpdateSchedulingLinkRequest = Partial<{
    */
   active: (boolean | null);
   /**
-   * Destructive when present: every non-owner host row is deleted first, then these emails are added as `pending`. Unknown emails are skipped silently.
+   * When present, the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Unknown emails are skipped silently.
    */
   co_host_emails: Array<string>;
 }>
@@ -4164,7 +4164,7 @@ export type get_GetSchedulingLink = {
       
     }
 /**
- * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) ALL non-owner hosts are deleted first, then the listed emails are re-added as `pending` -- accepted co-hosts are silently reset to pending.
+ * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
  */
 export type patch_UpdateSchedulingLink = {
       method: "PATCH",
@@ -4282,7 +4282,7 @@ export type post_DeclineSchedulingLinkInviteByLink = {
       
     }
 /**
- * The invitee must already have an account; the email is lowercased and trimmed. Upsert on (link_id, user_id), so re-inviting an accepted host resets them to `pending`. Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
+ * The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
  */
 export type post_InviteSchedulingLinkHost = {
       method: "POST",
@@ -4296,7 +4296,8 @@ export type post_InviteSchedulingLinkHost = {
         
         body:  Schemas.InviteSchedulingLinkHostRequest,
           }
-      responses: {201: Schemas.SchedulingLinkHostRecord,
+      responses: {200: Schemas.SchedulingLinkHostRecord,
+201: Schemas.SchedulingLinkHostRecord,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
 403: Schemas.BookingError,
