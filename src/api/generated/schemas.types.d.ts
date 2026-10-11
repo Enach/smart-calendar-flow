@@ -1087,7 +1087,7 @@ export type ManagerProfileSummary = {
  */
 export type ManagerProfileUpdate = ({ is_manager: boolean } & Record<string, unknown>)
 /**
- * engine.MemberWeekStats. When data_available is false the three minute counters are all 0 — callers must branch on data_available rather than treating 0 as measured.
+ * engine.MemberWeekStats. When data_available is false the three minute counters are all 0 — callers must branch on data_available rather than treating 0 as measured. For a Paceday member, data_available is also false unless the caller owns a team the member belongs to (PAC-60); see getManagerAnalytics.
  */
 export type MemberWeekStats = {
   /**
@@ -3448,7 +3448,7 @@ export type post_TestLLMConnection = {
       
     }
 /**
- * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null.
+ * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy).
  */
 export type get_GetManagerAnalytics = {
       method: "GET",
