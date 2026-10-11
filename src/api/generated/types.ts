@@ -1194,7 +1194,7 @@ export interface paths {
         };
         /**
          * Twelve weeks of per-member focus/meeting/free minutes.
-         * @description Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null.
+         * @description Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy).
          *
          */
         get: operations["getManagerAnalytics"];
@@ -3432,7 +3432,7 @@ export interface components {
             focus_minutes: number;
             focus_score: number;
         };
-        /** @description engine.MemberWeekStats. When data_available is false the three minute counters are all 0 — callers must branch on data_available rather than treating 0 as measured.
+        /** @description engine.MemberWeekStats. When data_available is false the three minute counters are all 0 — callers must branch on data_available rather than treating 0 as measured. For a Paceday member, data_available is also false unless the caller owns a team the member belongs to (PAC-60); see getManagerAnalytics.
          *      */
         MemberWeekStats: {
             /** @description Always 0 for an external (non-Paceday) member; FreeBusy yields no focus signal. */
