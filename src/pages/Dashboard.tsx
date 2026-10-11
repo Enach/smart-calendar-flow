@@ -29,6 +29,7 @@ import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent, ParseResult } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
+import { eventChipColors } from "@/lib/eventChip";
 
 type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
 const VIEW_STORAGE_KEY = "calendar.view";
@@ -293,8 +294,6 @@ export default function Dashboard() {
             : e.color || "#3B82F6";
         const cleanTitle = (e.title ?? "").replace(/^(🎯|🏠)\s*/, "");
         const displayTitle = isFocus ? `🎯 ${cleanTitle}` : isPersonal ? `🏠 ${cleanTitle}` : cleanTitle;
-        // Soften the fill so the colored accent bar pops while keeping the chip readable
-        const bg = `${color}26`; // ~15% alpha
         const durationMin =
           (new Date(e.end).getTime() - new Date(e.start).getTime()) / 60000;
         return {
@@ -302,9 +301,7 @@ export default function Dashboard() {
           title: displayTitle,
           start: e.start,
           end: e.end,
-          backgroundColor: bg,
-          borderColor: color,
-          textColor: color,
+          ...eventChipColors(color),
           editable: !isFocus && !isPersonal,
           extendedProps: {
             raw: e,
