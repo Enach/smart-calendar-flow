@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeSettings, settingsRequestBody } from "./client";
+import { llmTestBody, normalizeSettings, settingsPatchBody, settingsRequestBody } from "./client";
 import {
   clampMinuteSettings,
   defaultWorkingHours,
@@ -42,7 +42,7 @@ describe("settings adapter", () => {
     expect(out.lunch_breaks).toBeUndefined();
   });
 
-  it("sends camelCase fields in the PUT body and drops empty lunch overrides", () => {
+  it("sends camelCase fields and an empty lunchBreaks map when there are no overrides", () => {
     const body = settingsRequestBody({
       ...base,
       working_hours: {
@@ -53,7 +53,7 @@ describe("settings adapter", () => {
       lunch_breaks: {},
     });
     expect(body.workingHours).toBeTruthy();
-    expect(body.lunchBreaks).toBeUndefined();
+    expect(body.lunchBreaks).toEqual({});
     expect(body.working_hours).toBeUndefined();
     expect(body.workStart).toBe("09:00");
     expect(body.work_start).toBeUndefined();
@@ -113,8 +113,7 @@ describe("settings adapter", () => {
     expect(body.protectLunch).toBe(false);
     expect(body.focus_daily_target_minutes).toBeUndefined();
     expect(body.protect_lunch).toBeUndefined();
-    // Properties the frontend does not model survive the round trip, because
-    // the PUT replaces the whole settings document.
+    // Properties the frontend does not model are carried through.
     expect(body.recapEnabled).toBe(false);
   });
 
@@ -183,5 +182,61 @@ describe("working-hours bounds", () => {
     expect(clamped.focus_max_block_minutes).toBe(480);
     expect(clamped.buffer_after_minutes).toBe(480);
     expect(clamped.out_of_hours_meetings_per_week).toBe(4);
+  });
+});
+
+const patchPayload = {
+  workStart: "09:00",
+  workEnd: "18:00",
+  timezone: "UTC",
+  focusDailyTargetMinutes: 240,
+  lunchStart: "12:00",
+  lunchEnd: "13:00",
+  protectLunch: true,
+  workingHours: { mode: "all_days", default: { enabled: true, start: "09:00", end: "18:00" }, days: {} },
+  lunchBreaks: {},
+  llmProvider: "ollama",
+  llmModel: "",
+  recapEnabled: false,
+};
+
+// PAC-24: PATCH /api/settings merges, so the body carries only what changed,
+// only contract properties, and the key only when the user typed or cleared it.
+describe("PATCH body", () => {
+  const read = { ...normalizeSettings({ ...patchPayload, llmApiKeySet: true, updatedAt: "2026-10-12T10:00:00Z" }), calendar_id: "primary" } as Settings;
+
+  it("is empty when nothing changed", () => {
+    expect(settingsPatchBody({ ...read }, read)).toEqual({});
+  });
+
+  it("carries only the changed properties, in camelCase", () => {
+    expect(settingsPatchBody({ ...read, focus_daily_target_minutes: 180, timezone: "Europe/Paris" }, read)).toEqual({
+      focusDailyTargetMinutes: 180,
+      timezone: "Europe/Paris",
+    });
+  });
+
+  it("never sends properties the contract does not have, or read-only ones", () => {
+    const body = settingsPatchBody({ ...read, calendar_id: "work", teams_enabled: true, llm_api_key_set: false }, read);
+    expect(body).toEqual({});
+  });
+
+  it("sends the key only when typed or cleared", () => {
+    expect(settingsPatchBody({ ...read }, read).llmApiKey).toBeUndefined();
+    expect(settingsPatchBody({ ...read, llm_api_key: "sk-new" }, read)).toEqual({ llmApiKey: "sk-new" });
+    expect(settingsPatchBody({ ...read, llm_api_key: "" }, read)).toEqual({ llmApiKey: "" });
+  });
+
+  it("removes the last per-day lunch override with an empty map", () => {
+    const withLunch = { ...read, lunch_breaks: { monday: { enabled: true, start: "12:00", end: "13:00" } } } as Settings;
+    expect(settingsPatchBody({ ...withLunch, lunch_breaks: undefined }, withLunch)).toEqual({ lunchBreaks: {} });
+  });
+
+  it("probes with provider, model and an unsaved key only", () => {
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_model: "gpt-4o", llm_base_url: "https://x" })).toEqual({
+      llmProvider: "openai",
+      llmModel: "gpt-4o",
+    });
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "sk-try" }).llmApiKey).toBe("sk-try");
   });
 });
