@@ -94,9 +94,9 @@ export type AnalyticsWeekRow = {
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
   /**
-   * May serialise as `null` rather than `[]`: it is populated by a failure-swallowing `json.Unmarshal` of the JSONB column into a nil slice.
+   * `[]` when the week has no titles, including when the JSONB column holds `null` or fails to unmarshal (PAC-28).
    */
-  top_meeting_titles: (Array<MeetingTitle> | null);
+  top_meeting_titles: Array<MeetingTitle>;
   focus_score: number;
   estimated_meeting_cost_minutes: number;
   computed_at: string;
@@ -237,7 +237,7 @@ export type CadenceGap = {
   cadence: Cadence;
   last_one_on_one_at: (string | null);
   /**
-   * last_one_on_one_at (or now, when never met) plus the cadence interval. Monthly uses calendar-month arithmetic; the rest use day addition.
+   * last_one_on_one_at plus the cadence interval; now when the member was never met. Monthly uses calendar-month arithmetic; the rest use day addition.
    */
   next_expected_by: string;
   /**
@@ -356,11 +356,11 @@ export type CompressionApplyResult = {
   /**
    * Event ids the engine moved.
    */
-  applied: (Array<string> | null);
+  applied: Array<string>;
   /**
    * Mixed contents: handler-side entries read `"<event_id>: invalid time format"`, engine-side entries are appended verbatim by Compressor.Apply.
    */
-  failed: (Array<string> | null);
+  failed: Array<string>;
 }
 /**
  * Both fields optional; `week` takes precedence over `date` when non-empty.
@@ -387,7 +387,7 @@ export type CompressionResult = {
    * `YYYY-MM-DD` as produced by the engine.
    */
   date: string;
-  proposals: (Array<MoveProposal> | null);
+  proposals: Array<MoveProposal>;
   totalFocusGainMinutes: number;
 }
 /**
@@ -586,7 +586,7 @@ export type SlackBlock = (Partial<{ type: ("header" | "context" | "section" | "d
 /**
  * Literal `{"blocks": [...]}`.
  */
-export type DailyRecapPreview = { blocks: (Array<SlackBlock> | null) }
+export type DailyRecapPreview = { blocks: Array<SlackBlock> }
 /**
  * Hand-built map in dailyRecapHandlers.getSettings. snake_case, and the key names do not mirror the camelCase Settings keys one-to-one.
  */
@@ -724,15 +724,15 @@ export type FocusRunResult = {
    */
   weekStart: string;
   /**
-   * `null` when the engine created nothing.
+   * `[]` when the engine created nothing.
    */
-  createdBlocks: (Array<FocusRunBlock> | null);
+  createdBlocks: Array<FocusRunBlock>;
   /**
    * x-uncertain at field level - the format of each entry is not pinned by a struct tag; it is whatever the engine appends.
    */
-  skippedDays: (Array<string> | null);
+  skippedDays: Array<string>;
   totalMinutes: number;
-  errors: (Array<string> | null);
+  errors: Array<string>;
 }
 /**
  * calendar.TimeSlot serialized WITHOUT json tags, hence capitalized Go field names. A Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded.
@@ -1643,9 +1643,9 @@ export type ScheduleSuggestRequest = ({
  */
 export type ScheduleSuggestions = {
   /**
-   * At most 3 entries; `null` when no candidate survived.
+   * At most 3 entries; `[]` when no candidate survived.
    */
-  slots: (Array<SuggestedSlot> | null);
+  slots: Array<SuggestedSlot>;
 }
 /**
  * The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
@@ -2083,9 +2083,9 @@ export type TeamAnalytics = {
   avg_meeting_minutes: number;
   avg_focus_minutes: number;
   /**
-   * JSON null (not []) when the team has no members — the slice is appended to without pre-initialisation and has no omitempty.
+   * `[]` when the team has no members.
    */
-  member_breakdown: (Array<MemberAnalyticsSummary> | null);
+  member_breakdown: Array<MemberAnalyticsSummary>;
 }
 /**
  * storage.TeamMember, as returned inside TeamDetail.
@@ -2107,9 +2107,9 @@ export type TeamMember = {
 export type TeamDetail = {
   team: Team;
   /**
-   * JSON null (not []) when the team has no members or the query failed.
+   * `[]` when the team has no members or the query failed.
    */
-  members: (Array<TeamMember> | null);
+  members: Array<TeamMember>;
 }
 /**
  * storage.TeamInvite, returned in full (token included) by inviteTeamMember.
@@ -2992,7 +2992,7 @@ export type get_ListFocusBlocks = {
         
         
           }
-      responses: {200: (Array<Schemas.FocusBlockRecord> | null),
+      responses: {200: Array<Schemas.FocusBlockRecord>,
 400: Schemas.SchedulingErrorResponse,
 500: string,
 },
@@ -3518,7 +3518,7 @@ export type post_ConfirmManagerDetection = {
       
     }
 /**
- * The engine always computes gaps over the manager's GLOBAL roster; when `team_id` is supplied the handler post-filters that list to emails present in the team-scoped roster (case-insensitive). Members with cadence="none" never appear. A member with a recorded 1:1 occurrence in the next 14 days is suppressed. Sorted by days_overdue descending. `gaps` is always an array, never null.
+ * Gaps are computed over the roster in scope: the manager's global roster, or, when `team_id` is supplied, the team-scoped roster with that team's cadences. Members with cadence="none" never appear. A member never met is due now. A member with a recorded 1:1 occurrence in the next 14 days is suppressed. Sorted by days_overdue descending. `gaps` is always an array, never null.
  */
 export type get_GetManagerCadenceGaps = {
       method: "GET",
@@ -3950,7 +3950,7 @@ export type get_ListRooms = {
       
     }
 /**
- * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and can return `null` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+ * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
  */
 export type post_PreviewCompression = {
       method: "POST",
@@ -3964,7 +3964,7 @@ export type post_PreviewCompression = {
         
         body:  Schemas.CompressionRequest,
           }
-      responses: {200: (Array<Schemas.CompressionResult> | null),
+      responses: {200: Array<Schemas.CompressionResult>,
 400: Schemas.SchedulingErrorResponse,
 500: string,
 },
@@ -4541,7 +4541,7 @@ export type post_AcceptTeamInvite = {
       
     }
 /**
- * Membership required. `members` is the raw result of ListTeamMembers with its error discarded, ordered by joined_at ASC, and is JSON `null` (not []) whenever the list is empty or the query failed.
+ * Membership required. `members` is the raw result of ListTeamMembers with its error discarded, ordered by joined_at ASC, and is `[]` whenever the list is empty or the query failed (PAC-28).
  */
 export type get_GetTeam = {
       method: "GET",
