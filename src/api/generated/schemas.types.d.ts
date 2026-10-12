@@ -1045,7 +1045,7 @@ export type LLMTestResult = {
 }
 /**
  * storage.LunchBreakSchedule - a bare map keyed by lowercase weekday name. Normalised to `{}` (never null) on read (`backend/storage/settings.go:103-105`). A per-day entry overrides the legacy global `lunchStart`/`lunchEnd`/`protectLunch` trio, including disabling lunch for that day. Replaced whole by a PATCH that mentions it; `lunchBreaks: {}` clears every per-day override (spec AC-9).
- * Keys are enforced EXACTLY by the handler (revision 3; generators drop `propertyNames`), and migration 024 removes stored keys that are not one of the seven lowercase names. `propertyNames` is added by PAC-24 for the same reason as on `WorkingHoursSchedule.days`: the validator lowercases the key before checking (`backend/api/handlers_settings.go:154`) but `LunchWindow` looks it up already-lowercased (`backend/storage/settings.go:138`), so a `"Monday"` key validates, stores, and never matches.
+ * Keys are enforced EXACTLY by the handler (revision 3; generators drop `propertyNames`), and migration 024 removes stored keys that are not one of the seven lowercase names, or whose `start`/`end` are neither empty nor a clock. Before PAC-24 the validator lower-cased the key, so a `"Monday"` key was stored and never matched `LunchWindow`'s lookup.
  */
 export type LunchBreakSchedule = Record<string, DaySchedule>
 export type ManagerAnalyticsWeek = {
@@ -1809,21 +1809,21 @@ export type SchedulingLinkListResponse = {
  */
 export type WorkingHoursSchedule = {
   /**
-   * Compared EXACTLY by the handler (revision 3): `"BY_DAY"` and `" all_days"` are a 400. Before PAC-24 the validator lower-cased and trimmed, then persisted whatever was sent; migration 024 lower-cases and trims every stored mode, and turns any other stored value into `all_days`, which is how `WorkWindow` already treated it (it only special-cases `by_day`, case-insensitively).
+   * Compared EXACTLY by the handler (revision 3): `"BY_DAY"` and `" all_days"` are a 400. Before PAC-24 the validator lower-cased and trimmed, then persisted whatever was sent. Migration 024 turns a stored mode that equals `by_day` ignoring case (and NOT trimmed: `" by_day"` never matched) into `by_day`, and any other non-empty value into `all_days` - exactly how `WorkWindow` treated them (it only special-cases `by_day`, case-insensitively). It also clears an enabled entry that would fail validation in the half the mode ignores (`days` under `all_days`, `default` under `by_day`), which `WorkWindow` never reads, so a later edit is not refused (revision 5).
    * `''` is in the enum because the server accepts it (`:129`, `mode != "" && mode != "all_days" && mode != "by_day"`) and because the contract must describe what is, not what should be (factory §7). Revision 1 of this contract omitted `''` while the description two lines below said it was accepted - a schema disagreeing with its own prose. It is accepted on write ONLY when `days` is empty; otherwise it is the existing 400 `workingHours.mode is required when day-specific hours are provided` (`:132-134`). That conditional is cross-property and OpenAPI cannot express it, so it stays a documented 400 rather than becoming a schema narrowing - narrowing here would be a NEW rejection, and spec §6 requires both tests in `backend/api/handlers_settings_schedule_test.go` to keep passing unchanged.
    * A GET never returns `''`, because normalisation rewrites it.
    */
   mode: ("" | "all_days" | "by_day");
   default: DaySchedule;
   /**
-   * Keys are lowercase English weekday names, and PAC-24 makes that a constraint THE HANDLER ENFORCES (revision 3): `propertyNames` below documents it, but no generator carries `propertyNames` into a validator, so the server's exact-match check is the enforcement point (contract challenge r2, finding 4). Migration 024 removes stored keys that are not exactly one of the seven names - they never matched `WorkWindow`'s lookup, so removing them changes no behaviour. `validateSchedulePreferences` lowercases before checking (`backend/api/handlers_settings.go:145`, `validScheduleWeekdays[strings.ToLower(day)]`), so `"Monday"` passes validation and is stored - but `WorkWindow` looks the day up as `strings.ToLower(day.Weekday().String())` (`backend/storage/settings.go:117`), so the entry can never match and the user's Monday hours are silently inert forever. Under the whole-object replace this is worse than it was: the write that installs the dead key also deletes the live key it replaced. `propertyNames` makes the dead key a 400 instead of a document that says so. In `by_day` mode a missing weekday means "not working".
+   * Keys are lowercase English weekday names, and PAC-24 makes that a constraint THE HANDLER ENFORCES (revision 3): `propertyNames` below documents it, but no generator carries `propertyNames` into a validator, so the server's exact-match check is the enforcement point (contract challenge r2, finding 4). Migration 024 removes stored keys that are not exactly one of the seven names - they never matched `WorkWindow`'s lookup, so removing them changes no behaviour; it also removes entries whose `start`/`end` are neither empty nor a clock. Keys and entries are checked WHATEVER THE MODE (revision 4): a `days` map stored under `all_days` is still returned by GET. Before PAC-24 the validator lower-cased keys and only looked at `days` in `by_day` mode, so `"Monday"` was stored and never matched. In `by_day` mode a missing weekday means "not working".
    */
   days: Record<string, DaySchedule>;
 }
 /**
  * The settings document for ONE user, returned by GET and by PATCH. Every property is always present. It has NO `llmApiKey` property at all: the key is write-only and is never returned (spec AC-11); `llmApiKeySet` reports whether one is on file. Property names come straight from the json tags on storage.Settings, camelCase throughout. `ID`, `MicrosoftTokens` and `ZoomTokens` are `json:"-"` and never appear.
  * PAC-24 revision 3 makes this a concrete schema rather than an `allOf` over a shared field set with `readOnly`/`writeOnly` markers: all three generators (oapi-codegen, openapi-typescript, typed-openapi) dropped those markers and generated a response type carrying `llmApiKey`, and typed-openapi also dropped the `required` list (contract challenge, revision 2, finding 1). The property map is shared with `SettingsUpdate` through a YAML anchor, so the two cannot drift; every `Settings` document is a valid `SettingsUpdate` body.
- * Every value this schema forbids has been normalised away in storage by migration 024 (see `SettingsUpdate` and contracts/features/PAC-24.md, Revision 3), so a GET always satisfies it.
+ * Every value this schema forbids has been normalised away in storage by migration 024 (see `SettingsUpdate` and contracts/features/PAC-24.md, Revisions 3 and 4), so a GET always satisfies it.
  */
 export type Settings = {
   /**
@@ -2771,9 +2771,14 @@ export type get_StartMicrosoftOAuth = {
 },
     }
 /**
- * Validates `ms_oauth_state`, exchanges the code, saves the Microsoft token
- * on the GLOBAL settings row, best-effort fetches the Graph profile and
- * upserts the user, then redirects.
+ * Validates `ms_oauth_state`, exchanges the code, fetches the Graph profile
+ * and upserts the user, then saves the Microsoft token on THAT USER'S OWN
+ * settings row (making Outlook their calendar provider), sets the session
+ * cookie and redirects. Since PAC-24 the profile fetch is required, not
+ * best-effort: without it there is no user to attach the credential to, so
+ * a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
+ * saved on the single shared settings row and the provider flipped for
+ * everyone.
  */
 export type get_MicrosoftOAuthCallback = {
       method: "GET",
@@ -2790,6 +2795,7 @@ export type get_MicrosoftOAuthCallback = {
       responses: {302: unknown,
 400: Schemas.PlainTextError,
 500: Schemas.PlainTextError,
+502: Schemas.PlainTextError,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -2851,7 +2857,7 @@ export type get_GetAuthStatus = {
       
     }
 /**
- * Sets a 300-second HttpOnly `zoom_oauth_state` cookie (SameSite=Lax, Path=/) and 302-redirects to Zoom's authorize endpoint. Not a JSON endpoint.
+ * Sets a 300-second HttpOnly `zoom_oauth_state` cookie (SameSite=Lax, Path=/) and 302-redirects to Zoom's authorize endpoint. Not a JSON endpoint. Requires a signed-in user since PAC-24: Zoom is connected to the caller's own settings, so there must be a caller (session cookie, which the browser sends on this top-level navigation).
  */
 export type get_StartZoomOAuth = {
       method: "GET",
@@ -2860,13 +2866,14 @@ export type get_StartZoomOAuth = {
       responseFormat: "json",
       parameters: never,
       responses: {302: unknown,
+401: "{\"error\":\"unauthorized\"}\n",
 503: Schemas.BookingError,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
     }
 /**
- * Compares `state` against the `zoom_oauth_state` cookie, clears that cookie, exchanges `code` for tokens, persists them, then 302-redirects to the app root. Error bodies here use `http.Error`, i.e. `text/plain; charset=utf-8` plain text, NOT the shared JSON error envelope.
+ * Compares `state` against the `zoom_oauth_state` cookie, clears that cookie, exchanges `code` for tokens, persists them on the CALLER'S OWN settings row (making Zoom the caller's conferencing provider, and nobody else's), then 302-redirects to the app root. Requires a signed-in user since PAC-24 (401 otherwise); before PAC-24 it wrote the single shared settings row. Error bodies here use `http.Error`, i.e. `text/plain; charset=utf-8` plain text, NOT the shared JSON error envelope.
  */
 export type get_HandleZoomOAuthCallback = {
       method: "GET",
@@ -2882,6 +2889,7 @@ export type get_HandleZoomOAuthCallback = {
           }
       responses: {302: unknown,
 400: "invalid state\n",
+401: "{\"error\":\"unauthorized\"}\n",
 500: string,
 },
       responseHeaders: {302: { Location: "/?connected=true&provider=zoom", "Set-Cookie": string },
@@ -2996,7 +3004,7 @@ export type get_GetCalendarFreeBusy = {
       
     }
 /**
- * Provider comes from stored settings (`ConferencingProvider`), not from the request. No field validation at all: a missing `title`, `start` or `end` decodes to the Go zero value and is forwarded to the provider as-is. Not referenced anywhere in the frontend.
+ * Provider comes from the CALLER'S stored settings (`ConferencingProvider`), not from the request; the Teams credential is the caller's own (PAC-24; before it, both came from the single shared settings row). No field validation at all: a missing `title`, `start` or `end` decodes to the Go zero value and is forwarded to the provider as-is. Not referenced anywhere in the frontend.
  */
 export type post_CreateConferenceLink = {
       method: "POST",
@@ -3018,7 +3026,7 @@ export type post_CreateConferenceLink = {
       
     }
 /**
- * Order is fixed: google_meet (only when Google OAuth env is configured), zoom (only when Zoom env is configured), teams (only when Microsoft env is configured), then `custom`, which is always last and always `connected: true`. Length is therefore 1..4.
+ * Order is fixed: google_meet (only when Google OAuth env is configured), zoom (only when Zoom env is configured), teams (only when Microsoft env is configured), then `custom`, which is always last and always `connected: true`. Connection state and the Meet email describe the CALLER'S own settings and credentials (PAC-24). Length is therefore 1..4.
  */
 export type get_ListConferenceProviders = {
       method: "GET",
@@ -3033,7 +3041,7 @@ export type get_ListConferenceProviders = {
       
     }
 /**
- * Takes no request body. Tokens are server-wide, not per user.
+ * Takes no request body. Clears the CALLER'S Zoom tokens and returns the caller's conferencing provider to `meet`; other users are untouched. Before PAC-24 the tokens were server-wide.
  */
 export type post_DisconnectZoom = {
       method: "POST",
@@ -3092,7 +3100,7 @@ export type delete_DeleteEvent = {
       
     }
 /**
- * Four branches. (1) The event already has a conference: returns 200 with the EXISTING link when the stored provider matches, or when `provider` is `custom`; otherwise 409. (2) `custom`: stores the supplied `url` in the event's private extended properties. (3) `google_meet`: asks Google to mint a Meet link. (4) anything else (`zoom`, `teams`): creates a meeting through the provider factory and stores the join URL in extended properties.
+ * Uses the CALLER'S stored settings and credentials (PAC-24). Four branches. (1) The event already has a conference: returns 200 with the EXISTING link when the stored provider matches, or when `provider` is `custom`; otherwise 409. (2) `custom`: stores the supplied `url` in the event's private extended properties. (3) `google_meet`: asks Google to mint a Meet link. (4) anything else (`zoom`, `teams`): creates a meeting through the provider factory and stores the join URL in extended properties.
  */
 export type post_AddEventConference = {
       method: "POST",
