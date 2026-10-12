@@ -172,7 +172,7 @@ export type AuditEntry = {
   /**
    * What was recorded. Underscore-separated, lower-case; there is no dotted key convention on this endpoint and never was.
    * 
-   * This is the complete set the server can emit, enumerated from every `storage.WriteAuditLog` call site in `backend/` (the action argument is a string literal at all seven, and `storage.WriteAuditLog`, backend/storage/focus_blocks.go:61-63, holds the only INSERT against the table): `focus_created` (backend/engine/focus_time.go:106), `focus_cleared` (backend/engine/focus_time_cleaner.go:39), `meeting_scheduled` (backend/engine/smart_schedule.go:323), `meeting_moved` (backend/engine/compression.go:178), `meeting_created` (backend/api/handlers_schedule.go:188), `nlp_parsed` (backend/nlp/parser.go:221), `nlp_confirmed` (backend/api/handlers_nlp.go:67).
+   * This is the complete set the server can emit, enumerated from every `storage.WriteAuditLog` call site in `backend/` (the action argument is a string literal at all seven, and `storage.WriteAuditLog`, backend/storage/focus_blocks.go:74-76, holds the only INSERT against the table): `focus_created` (backend/engine/focus_time.go:106), `focus_cleared` (backend/engine/focus_time_cleaner.go:39), `meeting_scheduled` (backend/engine/smart_schedule.go:323), `meeting_moved` (backend/engine/compression.go:178), `meeting_created` (backend/api/handlers_schedule.go:188), `nlp_parsed` (backend/nlp/parser.go:221), `nlp_confirmed` (backend/api/handlers_nlp.go:67).
    * 
    * The enum is closed on purpose. `audit_log.action` is an unconstrained `TEXT` column, so the set is held by this contract rather than by the database: adding an eighth action is a contract change, and a writer added without one makes the contract test fail, which is the intended alarm. Spec AC-14 requires that this set never shrinks.
    * 
@@ -2300,7 +2300,7 @@ export type delete_DeleteSsoProvider = {
 /**
  * Live Google Calendar read for the Monday-anchored week containing `date`.
  * Only events with `start.dateTime` set (all-day events skipped) and at least one
- * attendee are included; events matching a focus block or a habit occurrence's
+ * attendee are included; events matching one of the user's focus blocks or a habit occurrence's
  * calendar_event_id are excluded. Sorted by `duration_minutes` descending.
  * A nil slice is normalised to `[]`.
  */
@@ -2423,7 +2423,7 @@ export type get_SuggestAttendees = {
  * 
  * The scoping guarantees who may READ a row, not that the row's contents originated with the reader. `details` carries free text supplied by whoever made the request, at four of the seven writers: a meeting title from the request body at backend/engine/smart_schedule.go:323 and backend/api/handlers_schedule.go:188, a typed prompt at backend/nlp/parser.go:221, and a client-supplied `event_id` copied unvalidated from the request body at backend/engine/compression.go:178 — the fourth is the one the `details` schema below calls the worst of them, because the value can carry JSON structure rather than merely a stray quote. So a writer whose actor is not the subject would place a third party's words in the subject's feed. No writer does that today — all seven have actor = subject — but this contract is the artifact that makes subject ≠ actor a legal shape, so it states the rule rather than leaving the direction unguarded: a writer whose actor is not the subject must not put text supplied by the actor in `details`; where that is unavoidable the entry needs the redacted projection spec §3.5 describes, not this operation. Spec AC-3 forbids only the mirror image, another user's text reaching a non-subject.
  * 
- * There is no pagination — no `offset`, no cursor, no `before`. Entries older than the most recent `limit` (at most 500) cannot be retrieved through this API at all, and because this operation is the only reader of the table in the whole codebase (one SELECT, backend/storage/audit_log.go:19; one INSERT, backend/storage/focus_blocks.go:61-63; no view, no join, no second reader) they cannot be retrieved any other way either.
+ * There is no pagination — no `offset`, no cursor, no `before`. Entries older than the most recent `limit` (at most 500) cannot be retrieved through this API at all, and because this operation is the only reader of the table in the whole codebase (one SELECT, backend/storage/audit_log.go:19; one INSERT, backend/storage/focus_blocks.go:74-76; no view, no join, no second reader) they cannot be retrieved any other way either.
  * 
  * WHICH SERVER ANSWERS THIS, because the `limit` description below depends on it: the hand-written `auditHandler` (backend/api/handlers_audit.go:12-23), registered directly on chi at backend/api/routes.go:179. `backend/api/gen/paceday.gen.go` — generated from this bundle, committed, and drift-checked by the `openapi-check` make target — also contains a complete server surface for this operation (`ServerInterface.ListAuditEntries`, `ListAuditEntriesParams`, `ServerInterfaceWrapper.ListAuditEntries` binding `limit`, a `/api/audit` route inside `HandlerWithOptions` (which `HandlerFromMux` delegates to), and `ListAuditEntries200JSONResponse` / `401TextResponse` / `500JSONResponse`), and **none of it is mounted**. One command falsifies that claim rather than leaving a reader to trust it: `grep -rn "HandlerFromMux\|gen\.ServerInterface\|gen\.Strict\|api/gen" --include=*.go backend/ | grep -v "^backend/api/gen/"` — it returns nothing today. `contracts/openapi/MIGRATION.md` records this operation as `handwritten`, and its `notes` cell carries the precondition for moving it; PAC-23 does not move it (contracts/features/PAC-23.md §6). Where the two servers would answer the same request differently, the `limit` description says so explicitly, and it is the only place in this contract where they do.
  */
@@ -2978,7 +2978,7 @@ export type delete_RemoveEventConference = {
       
     }
 /**
- * Returns rows from the `focus_blocks` table where `date >= week AND date < week+7days`, ordered by start_time. NOTE: `storage.FocusBlock` carries no json struct tags, so the encoder emits Go field names (`ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`) - not snake_case and not camelCase.
+ * Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. NOTE: `storage.FocusBlock` carries no json struct tags, so the encoder emits Go field names (`ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`) - not snake_case and not camelCase.
  */
 export type get_ListFocusBlocks = {
       method: "GET",
@@ -2998,6 +2998,9 @@ export type get_ListFocusBlocks = {
 },
       
     }
+/**
+ * Deletes the caller's focus blocks for the Monday-anchored week containing `week`, from the caller's calendar and from storage. Other users' blocks are not touched and not counted.
+ */
 export type delete_ClearFocusBlocks = {
       method: "DELETE",
       path: "/api/focus/blocks",
