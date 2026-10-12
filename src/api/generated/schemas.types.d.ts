@@ -1809,7 +1809,7 @@ export type SchedulingLinkListResponse = {
  */
 export type WorkingHoursSchedule = {
   /**
-   * Compared EXACTLY by the handler (revision 3): `"BY_DAY"` and `" all_days"` are a 400. Before PAC-24 the validator lower-cased and trimmed, then persisted whatever was sent. Migration 024 turns a stored mode that equals `by_day` ignoring case (and NOT trimmed: `" by_day"` never matched) into `by_day`, and any other non-empty value into `all_days` - exactly how `WorkWindow` treated them (it only special-cases `by_day`, case-insensitively). It also clears an enabled entry that would fail validation in the half the mode ignores (`days` under `all_days`, `default` under `by_day`), which `WorkWindow` never reads, so a later edit is not refused (revision 5).
+   * Compared EXACTLY by the handler (revision 3): `"BY_DAY"` and `" all_days"` are a 400. Before PAC-24 the validator lower-cased and trimmed, then persisted whatever was sent. Migration 024 turns a stored mode that equals `by_day` ignoring case (and NOT trimmed: `" by_day"` never matched) into `by_day`, and any other non-empty value into `all_days` - exactly how `WorkWindow` treated them (it only special-cases `by_day`, case-insensitively). It also clears an enabled entry that would fail validation in the half the stored mode ignored before the upgrade (`days` under `all_days`, `default` under `by_day`), which `WorkWindow` never read. It does not touch the half in use, nor a `default` derived on read for a mode-`""` row: a write of `workingHours` must make those valid (see `SettingsUpdate`).
    * `''` is in the enum because the server accepts it (`:129`, `mode != "" && mode != "all_days" && mode != "by_day"`) and because the contract must describe what is, not what should be (factory §7). Revision 1 of this contract omitted `''` while the description two lines below said it was accepted - a schema disagreeing with its own prose. It is accepted on write ONLY when `days` is empty; otherwise it is the existing 400 `workingHours.mode is required when day-specific hours are provided` (`:132-134`). That conditional is cross-property and OpenAPI cannot express it, so it stays a documented 400 rather than becoming a schema narrowing - narrowing here would be a NEW rejection, and spec §6 requires both tests in `backend/api/handlers_settings_schedule_test.go` to keep passing unchanged.
    * A GET never returns `''`, because normalisation rewrites it.
    */
@@ -1985,6 +1985,7 @@ export type Settings = {
  * The same properties as `Settings` (one YAML anchor) plus the write-only `llmApiKey`. `llmApiKeySet` and `updatedAt` are accepted and ignored, so a document read from GET can be submitted back unchanged (spec AC-10).
  * No property is nullable: `null` is a 400 `<property> must not be null` and an unknown property - including a snake_case spelling of a real one - is a 400 `unknown property: <name>` (spec AC-8). These are enforced by the handler, not by a generated validator.
  * Validation applies to the properties whose value the body CHANGES. A property sent with the value already stored is not re-validated, so a GET document submitted back unchanged is always accepted - including a legacy combination a newer cross-property rule would reject (an end before a start, a focus minimum above the maximum) - and a stored value never locks the user out of saving something else (challenge r2, finding 2).
+ * `workingHours` is ONE property and is replaced whole, so a write that changes it must make the whole document valid: both its `default` and its `days`, whatever the mode. That includes a `default` the client derived from legacy values - for a row whose mode was `""` the server derives it from `workStart`/`workEnd` on read - so a client switching such a row to `by_day` must send a valid `default` (revision 6).
  * `workingHours` and `lunchBreaks` are replaced whole when present, not deep-merged (spec AC-9).
  * Before PAC-24 this was the body of `PUT /api/settings`, a replace: every omitted property was persisted as its Go zero value (API-004). That operation is removed because the two repositories deploy together (spec PAC-24, Decisions 2026-10-12, OQ-3).
  */
@@ -4598,8 +4599,8 @@ export type patch_PatchDailyRecapSettings = {
       
     }
 /**
- * Builds the Slack Block Kit payload for the authenticated user at `time.Now()` and returns it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
- * Before PAC-24 the day's content was the caller's but the recap configuration driving it (timezone, which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002). Both now come from the caller's row.
+ * Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
+ * Before PAC-24 the day's content was the caller's but the recap configuration driving it (which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002), and it was built in the server's zone. Both now come from the caller's row.
  */
 export type post_PreviewDailyRecap = {
       method: "POST",
@@ -4613,7 +4614,7 @@ export type post_PreviewDailyRecap = {
       
     }
 /**
- * Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The Slack call is bounded by a 10s context timeout.
+ * Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout.
  * Before PAC-24 the destination came from the singleton row, so a test send could be addressed to a channel another user had configured (API-002).
  */
 export type post_SendDailyRecapTest = {
