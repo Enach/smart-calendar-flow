@@ -133,7 +133,7 @@ export default function SettingsPage() {
     if (data && !draft) {
       // The server response is the source of truth. workingHours is only seeded
       // from the global work_start/work_end pair when the payload omitted it,
-      // and it is then persisted through PUT /api/settings like any other field.
+      // and it is then persisted through PATCH /api/settings like any other field.
       setDraft({
         ...data,
         working_hours: data.working_hours ?? defaultWorkingHours(data.work_start, data.work_end),
@@ -713,8 +713,17 @@ export default function SettingsPage() {
                   value={draft.llm_api_key ?? ""}
                   onChange={(e) => set("llm_api_key", e.target.value)}
                   className={inputCls}
-                  placeholder="••••••••"
+                  placeholder={draft.llm_api_key_set ? "A key is saved — type to replace it" : "Paste an API key"}
                 />
+                {draft.llm_api_key_set && draft.llm_api_key === undefined && (
+                  <button
+                    type="button"
+                    onClick={() => setDraft((d) => (d ? { ...d, llm_api_key: "", llm_api_key_set: false } : d))}
+                    className="mt-1 text-[11px] text-muted-foreground underline hover:text-foreground"
+                  >
+                    Remove saved key
+                  </button>
+                )}
               </Field>
             )}
           </div>

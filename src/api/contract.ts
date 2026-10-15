@@ -59,7 +59,8 @@ export interface ApiPort {
   authDisconnect(): Promise<void>;
 
   getSettings(): Promise<Settings>;
-  updateSettings(settings: Settings): Promise<Settings>;
+  /** PATCH: sends only what differs from `previous`, the settings as last read. */
+  updateSettings(settings: Settings, previous?: Settings): Promise<Settings>;
 
   getEvents(start: string, end: string): Promise<CalendarEvent[]>;
 

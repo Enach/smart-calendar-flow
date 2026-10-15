@@ -1,4 +1,5 @@
 import type { ApiPort, CompressionApplyResponse } from "./contract";
+import { SettingsUpdate } from "./generated/schemas";
 
 import type {
   AuditEntry,
@@ -562,6 +563,7 @@ const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
   ["llm_provider", "llmProvider"],
   ["llm_model", "llmModel"],
   ["llm_api_key", "llmApiKey"],
+  ["llm_api_key_set", "llmApiKeySet"],
   ["llm_base_url", "llmBaseUrl"],
   ["calendar_provider", "calendarProvider"],
   ["webcal_url", "webcalUrl"],
@@ -603,9 +605,9 @@ export function normalizeSettings(raw: unknown): Settings {
 }
 
 /**
- * Build the PUT /api/settings body in the backend's camelCase. Properties the
- * frontend does not model (e.g. recap settings) pass through untouched: the
- * PUT replaces the whole document, so dropping them would reset them.
+ * The whole settings document in the backend's camelCase. Properties the
+ * frontend does not model (e.g. recap settings) pass through untouched.
+ * `settingsPatchBody` turns it into the PATCH body.
  */
 export function settingsRequestBody(s: Settings): Record<string, unknown> {
   const body: Record<string, unknown> = { ...s };
@@ -621,13 +623,44 @@ export function settingsRequestBody(s: Settings): Record<string, unknown> {
   delete body.out_of_hours_meetings_per_week;
   delete body.auto_decline_outside_working_hours;
   if (s.working_hours) body.workingHours = s.working_hours;
-  if (s.lunch_breaks && Object.keys(s.lunch_breaks).length > 0) body.lunchBreaks = s.lunch_breaks;
+  // No per-day overrides is `{}`: the server replaces lunchBreaks whole, so
+  // this is how the last override is removed (PAC-24).
+  body.lunchBreaks = s.lunch_breaks ?? {};
   body.outOfHoursMeetingsPerWeek = s.out_of_hours_meetings_per_week ?? 0;
   body.autoDeclineOutsideWorkingHours = s.auto_decline_outside_working_hours ?? false;
   return body;
 }
 
 
+/** Properties PATCH /api/settings accepts (SettingsUpdate), minus the read-only ones. */
+const SETTINGS_PATCH_KEYS = new Set(
+  Object.keys(SettingsUpdate.shape).filter((k) => k !== "llmApiKeySet" && k !== "updatedAt"),
+);
+
+/**
+ * Build the PATCH /api/settings body (PAC-24): only contract properties, and
+ * only those whose value differs from `previous` (the settings as last read).
+ * The provider key is never read back, so it is sent only when the user typed
+ * one or cleared it (`llm_api_key` set, possibly to "").
+ */
+export function settingsPatchBody(s: Settings, previous?: Settings): Record<string, unknown> {
+  const next = settingsRequestBody(s);
+  const prev = previous ? settingsRequestBody(previous) : undefined;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(next)) {
+    if (!SETTINGS_PATCH_KEYS.has(key) || value === undefined) continue;
+    if (prev && JSON.stringify(prev[key]) === JSON.stringify(value)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** The probe body: provider, model and an unsaved key only (PAC-24). */
+export function llmTestBody(s: Settings): Record<string, string> {
+  const body: Record<string, string> = { llmProvider: String(s.llm_provider ?? ""), llmModel: s.llm_model ?? "" };
+  if (s.llm_api_key) body.llmApiKey = s.llm_api_key;
+  return body;
+}
 
 // ---------- Mock implementations ----------
 
@@ -874,9 +907,9 @@ export const api = {
       async () => normalizeSettings(await requestApi<unknown>("GET", "/settings")),
       () => ({ ...mockState.settings }),
     ),
-  updateSettings: (s: Settings) =>
+  updateSettings: (s: Settings, previous?: Settings) =>
     withFallback(
-      async () => normalizeSettings(await requestApi<unknown>("PUT", "/settings", settingsRequestBody(s))),
+      async () => normalizeSettings(await requestApi<unknown>("PATCH", "/settings", settingsPatchBody(s, previous))),
 
       () => {
         mockState.settings = { ...s };
@@ -1206,7 +1239,14 @@ export const api = {
   // LLM
   llmTest: (s: Settings) =>
     withFallback(
-      () => requestApi<LLMTestResult>("POST", "/llm/test", s),
+      async () => {
+        const res = await requestApi<{ ok: boolean; response: string; provider: string }>(
+          "POST",
+          "/llm/test",
+          llmTestBody(s),
+        );
+        return { ok: res.ok, message: `Reached ${res.provider || "the provider"}: ${res.response}` };
+      },
       () => {
         const provider = s.llm_provider;
         const need = (...keys: Array<keyof Settings>) =>
