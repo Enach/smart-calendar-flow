@@ -343,20 +343,25 @@ describe("link bookings", () => {
   it("maps GET /scheduling-links/:id/bookings", async () => {
     fetchMock.mockImplementation(async (input) => {
       expect(requestPath(input)).toBe("/api/scheduling-links/l1/bookings");
+      // The server's SchedulingLinkBookingRecord, exactly (contract booking.yaml).
       return jsonResponse([
         {
           id: "b1",
-          link_slug: "intro",
-          title: "Intro",
-          start: "2026-02-02T09:00:00Z",
-          end: "2026-02-02T09:30:00Z",
+          link_id: "l1",
           booker_name: "Zoe",
           booker_email: "zoe@co.com",
+          start_time: "2026-02-02T09:00:00Z",
+          end_time: "2026-02-02T09:30:00Z",
+          status: "confirmed",
+          notes: "",
+          created_at: "2026-01-30T12:00:00Z",
         },
       ]);
     });
     const res = await schedulingLinksApi.listBookings("l1");
     expect(res).toHaveLength(1);
+    expect(res[0].start).toBe("2026-02-02T09:00:00Z");
+    expect(res[0].end).toBe("2026-02-02T09:30:00Z");
     expect(res[0].duration_minutes).toBe(30);
     expect(res[0].booker_email).toBe("zoe@co.com");
   });

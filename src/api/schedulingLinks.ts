@@ -60,8 +60,14 @@ type BackendPublicLink = {
   min_notice_minutes?: number; usage_type?: LinkUsageType;
   coverage?: { total: number; checked: number };
 };
+/**
+ * GET /scheduling-links/:id/bookings returns the contract's
+ * SchedulingLinkBookingRecord: `start_time`/`end_time`, no title or slug.
+ * `start`/`end` are kept for the mock and older payloads.
+ */
 type BackendBooking = {
-  id: string; link_slug?: string; title?: string; start: string; end: string;
+  id: string; link_slug?: string; title?: string; start?: string; end?: string;
+  start_time?: string; end_time?: string;
   duration_minutes?: number; hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
   booker_name: string; booker_email: string; notes?: string;
 };
@@ -611,19 +617,23 @@ export const schedulingLinksApi = {
           `/scheduling-links/${id}/bookings`,
         );
         const items = Array.isArray(raw) ? raw : raw?.bookings ?? [];
-        return items.map((b) => ({
+        return items.map((b) => {
+          const start = b.start_time ?? b.start ?? "";
+          const end = b.end_time ?? b.end ?? "";
+          return {
           id: b.id,
           link_slug: b.link_slug ?? "",
           title: b.title ?? "Booking",
-          start: b.start,
-          end: b.end,
+          start,
+          end,
           duration_minutes:
-            b.duration_minutes ?? Math.round((new Date(b.end).getTime() - new Date(b.start).getTime()) / 60_000),
+            b.duration_minutes ?? Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000),
           hosts: b.hosts ?? [],
           booker_name: b.booker_name,
           booker_email: b.booker_email,
           notes: b.notes,
-        }));
+          };
+        });
       },
       () => {
         const link = mockState.links.find((l) => l.id === id);
