@@ -240,3 +240,25 @@ describe("PATCH body", () => {
     expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "sk-try" }).llmApiKey).toBe("sk-try");
   });
 });
+
+// API-039: provider values the server uses that the app did not know.
+describe("provider values", () => {
+  it("maps the backend conferencingProvider to the app's default provider and back", () => {
+    const read = normalizeSettings({ ...patchPayload, conferencingProvider: "meet" });
+    expect(read.default_conference_provider).toBe("google_meet");
+    expect((read as unknown as Record<string, unknown>).conferencingProvider).toBeUndefined();
+    expect(settingsPatchBody({ ...read, default_conference_provider: "zoom" }, read)).toEqual({ conferencingProvider: "zoom" });
+    expect(settingsPatchBody({ ...read, default_conference_provider: "google_meet" }, read)).toEqual({});
+  });
+
+  it("keeps vertex and the empty provider, and maps the Vertex fields", () => {
+    const read = normalizeSettings({ ...patchPayload, llmProvider: "vertex", gcpProject: "p", gcpLocation: "eu", vertexModel: "gemini" });
+    expect(read.llm_provider).toBe("vertex");
+    expect(read.gcp_project).toBe("p");
+    expect(read.vertex_model).toBe("gemini");
+    expect(settingsPatchBody({ ...read, gcp_location: "us-central1", llm_provider: "" }, read)).toEqual({
+      gcpLocation: "us-central1",
+      llmProvider: "",
+    });
+  });
+});
