@@ -8,6 +8,8 @@ import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type Av
 import { apiErrorMessage } from "@/api/client";
 import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface Props {
   team: FormalTeam;
@@ -17,16 +19,17 @@ const DURATIONS = [15, 30, 45, 60, 90];
 
 const todayISO = () => localISODate();
 
-function fmtSlot(iso: string, endIso: string) {
+function fmtSlot(iso: string, endIso: string, tf: TimeFormat) {
   const start = new Date(iso);
   const end = new Date(endIso);
   const dayLabel = start.toLocaleDateString(UI_LOCALE, { weekday: "long" });
-  const startTime = start.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
-  const endTime = end.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
+  const startTime = formatTime(start, tf, "numeric");
+  const endTime = formatTime(end, tf, "numeric");
   return `${dayLabel} ${startTime} – ${endTime}`;
 }
 
 export function FindATimeTab({ team }: Props) {
+  const tf = useTimeFormat();
   const navigate = useNavigate();
   const [date, setDate] = useState(todayISO());
   const [duration, setDuration] = useState(30);
@@ -150,7 +153,7 @@ export function FindATimeTab({ team }: Props) {
                 <div className="flex min-w-0 items-center gap-3">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: dot }} />
                   <div>
-                    <div className="text-sm font-medium text-foreground">{fmtSlot(s.start, s.end)}</div>
+                    <div className="text-sm font-medium text-foreground">{fmtSlot(s.start, s.end, tf)}</div>
                     <div className="text-[11px] text-muted-foreground">
                       {s.free_count} of {s.total_count} free
                     </div>

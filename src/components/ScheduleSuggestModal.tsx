@@ -8,6 +8,8 @@ import { useAuth } from "@/contexts/useAuth";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import type { SuggestedSlot } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface Props {
   defaultRangeStart: string; // ISO
@@ -34,11 +36,12 @@ function fmtDay(iso: string) {
     day: "numeric",
   });
 }
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+function fmtTime(iso: string, tf: TimeFormat) {
+  return formatTime(iso, tf);
 }
 
 export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClose }: Props) {
+  const tf = useTimeFormat();
   const qc = useQueryClient();
   const { isDemo } = useAuth();
 
@@ -300,7 +303,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
                       </p>
                       <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Clock className="h-3 w-3" />
-                        {fmtTime(s.start)} – {fmtTime(s.end)}
+                        {fmtTime(s.start, tf)} – {fmtTime(s.end, tf)}
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-1">

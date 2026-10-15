@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
 import { managerApi, managerKeys } from "@/api/manager";
 import { apiErrorMessage } from "@/api/client";
+import { TimeFormatProvider } from "@/contexts/TimeFormatContext";
 
 /**
  * Gate that wraps any route requiring an authenticated user (or a demo
@@ -80,5 +81,5 @@ export function RequireAuth({
     }
   }
 
-  return <>{children}</>;
+  return <TimeFormatProvider>{children}</TimeFormatProvider>;
 }

@@ -6,6 +6,8 @@ import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 import { useAuth } from "@/contexts/useAuth";
 import { getEventOwnership } from "@/lib/eventOwnership";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface TodayAgendaProps {
   events: CalendarEvent[];
@@ -18,11 +20,12 @@ interface TodayAgendaProps {
   retrying?: boolean;
 }
 
-function fmt(iso: string) {
-  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+function fmt(iso: string, tf: TimeFormat) {
+  return formatTime(iso, tf);
 }
 
 export function TodayAgenda({ events, loading, error, notConnected, errorMessage, onRetry, retrying }: TodayAgendaProps) {
+  const tf = useTimeFormat();
   const { user } = useAuth();
   const today = new Date();
   const now = today.getTime();
@@ -125,7 +128,7 @@ export function TodayAgenda({ events, loading, error, notConnected, errorMessage
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {fmt(e.start)} – {fmt(e.end)}
+                    {fmt(e.start, tf)} – {fmt(e.end, tf)}
                   </p>
                 </div>
               </li>

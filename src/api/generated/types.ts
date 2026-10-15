@@ -4125,13 +4125,19 @@ export interface components {
             /** @description DB default true. */
             recapIncludeHabits: boolean;
             /**
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             *
+             * @enum {string}
+             */
+            timeFormat: "12h" | "24h";
+            /**
              * Format: date-time
              * @description Server-managed (NOW() on every write). May be present in a request body - a client submitting back a document it just read will include it - and is ignored (spec AC-10).
              *
              */
             readonly updatedAt: string;
         };
-        /** @description PATCH /api/settings body - the only settings write. Nothing is required: a property absent means "leave it as it is", and `{}` is a valid no-op request. A property present is applied exactly as given - `""`, `0` and `false` are values, not absences, except where a property's enum or pattern excludes `""` (`recapSendTime`, `recapSendTo`, `calendarProvider`, `conferencingProvider`), where `""` is a 400 like any other value outside the set (spec AC-7 as amended 2026-10-12).
+        /** @description PATCH /api/settings body - the only settings write. Nothing is required: a property absent means "leave it as it is", and `{}` is a valid no-op request. A property present is applied exactly as given - `""`, `0` and `false` are values, not absences, except where a property's enum or pattern excludes `""` (`recapSendTime`, `recapSendTo`, `calendarProvider`, `conferencingProvider`, `timeFormat`), where `""` is a 400 like any other value outside the set (spec AC-7 as amended 2026-10-12).
          *     The same properties as `Settings` (one YAML anchor) plus the write-only `llmApiKey`. `llmApiKeySet` and `updatedAt` are accepted and ignored, so a document read from GET can be submitted back unchanged (spec AC-10).
          *     No property is nullable: `null` is a 400 `<property> must not be null` and an unknown property - including a snake_case spelling of a real one - is a 400 `unknown property: <name>` (spec AC-8). These are enforced by the handler, not by a generated validator.
          *     Validation applies to the properties whose value the body CHANGES. A property sent with the value already stored is not re-validated, so a GET document submitted back unchanged is always accepted - including a legacy combination a newer cross-property rule would reject (an end before a start, a focus minimum above the maximum) - and a stored value never locks the user out of saving something else (challenge r2, finding 2).
@@ -4258,6 +4264,12 @@ export interface components {
             recapIncludeFocus?: boolean;
             /** @description DB default true. */
             recapIncludeHabits?: boolean;
+            /**
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             *
+             * @enum {string}
+             */
+            timeFormat?: "12h" | "24h";
             /**
              * Format: date-time
              * @description Server-managed (NOW() on every write). May be present in a request body - a client submitting back a document it just read will include it - and is ignored (spec AC-10).
@@ -4625,6 +4637,7 @@ export interface components {
         /** @description Malformed JSON, or a value the server refuses. JSON error shape (writeError). A body property set to `null` is refused here: no property of SettingsUpdate is nullable (spec AC-8).
          *     Messages that already exist: `invalid JSON: <err>`; `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid: <err>`; `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
          *     Messages PAC-24 adds, closing API-081 and API-082 - each of these is a value the server accepted before and then failed on, silently or as a 500 (spec AC-17): `workEnd must be after workStart`; `lunchEnd must be after lunchStart`; `focusMinBlockMinutes must not exceed focusMaxBlockMinutes`; `bufferMinMeetingMinutes must be zero or positive`; `timezone is not a known IANA location`; `recapSendTo must be dm or channel` (previously reached the DB CHECK and surfaced as a 500 - API-081); `recapSendTime must be in HH:MM format` (previously reached the Postgres TIME cast and surfaced as a 500); `calendarProvider must be one of: google, outlook, webcal` (resolves U-18); `conferencingProvider must be one of: meet, zoom, teams`.
+         *     Message PAC-55 adds: `timeFormat must be 12h or 24h`, for `""` and any other string (a non-string is `invalid JSON: <err>`).
          *     Messages revision 2 of this contract adds, each with its reason: `recapSendTime must be in HH:MM format` now also covers `""`. The write path previously substituted `08:00` for an empty value (`recapSendTimeOrDefault`, `backend/storage/settings.go:356-361`); under the merge rule a present property must be stored exactly as given, so a silent substitution is a contract violation and the empty value is refused instead. See `Settings.recapSendTime`; this is the one clock property for which `""` is NOT a value, and it needs a narrow amendment to spec AC-7. `workingHours.days must contain at least one weekday when mode is by_day` - a `by_day` document with an empty `days` map is the only remaining stored state that makes the consumer delete the working-hours section with no error (`smart-calendar-flow/src/api/client.ts:505-517,543`); the `all_days` equivalent is already normalised away on read (`backend/storage/settings.go:95-99`). Serves spec AC-20.
          *     `workingHours.days.<day> is not a valid weekday` and `lunchBreaks.<day> is not a valid weekday` are how a weekday key that is not exactly one of the seven lowercase names is refused: generators drop `propertyNames`, so the handler is the only enforcement point (revision 3/4).
          *     `""` is NOT in this catalogue for `workStart`, `workEnd`, `lunchStart` or `lunchEnd`. It is a valid value for all four, on read and on write (spec AC-7); the handler already skips the format check for it (`backend/api/handlers_settings.go:75`).

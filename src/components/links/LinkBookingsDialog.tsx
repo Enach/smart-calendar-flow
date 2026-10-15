@@ -7,6 +7,8 @@ import { schedulingLinkKeys, schedulingLinksApi } from "@/api/schedulingLinks";
 import { apiErrorMessage } from "@/api/client";
 import type { SchedulingLink } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface LinkBookingsDialogProps {
   open: boolean;
@@ -14,15 +16,16 @@ interface LinkBookingsDialogProps {
   link: SchedulingLink | null;
 }
 
-function formatRange(startIso: string, endIso: string): string {
+function formatRange(startIso: string, endIso: string, tf: TimeFormat): string {
   const start = new Date(startIso);
   const end = new Date(endIso);
   const date = start.toLocaleDateString(UI_LOCALE, { weekday: "short", day: "numeric", month: "short" });
-  const time = (d: Date) => d.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+  const time = (d: Date) => formatTime(d, tf);
   return `${date} · ${time(start)} – ${time(end)}`;
 }
 
 export function LinkBookingsDialog({ open, onOpenChange, link }: LinkBookingsDialogProps) {
+  const tf = useTimeFormat();
   const {
     data: bookings = [],
     error,
@@ -72,7 +75,7 @@ export function LinkBookingsDialog({ open, onOpenChange, link }: LinkBookingsDia
           <ul className="max-h-[50vh] space-y-2 overflow-y-auto">
             {bookings.map((b) => (
               <li key={b.id} className="rounded-lg border border-border bg-card px-3 py-2">
-                <p className="text-sm font-medium text-foreground">{formatRange(b.start, b.end)}</p>
+                <p className="text-sm font-medium text-foreground">{formatRange(b.start, b.end, tf)}</p>
                 <p className="text-xs text-muted-foreground">
                   {b.booker_name} · {b.booker_email} · {b.duration_minutes} min
                 </p>
