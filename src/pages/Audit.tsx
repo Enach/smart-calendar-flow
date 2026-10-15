@@ -5,21 +5,18 @@ import { MockBanner } from "@/components/MockBanner";
 import { apiErrorMessage, DEFAULT_AUDIT_LIMIT } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { DATE_TIME, formatDateTime, type TimeFormat } from "@/lib/timeFormat";
 
-function formatTimestamp(iso: string) {
+function formatTimestamp(iso: string, tf: TimeFormat) {
   if (!iso) return "Unknown date";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Unknown date";
-  return d.toLocaleString(UI_LOCALE, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTime(d, tf, DATE_TIME.timestamp);
 }
 
 export default function AuditPage() {
+  const tf = useTimeFormat();
   const { data, isLoading, isFetching, error, refetch } = useAudit(DEFAULT_AUDIT_LIMIT);
   const entries = data ?? [];
   const hasCached = entries.length > 0;
@@ -94,7 +91,7 @@ export default function AuditPage() {
               {entries.map((entry) => (
                 <li key={entry.id} className="flex flex-col gap-1 px-3 py-3 sm:flex-row sm:items-start sm:gap-4">
                   <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44">
-                    {formatTimestamp(entry.created_at)}
+                    {formatTimestamp(entry.created_at, tf)}
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-foreground">{entry.action}</p>

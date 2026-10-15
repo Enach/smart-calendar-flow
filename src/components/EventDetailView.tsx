@@ -8,6 +8,8 @@ import { getEventOwnership, getEventOrganizer } from "@/lib/eventOwnership";
 import { parseDescription } from "@/lib/eventDescription";
 import type { Attendee, CalendarEvent } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 const RSVP_LABEL: Record<string, string> = {
   accepted: "Accepted",
@@ -34,12 +36,12 @@ function initials(a: Attendee) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
-function formatRange(startISO: string, endISO: string) {
+function formatRange(startISO: string, endISO: string, tf: TimeFormat) {
   const s = new Date(startISO);
   const e = new Date(endISO);
   const day = s.toLocaleDateString(UI_LOCALE, { weekday: "long", day: "numeric", month: "long" });
-  const sTime = s.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
-  const eTime = e.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+  const sTime = formatTime(s, tf);
+  const eTime = formatTime(e, tf);
   return `${day} · ${sTime} – ${eTime}`;
 }
 
@@ -53,6 +55,7 @@ interface Props {
 }
 
 export function EventDetailView({ event, events, workStart, workEnd, onEdit, onClose }: Props) {
+  const tf = useTimeFormat();
   const [showFullDescription, setShowFullDescription] = useState(false);
   const { user } = useAuth();
   const isFocus = !!event.is_focus_block;
@@ -87,7 +90,7 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <CalendarClock className="h-3.5 w-3.5" />
-              {formatRange(event.start, event.end)}
+              {formatRange(event.start, event.end, tf)}
             </p>
             <OwnershipPill ownership={ownership} event={event} organizer={organizer} />
           </div>

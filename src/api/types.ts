@@ -87,6 +87,8 @@ export interface Settings {
   // Conferencing
   default_conference_provider?: ConferenceProvider;
   teams_enabled?: boolean;
+  /** 12- or 24-hour clock for every time of day in the app (backend: timeFormat, PAC-55). */
+  time_format?: "12h" | "24h";
   /** Per-day working hours (backend field: workingHours). Absent until the backend ships it. */
   working_hours?: WorkingHours;
   /** Per-day lunch overrides (backend field: lunchBreaks). Absent until the backend ships it. */

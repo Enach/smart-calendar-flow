@@ -318,6 +318,16 @@ export default function SettingsPage() {
                 ))}
               </select>
             </Field>
+            <Field label="Time format" hint="How every time in the app is shown to you. The public booking page always uses 12-hour.">
+              <select
+                value={draft.time_format ?? "12h"}
+                onChange={(e) => set("time_format", e.target.value as "12h" | "24h")}
+                className={inputCls}
+              >
+                <option value="12h">12-hour (2:30 PM)</option>
+                <option value="24h">24-hour (14:30)</option>
+              </select>
+            </Field>
           </div>
 
           <div className="mt-5 border-t border-border pt-4">

@@ -6,6 +6,8 @@ import { api, apiErrorMessage } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { toast } from "@/hooks/useToast";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime } from "@/lib/timeFormat";
 
 interface QuickActionsProps {
   weekISO: string;
@@ -13,6 +15,7 @@ interface QuickActionsProps {
 }
 
 export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) {
+  const tf = useTimeFormat();
   const qc = useQueryClient();
   const [running, setRunning] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -137,7 +140,7 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-medium text-foreground">{e.action}</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {new Date(e.created_at).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" })}
+                    {formatTime(e.created_at, tf)}
                   </span>
                 </div>
                 <p className="truncate text-[11px] text-muted-foreground">{e.details}</p>

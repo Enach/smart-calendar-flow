@@ -4,6 +4,8 @@ import { X, Calendar, Clock, Users, Loader2 } from "lucide-react";
 import type { ParseResult } from "@/api/types";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface NLPConfirmModalProps {
   parseResult: ParseResult;
@@ -15,11 +17,12 @@ interface NLPConfirmModalProps {
 function fmtDay(iso: string) {
   return new Date(iso).toLocaleDateString(UI_LOCALE, { weekday: "long", month: "short", day: "numeric" });
 }
-function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+function fmtTime(iso: string, tf: TimeFormat) {
+  return formatTime(iso, tf);
 }
 
 export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NLPConfirmModalProps) {
+  const tf = useTimeFormat();
   const slots = (parseResult.suggested_slots ?? []).slice(0, 3);
   const [selected, setSelected] = useState(0);
 
@@ -86,7 +89,7 @@ export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NL
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-foreground">{fmtDay(s.start)}</p>
                         <p className="text-xs text-muted-foreground">
-                          {fmtTime(s.start)} – {fmtTime(s.end)}
+                          {fmtTime(s.start, tf)} – {fmtTime(s.end, tf)}
                         </p>
                       </div>
                       <div className="flex flex-col items-end gap-1">

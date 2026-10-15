@@ -30,6 +30,8 @@ import { toast } from "@/hooks/useToast";
 import type { CalendarEvent, ParseResult } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { eventChipColors } from "@/lib/eventChip";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { calendarSlotLabelFormat, formatTime } from "@/lib/timeFormat";
 
 type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
 const VIEW_STORAGE_KEY = "calendar.view";
@@ -57,6 +59,7 @@ function loadInitialView(): CalView {
 }
 
 export default function Dashboard() {
+  const tf = useTimeFormat();
   const calRef = useRef<FullCalendar | null>(null);
   const qc = useQueryClient();
   const { isDemo } = useAuth();
@@ -234,7 +237,7 @@ export default function Dashboard() {
     (title: string, end: Date) => {
       if (!quickCreate) return;
       const day = quickCreate.start.toLocaleDateString(UI_LOCALE, { weekday: "long" });
-      const time = quickCreate.start.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+      const time = formatTime(quickCreate.start, tf);
       const durationMin = Math.max(
         15,
         Math.round((end.getTime() - quickCreate.start.getTime()) / 60000),
@@ -480,6 +483,7 @@ export default function Dashboard() {
                   slotDuration="00:30:00"
                   slotMinTime="07:00:00"
                   slotMaxTime="21:00:00"
+                  slotLabelFormat={calendarSlotLabelFormat(tf)}
                   expandRows
                   height="auto"
                   contentHeight={680}
@@ -495,10 +499,7 @@ export default function Dashboard() {
                     };
                     const isShort = (ext.durationMin ?? 60) <= 30;
                     const startStr = arg.event.start
-                      ? arg.event.start.toLocaleTimeString(UI_LOCALE, {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })
+                      ? formatTime(arg.event.start, tf)
                       : "";
                     return (
                       <div className="pd-event">

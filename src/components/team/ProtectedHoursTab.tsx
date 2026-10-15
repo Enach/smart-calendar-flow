@@ -30,6 +30,7 @@ import {
   type NoMeetingZone,
 } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -47,6 +48,7 @@ interface DraftZone {
 }
 
 export function ProtectedHoursTab({ team, onChanged }: Props) {
+  const tf = useTimeFormat();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<DraftZone | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -191,7 +193,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
               <div>
                 <div className="text-sm font-medium text-foreground">{z.label || "Protected"}</div>
                 <div className="text-xs text-muted-foreground">
-                  {DAY_LABELS[z.day_of_week - 1]} · {fmtTime(z.start_min)} – {fmtTime(z.end_min)}
+                  {DAY_LABELS[z.day_of_week - 1]} · {fmtTime(z.start_min, tf)} – {fmtTime(z.end_min, tf)}
                 </div>
               </div>
               <div className="flex gap-1">
@@ -235,7 +237,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
             <DialogTitle className="font-serif text-lg">Edit protected block</DialogTitle>
             {editingZone && (
               <DialogDescription>
-                {DAY_LABELS[editingZone.day_of_week - 1]} · {fmtTime(editingZone.start_min)} – {fmtTime(editingZone.end_min)}
+                {DAY_LABELS[editingZone.day_of_week - 1]} · {fmtTime(editingZone.start_min, tf)} – {fmtTime(editingZone.end_min, tf)}
               </DialogDescription>
             )}
           </DialogHeader>
@@ -317,6 +319,7 @@ function Grid({
   onDraft: (d: DraftZone | null) => void;
   onZoneClick: (id: string) => void;
 }) {
+  const tf = useTimeFormat();
   const totalH = HOUR_END - HOUR_START;
   const minToY = (m: number) => ((m - HOUR_START * 60) / 60) * PX_PER_HOUR;
 
@@ -363,7 +366,7 @@ function Grid({
             className="pr-2 text-[10px] text-muted-foreground"
             style={{ height: PX_PER_HOUR }}
           >
-            {fmtTime((HOUR_START + i) * 60)}
+            {fmtTime((HOUR_START + i) * 60, tf)}
           </div>
         ))}
       </div>
@@ -406,7 +409,7 @@ function Grid({
                       top: minToY(z.start_min),
                       height: minToY(z.end_min) - minToY(z.start_min),
                     }}
-                    title={`${z.label} · ${fmtTime(z.start_min)}–${fmtTime(z.end_min)}`}
+                    title={`${z.label} · ${fmtTime(z.start_min, tf)}–${fmtTime(z.end_min, tf)}`}
                   >
                     <span className="line-clamp-2">{z.label}</span>
                   </button>
@@ -443,6 +446,7 @@ function DraftDialog({
   onSave: (label: string) => void;
   onCancel: () => void;
 }) {
+  const tf = useTimeFormat();
   const [label, setLabel] = useState("");
   const hasDraft = draft !== null;
   useEffect(() => {
@@ -456,7 +460,7 @@ function DraftDialog({
           <DialogTitle className="font-serif text-lg">New protected block</DialogTitle>
           {draft && (
             <DialogDescription>
-              {DAY_LABELS[draft.day_of_week - 1]} · {fmtTime(draft.start_min)} – {fmtTime(draft.end_min)}
+              {DAY_LABELS[draft.day_of_week - 1]} · {fmtTime(draft.start_min, tf)} – {fmtTime(draft.end_min, tf)}
             </DialogDescription>
           )}
         </DialogHeader>

@@ -75,6 +75,8 @@ import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomp
 import type { Attendee } from "@/api/types";
 import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { DATE_TIME, formatDateTime } from "@/lib/timeFormat";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -419,6 +421,7 @@ function TeamTab({
 }: {
   activeTeam: ReturnType<typeof teamsApi.list>[number];
 }) {
+  const tf = useTimeFormat();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -636,7 +639,7 @@ function TeamTab({
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
             <span>
               {managerApi.lastScanAt()
-                ? `Last scan: ${new Date(managerApi.lastScanAt()!).toLocaleString(UI_LOCALE, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+                ? `Last scan: ${formatDateTime(managerApi.lastScanAt()!, tf, DATE_TIME.short)}`
                 : "Calendar has not been scanned yet."}
             </span>
             <button
