@@ -16,6 +16,7 @@ import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/typ
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
 import { UI_LOCALE } from "@/lib/locale";
+import { formatTime } from "@/lib/timeFormat";
 
 function pad(n: number) {
   return n < 10 ? `0${n}` : `${n}`;
@@ -24,7 +25,8 @@ function dateOnlyStr(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
+  // Always 12-hour: the booker has no account and no preference (PAC-55 §5).
+  return formatTime(iso, "12h", "numeric");
 }
 function fmtDateLong(iso: string) {
   return new Date(iso).toLocaleDateString(UI_LOCALE, {

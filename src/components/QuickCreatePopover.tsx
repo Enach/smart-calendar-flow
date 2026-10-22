@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Minus, Plus, Sparkles, X } from "lucide-react";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 export interface QuickCreatePopoverProps {
   /** Anchor position in viewport coordinates (px) */
@@ -37,8 +39,8 @@ function formatDateLabel(d: Date) {
     day: "numeric",
   });
 }
-function formatTime(d: Date) {
-  return d.toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit" });
+function formatClock(d: Date, tf: TimeFormat) {
+  return formatTime(d, tf, "numeric");
 }
 function formatDuration(min: number) {
   if (min < 60) return `${min} min`;
@@ -59,6 +61,7 @@ export function QuickCreatePopover({
   onSave,
   onMoreOptions,
 }: QuickCreatePopoverProps) {
+  const tf = useTimeFormat();
   const initialDuration = useMemo(
     () => Math.max(MIN_DURATION, Math.round((end.getTime() - start.getTime()) / 60000)),
     [start, end],
@@ -185,7 +188,7 @@ export function QuickCreatePopover({
         <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
           <p className="text-xs font-medium text-foreground">{formatDateLabel(start)}</p>
           <p className="text-[11px] text-muted-foreground">
-            {formatTime(start)} – {formatTime(computedEnd)} · {formatDuration(duration)}
+            {formatClock(start, tf)} – {formatClock(computedEnd, tf)} · {formatDuration(duration)}
           </p>
         </div>
 

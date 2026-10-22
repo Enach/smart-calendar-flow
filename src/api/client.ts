@@ -572,6 +572,7 @@ const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
   ["azure_endpoint", "azureEndpoint"],
   ["azure_deployment", "azureDeployment"],
   ["azure_api_version", "azureApiVersion"],
+  ["time_format", "timeFormat"],
   ["gcp_project", "gcpProject"],
   ["gcp_location", "gcpLocation"],
   ["vertex_model", "vertexModel"],

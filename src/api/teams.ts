@@ -11,6 +11,7 @@ import { managerApi, type TeamMember as ManagerTeamMember } from "./manager";
 import { getFreebusy } from "./coverageCache";
 import { requestApi, withFallback } from "./client";
 import { localISODate } from "@/lib/localDate";
+import { DEFAULT_TIME_FORMAT, formatMinutesOfDay, type TimeFormat } from "@/lib/timeFormat";
 
 // ---------- Types ----------
 
@@ -815,10 +816,7 @@ function syntheticWeeks(email: string, paceday: boolean) {
 
 export const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
-export function fmtTime(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  const h12 = ((h + 11) % 12) + 1;
-  return `${h12}:${m.toString().padStart(2, "0")} ${ampm}`;
+/** Minutes after midnight as a time of day, in the user's format (PAC-55). */
+export function fmtTime(min: number, tf: TimeFormat = DEFAULT_TIME_FORMAT): string {
+  return formatMinutesOfDay(min, tf);
 }

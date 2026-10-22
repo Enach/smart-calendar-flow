@@ -5,6 +5,8 @@ import { api } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
+import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 
 interface Props {
   event: CalendarEvent;
@@ -111,13 +113,14 @@ function fmtDeltaMinutes(min: number): string {
   return `${m}m`;
 }
 
-function fmtSlotLabel(d: Date) {
+function fmtSlotLabel(d: Date, tf: TimeFormat) {
   const day = d.toLocaleDateString(UI_LOCALE, { weekday: "short", day: "numeric", month: "short" });
-  const time = d.toLocaleTimeString(UI_LOCALE, { hour: "2-digit", minute: "2-digit" });
+  const time = formatTime(d, tf);
   return `${day} · ${time}`;
 }
 
 export function RescheduleSuggestions({ event, events, workStart, workEnd, onMoved }: Props) {
+  const tf = useTimeFormat();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [movingKey, setMovingKey] = useState<string | null>(null);
@@ -280,7 +283,7 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
                   className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 transition hover:border-primary/40 hover:shadow-sm"
                 >
                   <div className="min-w-[120px] text-xs font-medium text-foreground">
-                    {fmtSlotLabel(s.start)}
+                    {fmtSlotLabel(s.start, tf)}
                   </div>
                   <div className="flex flex-1 flex-wrap items-center gap-2">
                     {positive && (
