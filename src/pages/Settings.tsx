@@ -56,11 +56,13 @@ const TIMEZONES = [
 ];
 
 const LLM_PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
+  { value: "", label: "None (AI features off)" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "ollama", label: "Ollama (local)" },
   { value: "bedrock", label: "AWS Bedrock (Claude)" },
   { value: "azure_openai", label: "Azure OpenAI (ChatGPT)" },
+  { value: "vertex", label: "Google Vertex AI (Gemini)" },
 ];
 
 const BEDROCK_MODELS = [
@@ -627,7 +629,17 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </Field>
-            ) : (
+            ) : draft.llm_provider === "vertex" ? (
+              <Field label="Model">
+                <input
+                  type="text"
+                  value={draft.vertex_model ?? ""}
+                  onChange={(e) => set("vertex_model", e.target.value)}
+                  className={inputCls}
+                  placeholder="gemini-2.0-flash-001"
+                />
+              </Field>
+            ) : draft.llm_provider === "" ? null : (
               <Field label="Model">
                 <input
                   type="text"
@@ -697,6 +709,30 @@ export default function SettingsPage() {
                     onChange={(e) => set("azure_api_version", e.target.value)}
                     className={inputCls}
                     placeholder="2024-02-01"
+                  />
+                </Field>
+              </>
+            )}
+
+            {/* Vertex-specific */}
+            {draft.llm_provider === "vertex" && (
+              <>
+                <Field label="GCP Project">
+                  <input
+                    type="text"
+                    value={draft.gcp_project ?? ""}
+                    onChange={(e) => set("gcp_project", e.target.value)}
+                    className={inputCls}
+                    placeholder="my-project"
+                  />
+                </Field>
+                <Field label="GCP Location">
+                  <input
+                    type="text"
+                    value={draft.gcp_location ?? ""}
+                    onChange={(e) => set("gcp_location", e.target.value)}
+                    className={inputCls}
+                    placeholder="us-central1"
                   />
                 </Field>
               </>

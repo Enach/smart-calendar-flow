@@ -1,11 +1,14 @@
 export type CalendarProvider = "google" | "outlook" | "webcal";
 export type PersonalCalendarType = "google" | "outlook" | "webcal";
+/** The server's llmProvider values (contract Settings.llmProvider); "" means none. */
 export type LLMProvider =
+  | ""
   | "openai"
   | "anthropic"
   | "ollama"
   | "bedrock"
-  | "azure_openai";
+  | "azure_openai"
+  | "vertex";
 export type IntegrationProvider = "google" | "microsoft" | "zoom" | "slack" | "notion" | "webcal";
 
 export interface IntegrationAvailabilityStatus {
@@ -84,7 +87,12 @@ export interface Settings {
   azure_endpoint?: string;
   azure_deployment?: string;
   azure_api_version?: string;
+  // LLM: Google Vertex AI
+  gcp_project?: string;
+  gcp_location?: string;
+  vertex_model?: string;
   // Conferencing
+  /** Backend conferencingProvider (meet|zoom|teams), mapped to the app's names. */
   default_conference_provider?: ConferenceProvider;
   teams_enabled?: boolean;
   /** 12- or 24-hour clock for every time of day in the app (backend: timeFormat, PAC-55). */

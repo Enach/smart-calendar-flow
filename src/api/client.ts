@@ -573,7 +573,26 @@ const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
   ["azure_deployment", "azureDeployment"],
   ["azure_api_version", "azureApiVersion"],
   ["time_format", "timeFormat"],
+  ["gcp_project", "gcpProject"],
+  ["gcp_location", "gcpLocation"],
+  ["vertex_model", "vertexModel"],
 ];
+
+/**
+ * The backend's conferencingProvider names the default meeting provider with
+ * its own values (API-039): `meet` is the app's `google_meet`. `custom` has no
+ * backend value and is never the default.
+ */
+const CONFERENCING_FROM_BACKEND: Record<string, ConferenceProvider> = {
+  meet: "google_meet",
+  zoom: "zoom",
+  teams: "teams",
+};
+const CONFERENCING_TO_BACKEND: Partial<Record<ConferenceProvider, string>> = {
+  google_meet: "meet",
+  zoom: "zoom",
+  teams: "teams",
+};
 
 /** Normalize a GET/PUT /api/settings response (snake_case + camelCase fields). */
 export function normalizeSettings(raw: unknown): Settings {
@@ -596,6 +615,9 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof maxMeetings === "number" && Number.isFinite(maxMeetings) && maxMeetings >= 0) {
     out.out_of_hours_meetings_per_week = maxMeetings;
   }
+  const conferencing = CONFERENCING_FROM_BACKEND[String(r.conferencingProvider ?? "")];
+  delete (out as unknown as Record<string, unknown>).conferencingProvider;
+  if (conferencing) out.default_conference_provider = conferencing;
   const autoDecline = r.autoDeclineOutsideWorkingHours ?? r.auto_decline_outside_working_hours;
   if (typeof autoDecline === "boolean") out.auto_decline_outside_working_hours = autoDecline;
   if (working) out.working_hours = working;
@@ -623,6 +645,9 @@ export function settingsRequestBody(s: Settings): Record<string, unknown> {
   delete body.focus_max_per_week;
   delete body.out_of_hours_meetings_per_week;
   delete body.auto_decline_outside_working_hours;
+  delete body.default_conference_provider;
+  const conferencing = s.default_conference_provider && CONFERENCING_TO_BACKEND[s.default_conference_provider];
+  if (conferencing) body.conferencingProvider = conferencing;
   if (s.working_hours) body.workingHours = s.working_hours;
   // No per-day overrides is `{}`: the server replaces lunchBreaks whole, so
   // this is how the last override is removed (PAC-24).
