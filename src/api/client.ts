@@ -321,6 +321,32 @@ export function isApiUnreachableError(e: unknown): e is ApiUnreachableError {
   return e instanceof ApiUnreachableError;
 }
 
+/**
+ * The request was aborted because the page is being left (a full navigation
+ * or a closed tab): the browser cancels in-flight requests and delivers the
+ * rejection to the page being left, after "pagehide". That says nothing about
+ * the backend, so it must never switch the session to preview data — the flag
+ * is kept in sessionStorage, and the next page would show demo data
+ * (NEW-e2e-pac55-ac10).
+ */
+export class ApiRequestCancelledError extends Error {
+  constructor(message = "Request cancelled: the page is being left") {
+    super(message);
+    this.name = "ApiRequestCancelledError";
+  }
+}
+
+let pageLeaving = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    pageLeaving = true;
+  });
+  // Restored from the back/forward cache: the page is live again.
+  window.addEventListener("pageshow", () => {
+    pageLeaving = false;
+  });
+}
+
 /** Human-readable message for an API failure, usable directly in the UI. */
 export function apiErrorMessage(e: unknown): string {
   if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
@@ -365,6 +391,7 @@ export async function requestApi<T>(method: string, path: string, body?: unknown
       credentials: "include",
     });
   } catch {
+    if (pageLeaving) throw new ApiRequestCancelledError();
     throw new ApiUnreachableError();
   } finally {
     clearTimeout(t);
@@ -878,6 +905,7 @@ export const api = {
         setMockMode(false);
         throw e;
       }
+      if (e instanceof ApiRequestCancelledError) throw e;
       setMockMode(true);
       return { status: "ok", version: "mock-1.0.0", reachable: false };
     }
