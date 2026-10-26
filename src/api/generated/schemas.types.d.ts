@@ -381,7 +381,7 @@ export type CompressionApplyResult = {
   failed: Array<string>;
 }
 /**
- * Both fields optional; `week` takes precedence over `date` when non-empty.
+ * Both fields optional; `week` takes precedence over `date` when non-empty. The whole body is optional too: absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; the decode error was discarded before).
  */
 export type CompressionRequest = (Partial<{
   /**
@@ -744,7 +744,7 @@ export type FocusRunBlock = {
   Date: string;
 }
 /**
- * Optional. A malformed body is silently treated as `{}`.
+ * Optional. Absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; it was silently treated as `{}` before).
  */
 export type FocusRunRequest = (Partial<{
   /**
@@ -3351,7 +3351,7 @@ export type delete_ClearFocusBlocks = {
       
     }
 /**
- * Creates focus blocks for the target week. The request body is decoded best-effort: if the body is absent or is malformed JSON the handler silently falls back to `week = ""` (i.e. the current week) and returns 200 - it does NOT return 400 for malformed JSON. A 400 is only produced when `week` decodes to a non-empty string that fails `time.Parse("2006-01-02", ...)`.
+ * Creates focus blocks for the target week. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. the current week. Any other body that does not decode into FocusRunRequest is a 400 `invalid JSON`: a syntax error, a non-object top-level value (array, string, number, boolean), or a member of the wrong type such as `{"week":5}`. Before PAC-36 such a body was silently treated as `{}` and answered 200 for the current week (API-035). Only the first JSON value is read; bytes after it are not inspected, as on every sibling endpoint. A non-empty `week` that fails `time.Parse("2006-01-02", ...)` is a 400 `invalid week format, use YYYY-MM-DD`.
  */
 export type post_RunFocus = {
       method: "POST",
@@ -4323,7 +4323,7 @@ export type get_ListRooms = {
       
     }
 /**
- * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors, and returns `[]` if all five do. The credential check that runs before any day is computed can still answer 401 or 500 in week mode. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054). Before PAC-21 was finished single-day mode answered 500 and week mode answered 200 `[]`, which a client cannot tell apart from "nothing to compress".
+ * Read-only: computes proposals, moves nothing. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. today. Any other body that does not decode into CompressionRequest is a 400 `invalid JSON` (a syntax error, a non-object top-level value, or a member of the wrong type). Before PAC-36 the decode error was discarded and such a body answered 200 for today (API-035). Only the first JSON value is read. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and computes Mon..Fri in order. A 200 in week mode carries exactly five CompressionResult entries, one per day, Monday first; a non-working day is an entry with no proposals, not a missing entry. If ANY day's computation fails, the whole request fails exactly as single-day mode fails (401 CalendarNotConnected or 500 `internal error`) and no per-day results are returned. Before PAC-36 week mode skipped every failing day and answered 200 with the survivors, `[]` if all five failed, which a client cannot tell apart from "nothing to compress" (API-034). If `week` is empty, `date` (or today) produces a single-element array and an engine error is the 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054).
  */
 export type post_PreviewCompression = {
       method: "POST",
