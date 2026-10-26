@@ -1006,6 +1006,23 @@ export type InviteSchedulingLinkHostRequest = {
   email: string;
 }
 /**
+ * PAC-66. Body of the 422 from POST /api/llm/test: the probe would have sent the deployment's cloud credential to a destination the operator has not approved, so no inference request was sent. A superset of `SchedulingErrorResponse` (`error` is the same member, so a client that reads only `error`, as the web settings page does, renders it unchanged). Never carries a token, a key or any part of the deployment credential (spec AC-11).
+ */
+export type LLMDestinationRefusal = {
+  /**
+   * A human-readable sentence saying what was refused and why.
+   */
+  error: string;
+  /**
+   * `provider_not_enabled`: the operator approved no host for this provider (spec AC-4, AC-18 b). It wins over the other two: when nothing is approved for the provider, this is the reason whatever is stored. `destination_not_approved`: the effective host, over `https` on the default port, is not approved for this provider. This includes an `http` endpoint, an explicit non-443 port, a host approved only for a DIFFERENT provider, and an empty Vertex location or Bedrock region whose built-in default region's host is not approved (spec AC-1, AC-2, AC-7, AC-16, AC-18 a/c, AC-19). `destination_not_set`: the destination cannot be built because the stored value is empty and the provider has no default; today only an empty `azureEndpoint` (spec AC-20).
+   */
+  reason: ("provider_not_enabled" | "destination_not_approved" | "destination_not_set");
+  /**
+   * The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `awsProfile` only when the Bedrock host came from that profile's endpoint configuration rather than from the region.
+   */
+  property?: ("azureEndpoint" | "gcpLocation" | "awsRegion" | "awsProfile");
+}
+/**
  * Optional body for POST /api/llm/test. Added by PAC-24 to close API-037.
  * **This schema is a closed list of three properties and that is the whole point of it.** Not one of them can contribute to the URL the server requests, so no submitted value can direct a stored or ambient credential anywhere. The endpoint properties a probe might plausibly want to override - `llmBaseUrl`, `ollamaBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `awsProfile`, `bedrockModel`, `gcpProject`, `gcpLocation`, `vertexModel` - are DELIBERATELY ABSENT and are a 400 via `additionalProperties: false`. The operation description carries the full argument, including why an all-or-nothing body (endpoint plus credential together) does not close the channel on the three ambient-credential providers.
  * Required. `{}` probes the caller's stored configuration - the pre-PAC-24 behaviour; an absent body is a 400. `{"llmApiKey": "sk-..."}` probes an unsaved key against the caller's stored endpoint, which is the case the settings UI needs because a stored key can no longer be read back to re-submit.
@@ -1014,7 +1031,7 @@ export type InviteSchedulingLinkHostRequest = {
  */
 export type LLMTestRequest = Partial<{
   /**
-   * Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on the other four it is built entirely from the caller's stored endpoint properties. Spec AC-15.
+   * Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on the other four it is built entirely from the caller's stored endpoint properties. Spec AC-15. PAC-66: on `azure_openai`, `vertex` and `bedrock` the operator's approved-host check follows THIS value when present, not the stored provider, so naming an ambient provider here for one probe is checked exactly as if it were saved (spec AC-18; a 422 when refused). Nothing submitted here is stored.
    */
   llmProvider: ("" | "openai" | "anthropic" | "ollama" | "bedrock" | "azure_openai" | "vertex");
   /**
@@ -1916,13 +1933,25 @@ export type Settings = {
    * Also the legacy fallback for the ollama base URL.
    */
   llmBaseUrl: string;
+  /**
+   * Bedrock region. Empty means the built-in `us-east-1`, applied as an explicit region that overrides the deployment's AWS region configuration (spec D-7). PAC-66: a write changing it to a non-empty value must be a valid region name (one host label); the Bedrock host the SDK resolves is sent to only if approved in `PACEDAY_LLM_APPROVED_HOSTS_BEDROCK`. Deliberately no `pattern`: this map is shared with `Settings`, and rows stored before PAC-66 are kept as they are (spec D-3), so a pattern would make the response schema false for them.
+   */
   awsRegion: string;
+  /**
+   * Named profile in the deployment's AWS shared config. Not checked by PAC-66 (spec OQ-4): it selects which deployment identity signs, but any endpoint it configures is still subject to the Bedrock approved-host check at send time.
+   */
   awsProfile: string;
   bedrockModel: string;
+  /**
+   * Azure OpenAI resource endpoint, e.g. `https://my-resource.openai.azure.com`. PAC-66: a write changing it to a non-empty value must be an `https` URL whose host is approved in `PACEDAY_LLM_APPROVED_HOSTS_AZURE_OPENAI` (400 otherwise). `""` is always accepted and means "not set", which is refused when a request would be sent. The path is not constrained (see `contracts/features/PAC-66.md` §7). No `format` or `pattern`, for the reason given on `awsRegion`.
+   */
   azureEndpoint: string;
   azureDeployment: string;
   azureApiVersion: string;
   gcpProject: string;
+  /**
+   * Vertex region, e.g. `europe-west4`. Empty means the built-in `us-central1`. The server builds the host `<gcpLocation>-aiplatform.googleapis.com` from it. PAC-66: a write changing it to a non-empty value must build a host approved in `PACEDAY_LLM_APPROVED_HOSTS_VERTEX` (400 otherwise), so a value that changes the URL's authority (`attacker.example/x`) is refused. The same check is made when a request would be sent, including for `""`. No `pattern`, for the reason given on `awsRegion`.
+   */
   gcpLocation: string;
   vertexModel: string;
   /**
@@ -2084,13 +2113,25 @@ export type SettingsUpdate = Partial<{
    * Also the legacy fallback for the ollama base URL.
    */
   llmBaseUrl: string;
+  /**
+   * Bedrock region. Empty means the built-in `us-east-1`, applied as an explicit region that overrides the deployment's AWS region configuration (spec D-7). PAC-66: a write changing it to a non-empty value must be a valid region name (one host label); the Bedrock host the SDK resolves is sent to only if approved in `PACEDAY_LLM_APPROVED_HOSTS_BEDROCK`. Deliberately no `pattern`: this map is shared with `Settings`, and rows stored before PAC-66 are kept as they are (spec D-3), so a pattern would make the response schema false for them.
+   */
   awsRegion: string;
+  /**
+   * Named profile in the deployment's AWS shared config. Not checked by PAC-66 (spec OQ-4): it selects which deployment identity signs, but any endpoint it configures is still subject to the Bedrock approved-host check at send time.
+   */
   awsProfile: string;
   bedrockModel: string;
+  /**
+   * Azure OpenAI resource endpoint, e.g. `https://my-resource.openai.azure.com`. PAC-66: a write changing it to a non-empty value must be an `https` URL whose host is approved in `PACEDAY_LLM_APPROVED_HOSTS_AZURE_OPENAI` (400 otherwise). `""` is always accepted and means "not set", which is refused when a request would be sent. The path is not constrained (see `contracts/features/PAC-66.md` §7). No `format` or `pattern`, for the reason given on `awsRegion`.
+   */
   azureEndpoint: string;
   azureDeployment: string;
   azureApiVersion: string;
   gcpProject: string;
+  /**
+   * Vertex region, e.g. `europe-west4`. Empty means the built-in `us-central1`. The server builds the host `<gcpLocation>-aiplatform.googleapis.com` from it. PAC-66: a write changing it to a non-empty value must build a host approved in `PACEDAY_LLM_APPROVED_HOSTS_VERTEX` (400 otherwise), so a value that changes the URL's authority (`attacker.example/x`) is refused. The same check is made when a request would be sent, including for `""`. No `pattern`, for the reason given on `awsRegion`.
+   */
   gcpLocation: string;
   vertexModel: string;
   /**
@@ -3612,7 +3653,42 @@ export type get_GetSlackStatus = {
  * What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsUpdate.llmApiKey`), and naming which provider the result is about (spec AC-15). The body is REQUIRED (revision 3): `{}` probes the caller's stored configuration entirely - the pre-PAC-24 behaviour - and an absent body is a 400, as the generated server wrapper already makes it (contract challenge r2, finding 3). In the body, `""` is a value like any other: `llmApiKey: ""` probes with no key and `llmProvider: ""` probes with no provider, which reports `LLM not configured`.
  * Before PAC-24 the handler never read r.Body at all and always probed the SINGLETON settings row, so this operation reported on the deployment's saved configuration rather than on the caller's (API-002, API-037).
  * No response on any status carries the submitted or the stored `llmApiKey`. The provider's own error text is still echoed on 502 — that is API-054 / T8 and is NOT resolved here; the narrower guarantee PAC-24 adds is that the key itself never appears (spec AC-14).
- * NOT resolved here, and recorded rather than silently fixed (factory §7): a caller can still steer this probe indirectly by first writing `llmBaseUrl` or `azureEndpoint` into their OWN settings via `PATCH /api/settings` and then probing. That path exists today via the pre-PAC-24 `PUT /api/settings` plus this operation, PAC-24 neither opens nor closes it (the write is now `PATCH`), and on the ambient-credential providers it reaches a deployment-wide cloud identity rather than the caller's own key. It needs its own issue (allow-listing or scheme/host restriction on the endpoint properties); see `contracts/features/PAC-24.md` §2.
+ * **PAC-66: the deployment's cloud identity goes only to hosts the OPERATOR approved.** PAC-24 left one indirect channel open: a caller could write `azureEndpoint` or `gcpLocation` into their OWN settings with `PATCH /api/settings` and then probe, and on the three ambient-credential providers (`azure_openai`, `vertex`, `bedrock`) the server sent the DEPLOYMENT'S cloud credential (an Entra ID token, a Google ADC token, an AWS SigV4 signature) to the host those values built (`backend/nlp/llm_azure_openai.go:28-50`, `llm_vertex.go:29-53`; a Vertex location such as `attacker.example/x` changes the URL's authority). PAC-66 closes it for those three providers:
+ * * The operator names the approved inference hosts per provider in
+ *   deployment configuration (`PACEDAY_LLM_APPROVED_HOSTS_AZURE_OPENAI`,
+ *   `PACEDAY_LLM_APPROVED_HOSTS_VERTEX`,
+ *   `PACEDAY_LLM_APPROVED_HOSTS_BEDROCK`; format in
+ *   `contracts/features/PAC-66.md` §4). No request property and no
+ *   stored setting can add to that set. A host approved for one provider
+ *   is not approved for another (spec D-8). Nothing approved means the
+ *   provider is not enabled on this deployment (spec D-1, fail closed).
+ * 
+ * * Before an ambient provider sends anything, the server computes the
+ *   EFFECTIVE HOST of the inference request, the host it would actually
+ *   contact after every default is applied (Azure: the stored endpoint's
+ *   host, none when empty; Vertex: `<location>-aiplatform.googleapis.com`,
+ *   `us-central1` when empty; Bedrock: the host the AWS SDK resolves for
+ *   the stored region, `us-east-1` when empty, and the stored profile).
+ *   The request is sent only if that host, over `https` on the default
+ *   port, is approved for the provider the probe USES: the body's
+ *   `llmProvider` when present, otherwise the stored one (spec AC-18).
+ *   Otherwise this operation answers 422 and makes no outbound inference
+ *   request at all (spec AC-1, AC-2, AC-4, AC-7, AC-16, AC-19, AC-20).
+ * 
+ * * The 422 is reported whether or not a cloud credential could be
+ *   acquired: a destination refusal never surfaces as the credential
+ *   error (spec, shared Given "Refusal does not depend on the
+ *   credential").
+ * 
+ * * A redirect from an approved host is never followed with the
+ *   deployment credential to another host or to `http` (spec AC-8). It
+ *   is reported as the 502 below, because the approved provider
+ *   answered and its answer was unusable.
+ * 
+ * * The check is made on every send, not only on write, so a value stored
+ *   before PAC-66 is refused here too (spec AC-9).
+ * 
+ * The user-key and keyless providers (`openai`, `anthropic`, `ollama`) are unchanged by PAC-66: `llmBaseUrl` and `ollamaBaseUrl` still address any host, carrying the caller's own key or none. That request-forgery channel is PAC-66-B (spec §0, D-4). An approved host is approved whatever path, project, deployment or model the stored values put in the URL; that sibling problem is recorded in `contracts/features/PAC-66.md` §7, not solved here.
  */
 export type post_TestLLMConnection = {
       method: "POST",
@@ -3628,6 +3704,7 @@ export type post_TestLLMConnection = {
           }
       responses: {200: Schemas.LLMTestResult,
 400: Schemas.SchedulingErrorResponse,
+422: Schemas.LLMDestinationRefusal,
 500: (Schemas.SchedulingErrorResponse | string),
 502: Schemas.SchedulingErrorResponse,
 },
@@ -4550,6 +4627,7 @@ export type get_GetSettings = {
  *   and are ignored (spec AC-10).
  * 
  * The response is a fresh read of the caller's row, so it reflects normalisation (e.g. `workingHours` defaulting) rather than the submitted body, and it does not contain `llmApiKey`.
+ * **PAC-66 destination rules.** When a write CHANGES `azureEndpoint`, `gcpLocation` or `awsRegion` to a non-empty value, that value is checked whichever provider is selected (spec AC-5, AC-7): `azureEndpoint` must be an `https` URL whose host is approved for `azure_openai`; `gcpLocation` must build a Vertex host approved for `vertex`; `awsRegion` must be a valid AWS region name (one host label; the Bedrock host itself is checked when a request is sent). A refused value is a 400 naming the property, and nothing in the body is stored. Three things are deliberately NOT refused here: `""` for any of the three (a user can always clear a bad value, spec AC-15, D-3); a value equal to the one already stored (the changed-only rule above, PAC-24 AC-17, spec AC-9); and a write that changes only `llmProvider`, even onto a stored unapproved endpoint (spec AC-17). Each of those is refused when a request would be sent instead (see `testLLMConnection`). The server never rewrites or clears a stored value (spec D-3).
  * Before PAC-24 there was no PATCH; the only write was a full-replace PUT that persisted every omitted field as its Go zero value (API-004).
  */
 export type patch_PatchSettings = {

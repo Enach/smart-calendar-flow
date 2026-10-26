@@ -211,6 +211,9 @@ export const InviteEmailRequest = z.object({ email: z.email() }).catchall(z.unkn
 export type InviteSchedulingLinkHostRequest = __TypedOpenapi.Schemas.InviteSchedulingLinkHostRequest;
 export const InviteSchedulingLinkHostRequest = z.strictObject({ email: z.email() });
 
+export type LLMDestinationRefusal = __TypedOpenapi.Schemas.LLMDestinationRefusal;
+export const LLMDestinationRefusal = z.strictObject({ error: z.string().min(1), reason: z.enum(["provider_not_enabled", "destination_not_approved", "destination_not_set"]), property: z.enum(["azureEndpoint", "gcpLocation", "awsRegion", "awsProfile"]).optional() });
+
 export type LLMTestRequest = __TypedOpenapi.Schemas.LLMTestRequest;
 export const LLMTestRequest = z.strictObject({ llmProvider: z.enum(["", "openai", "anthropic", "ollama", "bedrock", "azure_openai", "vertex"]), llmModel: z.string(), llmApiKey: z.string() }).partial();
 
