@@ -220,11 +220,11 @@ export type AuthStatusResponse = {
   email: string;
 }
 /**
- * Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The two exceptions in this domain are the requireAuth 401 and the Zoom OAuth callback, both of which use http.Error and therefore send text/plain.
+ * Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21).
  */
 export type BookingError = {
   /**
-   * Human-readable message. Several 500s concatenate the underlying Go error text.
+   * Human-readable, server-chosen message. Never the text of a Go, driver or provider error (PAC-21): those go to the server log and Sentry only.
    */
   error: string;
 }
@@ -324,6 +324,10 @@ export type CalendarEvent = {
   location?: string;
   conference?: CalendarEventConference;
 }
+/**
+ * The JSON error envelope for "this user has no calendar connected". The message is a single fixed value so a client can branch on it.
+ */
+export type CalendarNotConnectedError = { error: "calendar not connected" }
 /**
  * calendar.Room — only two fields exist server-side.
  */
@@ -647,6 +651,8 @@ export type DaySchedule = {
 /**
  * The shared JSON error envelope, written by writeError()
  * (backend/api/handlers_settings.go:206). Content-Type: application/json.
+ * `error` is a server-chosen message, never the text of a Go, driver or
+ * provider error; every 5xx in this document uses this envelope (PAC-21).
  */
 export type ErrorResponse = { error: string }
 /**
@@ -1320,7 +1326,7 @@ export type NLPParseResult = {
 export type NLPConfirmRequest = ({
   parse_result: NLPParseResult;
   /**
-   * Index into `parse_result.suggested_slots`. Only the upper bound is checked; see the operation's x-uncertain note about negatives.
+   * Index into `parse_result.suggested_slots`. A negative value or one >= the slot count is a 400 `invalid selected_slot_index`.
    */
   selected_slot_index: number;
 } & Record<string, unknown>)
@@ -1665,7 +1671,7 @@ export type ScheduleSuggestions = {
   slots: Array<SuggestedSlot>;
 }
 /**
- * The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
+ * The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Every 5xx in this domain uses it, with a fixed server-chosen message (PAC-21). Handlers that use the Go stdlib `http.Error` for a 4xx return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
  */
 export type SchedulingErrorResponse = { error: string }
 /**
@@ -2005,7 +2011,7 @@ export type Settings = {
    */
   recapIncludeHabits: boolean;
   /**
-   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
    */
   timeFormat: ("12h" | "24h");
   /**
@@ -2185,7 +2191,7 @@ export type SettingsUpdate = Partial<{
    */
   recapIncludeHabits: boolean;
   /**
-   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
    */
   timeFormat: ("12h" | "24h");
   /**
@@ -2528,7 +2534,7 @@ export type get_ListAnalyticsMeetings = {
         
           }
       responses: {200: Array<Schemas.AnalyticsMeeting>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
@@ -2616,7 +2622,7 @@ export type get_SuggestAttendees = {
         
           }
       responses: {200: Array<Schemas.AttendeeSuggestion>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
@@ -2678,7 +2684,7 @@ export type get_GoogleOAuthCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -2705,7 +2711,7 @@ export type get_SsoOidcCallback = {
       responses: {302: unknown,
 400: Schemas.PlainTextError,
 404: Schemas.ErrorResponse,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -2745,7 +2751,7 @@ export type delete_DisconnectCalendar = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {204: { "Set-Cookie": string },
 },
@@ -2846,8 +2852,8 @@ export type get_MicrosoftOAuthCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
-502: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
+502: Schemas.ErrorResponse,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -2942,7 +2948,7 @@ export type get_HandleZoomOAuthCallback = {
       responses: {302: unknown,
 400: "invalid state\n",
 401: "{\"error\":\"unauthorized\"}\n",
-500: string,
+500: Schemas.BookingError,
 },
       responseHeaders: {302: { Location: "/?connected=true&provider=zoom", "Set-Cookie": string },
 },
@@ -3028,13 +3034,13 @@ export type get_ListCalendarEvents = {
           }
       responses: {200: Array<Schemas.CalendarEvent>,
 400: Schemas.PlainTextError,
-401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint.
+ * Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body unchanged. U-03 is therefore resolved as "keep, unchanged" (assumed by the factory for PAC-21, pending owner confirmation): deleting it or aligning its shape with POST /api/freebusy would break that consumer and belongs to its own issue.
  */
 export type get_GetCalendarFreeBusy = {
       method: "GET",
@@ -3050,8 +3056,8 @@ export type get_GetCalendarFreeBusy = {
           }
       responses: {200: Schemas.RawGoogleFreeBusyMap,
 400: Schemas.PlainTextError,
-401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3108,7 +3114,7 @@ export type post_DisconnectZoom = {
       
     }
 /**
- * Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained.
+ * Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained. The 200 body is the raw google.golang.org/api/calendar/v3.Event that UpdateEvent returned, re-encoded as-is (`json.NewEncoder(w).Encode(updated)` in handlers_events.go), NOT the flattened CalendarEvent DTO used by GET /api/calendar/events. U-04 resolved by PAC-21 from the handler, to be pinned by TestPatchEvent_SuccessBodyIsRawGoogleEvent (AC-6, written in the backend PR before the code). Whether the endpoint should return CalendarEvent instead (the web app types it that way) is a separate product question (API-017), not part of this contract.
  */
 export type patch_PatchEvent = {
       method: "PATCH",
@@ -3124,7 +3130,7 @@ export type patch_PatchEvent = {
           }
       responses: {200: Schemas.GoogleCalendarEventRaw,
 400: Schemas.ErrorResponse,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -3146,7 +3152,7 @@ export type delete_DeleteEvent = {
         
           }
       responses: {204: unknown,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
@@ -3168,7 +3174,7 @@ export type post_AddEventConference = {
           }
       responses: {200: Schemas.EventConferenceLink,
 400: Schemas.BookingError,
-401: Schemas.BookingError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.BookingError,
 409: Schemas.BookingError,
 500: Schemas.BookingError,
@@ -3192,7 +3198,7 @@ export type delete_RemoveEventConference = {
         
           }
       responses: {204: unknown,
-401: Schemas.BookingError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
@@ -3215,7 +3221,7 @@ export type get_ListFocusBlocks = {
           }
       responses: {200: Array<Schemas.FocusBlockRecord>,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -3236,7 +3242,8 @@ export type delete_ClearFocusBlocks = {
           }
       responses: {200: Schemas.FocusClearResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -3257,7 +3264,8 @@ export type post_RunFocus = {
           }
       responses: {200: Schemas.FocusRunResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -3279,7 +3287,7 @@ export type post_QueryFreeBusy = {
       responses: {200: Schemas.FreeBusyQueryResponse,
 400: Schemas.ErrorResponse,
 401: Schemas.ErrorResponse,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3530,8 +3538,8 @@ export type get_NotionOauthCallback = {
       responses: {302: unknown,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
-502: string,
+500: Schemas.ErrorResponse,
+502: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string },
 },
@@ -3549,7 +3557,7 @@ export type get_ConnectNotion = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
-503: string,
+503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -3605,8 +3613,8 @@ export type get_SlackOauthCallback = {
       responses: {302: unknown,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
-502: string,
+500: Schemas.ErrorResponse,
+502: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string },
 },
@@ -3626,7 +3634,7 @@ export type get_ConnectSlack = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
-503: string,
+503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -3705,7 +3713,7 @@ export type post_TestLLMConnection = {
       responses: {200: Schemas.LLMTestResult,
 400: Schemas.SchedulingErrorResponse,
 422: Schemas.LLMDestinationRefusal,
-500: (Schemas.SchedulingErrorResponse | string),
+500: Schemas.SchedulingErrorResponse,
 502: Schemas.SchedulingErrorResponse,
 },
       
@@ -3728,7 +3736,7 @@ export type get_GetManagerAnalytics = {
       responses: {200: Schemas.ManagerAnalytics,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3749,8 +3757,9 @@ export type post_PreviewManagerDetection = {
           }
       responses: {200: Schemas.ScanPreview,
 400: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3773,7 +3782,7 @@ export type post_ConfirmManagerDetection = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3795,7 +3804,7 @@ export type get_GetManagerCadenceGaps = {
       responses: {200: Schemas.CadenceGapList,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3809,7 +3818,7 @@ export type get_GetManagerProfile = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.ManagerProfileSummary,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3830,7 +3839,7 @@ export type post_SetManagerProfile = {
           }
       responses: {200: Schemas.UserProfileGoStruct,
 400: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3852,7 +3861,7 @@ export type get_GetManagerRoster = {
       responses: {200: Schemas.ManagerRoster,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3875,7 +3884,7 @@ export type post_AddManagerTeamMember = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3921,7 +3930,7 @@ export type patch_PatchManagerTeamMember = {
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3945,7 +3954,7 @@ export type post_ScheduleManagerOneOnOne = {
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3969,7 +3978,7 @@ export type get_GetMeetingBrief = {
       responses: {200: Schemas.MeetingBriefResponse,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3998,12 +4007,12 @@ export type post_RefreshMeetingBrief = {
       responses: {200: Schemas.MeetingBriefResponse,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned.
+ * The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
  */
 export type post_ConfirmNaturalLanguage = {
       method: "POST",
@@ -4019,7 +4028,8 @@ export type post_ConfirmNaturalLanguage = {
           }
       responses: {200: Schemas.GoogleCalendarEvent,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4040,7 +4050,7 @@ export type post_ParseNaturalLanguage = {
           }
       responses: {200: Schemas.NLPParseResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4055,7 +4065,7 @@ export type get_ListOrgMembers = {
       parameters: never,
       responses: {200: Array<Schemas.OrgMember>,
 401: Schemas.MiddlewareUnauthorized,
-500: Schemas.MiddlewareUnauthorized,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4166,7 +4176,7 @@ export type get_PreviewPersonalCalendar = {
       
     }
 /**
- * Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body.
+ * Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body. The sync writes busy blocks into the user's work calendar, so it is calendar-dependent: a user with no stored Google credential gets the 401 CalendarNotConnected (PAC-21; before, a 500).
  */
 export type post_SyncPersonalCalendar = {
       method: "POST",
@@ -4182,7 +4192,7 @@ export type post_SyncPersonalCalendar = {
           }
       responses: {200: Schemas.PersonalCalendar,
 400: Schemas.ErrorResponse,
-401: Schemas.MiddlewareUnauthorized,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -4204,13 +4214,13 @@ export type get_ListRooms = {
         
           }
       responses: {200: Array<Schemas.CalendarRoom>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+ * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors, and returns `[]` if all five do. The credential check that runs before any day is computed can still answer 401 or 500 in week mode. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054). Before PAC-21 was finished single-day mode answered 500 and week mode answered 200 `[]`, which a client cannot tell apart from "nothing to compress".
  */
 export type post_PreviewCompression = {
       method: "POST",
@@ -4226,7 +4236,8 @@ export type post_PreviewCompression = {
           }
       responses: {200: Array<Schemas.CompressionResult>,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4247,7 +4258,8 @@ export type post_ApplyCompression = {
           }
       responses: {200: Schemas.CompressionApplyResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4268,12 +4280,13 @@ export type post_CreateScheduledMeeting = {
           }
       responses: {200: Schemas.GoogleCalendarEvent,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
 /**
- * `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)).
+ * `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)). There is no 15-minute increment rule on this route: every step in engine/smart_schedule.go (lines 113, 121 and 135) is 30 minutes, so every suggested start is the start of a free interval (`range_start` or the end of a busy interval) plus a multiple of 30 minutes. The 15-minute stepping in engine/booking.go, engine/habits.go and engine/team_availability.go backs other domains. U-07 resolved by PAC-21 from the engine, to be pinned by TestSmartScheduler_Suggest_StepsThirtyMinutes (AC-6, written in the backend PR before the code); assumed by the factory, pending owner confirmation that no 15-minute rule was intended.
  */
 export type post_SuggestMeetingSlots = {
       method: "POST",
@@ -4289,7 +4302,8 @@ export type post_SuggestMeetingSlots = {
           }
       responses: {200: Schemas.ScheduleSuggestions,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4605,7 +4619,7 @@ export type get_GetSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.Settings,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4644,7 +4658,7 @@ export type patch_PatchSettings = {
           }
       responses: {200: Schemas.Settings,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4659,7 +4673,7 @@ export type get_GetDailyRecapSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapSettings,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4682,7 +4696,7 @@ export type patch_PatchDailyRecapSettings = {
           }
       responses: {204: unknown,
 400: string,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4697,7 +4711,7 @@ export type post_PreviewDailyRecap = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapPreview,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4713,8 +4727,8 @@ export type post_SendDailyRecapTest = {
       parameters: never,
       responses: {200: Schemas.DailyRecapTestResult,
 400: string,
-500: string,
-502: string,
+500: Schemas.SchedulingErrorResponse,
+502: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4736,7 +4750,7 @@ export type post_CreateTeam = {
       responses: {201: Schemas.Team,
 400: Schemas.ErrorResponse,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4751,7 +4765,7 @@ export type get_ListTeams = {
       parameters: never,
       responses: {200: Array<Schemas.Team>,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4773,7 +4787,7 @@ export type get_GetTeamInvite = {
       responses: {200: Schemas.TeamInvitePreview,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4797,7 +4811,7 @@ export type post_AcceptTeamInvite = {
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4820,7 +4834,7 @@ export type get_GetTeam = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4839,7 +4853,7 @@ export type patch_RenameTeam = {
       responses: {200: (Schemas.Team | null),
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4861,7 +4875,7 @@ export type delete_DeleteTeam = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4883,7 +4897,7 @@ export type get_GetFormalTeamAnalytics = {
       responses: {200: Schemas.TeamAnalytics,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4905,7 +4919,7 @@ export type get_GetTeamAvailability = {
       responses: {200: Schemas.TeamSlotList,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4925,7 +4939,7 @@ export type post_InviteTeamMember = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4947,7 +4961,7 @@ export type delete_RemoveTeamMember = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4970,7 +4984,7 @@ export type post_CreateNoMeetingZone = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4992,7 +5006,7 @@ export type get_ListNoMeetingZones = {
       responses: {200: Array<Schemas.NoMeetingZone>,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5016,7 +5030,7 @@ export type patch_UpdateNoMeetingZone = {
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5035,7 +5049,7 @@ export type delete_DeleteNoMeetingZone = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
