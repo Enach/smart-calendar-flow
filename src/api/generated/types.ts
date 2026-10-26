@@ -647,7 +647,7 @@ export interface paths {
         };
         /**
          * Raw Google free/busy lookup for a comma-separated attendee list
-         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body unchanged. U-03 is therefore resolved as "keep, unchanged" (assumed by the factory for PAC-21, pending owner confirmation): deleting it or aligning its shape with POST /api/freebusy would break that consumer and belongs to its own issue.
+         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. The response is `map[string][]calendar.TimeSlot`. calendar.TimeSlot (backend/calendar/freebusy.go) carries explicit json tags since PAC-26 (API-029), so each window is `{"start","end"}`, the same window shape as POST /api/freebusy. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. The map wrapper is unchanged and is still NOT the POST /api/freebusy envelope. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body to the model as text without parsing it, so the key casing change reaches the MCP client unchanged and breaks no code. U-03 stays resolved as "keep" (assumed by the factory for PAC-21, pending owner confirmation); PAC-26 changes only the window key casing, not the envelope.
          */
         get: operations["getCalendarFreeBusy"];
         put?: never;
@@ -781,7 +781,7 @@ export interface paths {
         };
         /**
          * List persisted focus blocks for a week
-         * @description Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. NOTE: `storage.FocusBlock` carries no json struct tags, so the encoder emits Go field names (`ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`) - not snake_case and not camelCase.
+         * @description Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. Keys are snake_case (`id`, `google_event_id`, `start_time`, `end_time`, `date`, `created_at`) from explicit json tags on `storage.FocusBlock` (PAC-26, API-014). Before PAC-26 the struct had no tags and the encoder emitted the Go field names (`ID`, `GoogleEventID`, `StartTime`, ...), which the web app's FocusBlock type could not read.
          *
          */
         get: operations["listFocusBlocks"];
@@ -3025,38 +3025,38 @@ export interface components {
             /** @description FULL REPLACEMENT of the attendee list with email-only entries. Sending `[]` clears all attendees, including room resources. */
             attendees?: string[] | null;
         };
-        /** @description storage.FocusBlock (backend/storage/models.go). No json tags either, so the wire field names are the Go field names.
+        /** @description storage.FocusBlock (backend/storage/models.go), with explicit snake_case json tags (PAC-26, API-014). The keys match the `focus_blocks` columns and the web app's FocusBlock type. Before PAC-26 the struct had no tags and the keys were `ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`.
          *      */
         FocusBlockRecord: {
             /** Format: int64 */
-            ID: number;
-            GoogleEventID: string;
+            id: number;
+            google_event_id: string;
             /** Format: date-time */
-            StartTime: string;
+            start_time: string;
             /** Format: date-time */
-            EndTime: string;
+            end_time: string;
             /** Format: date */
-            Date: string;
+            date: string;
             /** Format: date-time */
-            CreatedAt: string;
+            created_at: string;
         };
         /** @description Literal `map[string]int{"deleted": n}`. */
         FocusClearResult: {
             deleted: number;
         };
-        /** @description engine.FocusBlock. This struct has NO json tags, so the encoder emits exported Go field names verbatim. It is a DIFFERENT shape from FocusBlockRecord (storage.FocusBlock) returned by GET /api/focus/blocks.
+        /** @description engine.FocusBlock, with explicit snake_case json tags (PAC-26, API-014). The keys it shares with FocusBlockRecord (storage.FocusBlock, returned by GET /api/focus/blocks) are spelled the same: the Go fields `Start`/`End` are tagged `start_time`/`end_time` so that one block shape can be read from both operations. It has no `id` and no `created_at`: the engine reports what it created before any row id is known to the response. Before PAC-26 the struct had no tags and the keys were `GoogleEventID`, `Start`, `End`, `Date`.
          *      */
         FocusRunBlock: {
-            GoogleEventID: string;
+            google_event_id: string;
             /** Format: date-time */
-            Start: string;
+            start_time: string;
             /** Format: date-time */
-            End: string;
+            end_time: string;
             /**
              * Format: date
              * @description `YYYY-MM-DD`.
              */
-            Date: string;
+            date: string;
         };
         /** @description Optional. Absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; it was silently treated as `{}` before).
          *      */
@@ -3071,7 +3071,8 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** @description engine.FocusRunResult (backend/engine/focus_time.go). camelCase. */
+        /** @description engine.FocusRunResult (backend/engine/focus_time.go). camelCase wrapper; the blocks inside `createdBlocks` are snake_case (FocusRunBlock, PAC-26). The wrapper casing is unchanged by PAC-26: the web app's snake_case FocusRunResult type is aligned to it by PAC-32 (API-015), which needs no contract change.
+         *      */
         FocusRunResult: {
             /**
              * Format: date-time
@@ -3080,7 +3081,7 @@ export interface components {
             weekStart: string;
             /** @description `[]` when the engine created nothing. */
             createdBlocks: components["schemas"]["FocusRunBlock"][];
-            /** @description x-uncertain at field level - the format of each entry is not pinned by a struct tag; it is whatever the engine appends.
+            /** @description `YYYY-MM-DD` of each weekday the engine skipped (daily target already met, or the day is disabled in the working window). Both append sites in engine/focus_time.go append the same `day.Format("2006-01-02")` string (U-23, resolved by reading the code for PAC-26).
              *      */
             skippedDays: string[];
             totalMinutes: number;
@@ -3124,7 +3125,7 @@ export interface components {
              */
             end_time: string;
         };
-        /** @description The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy, and with different key casing). All three are always present. */
+        /** @description The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy). All three are always present. Since PAC-26 (API-028) every busy window in all three uses the same `{"start","end"}` keys; before it, `results[].busy[]` alone was `{"Start","End"}`. */
         FreeBusyQueryResponse: {
             /**
              * Format: date-time
@@ -3139,7 +3140,7 @@ export interface components {
             busy: {
                 [key: string]: components["schemas"]["FreeBusyWindow"][];
             };
-            /** @description Legacy view. Uses `coverage` instead of `status`, and its busy windows are engine/calendar.TimeSlot values with CAPITALIZED `Start`/`End` keys. */
+            /** @description Legacy view. Uses `coverage` instead of `status`. Its busy windows are calendar.TimeSlot values, `{"start","end"}` since PAC-26 (API-028). */
             results: components["schemas"]["FreeBusyLegacyResult"][];
         };
         /** @description api.freeBusyWindowDTO — the lowercase-keyed busy window. */
@@ -3527,40 +3528,40 @@ export interface components {
              *      */
             focus_trend_pct: number;
         };
-        /** @description storage.ManagerTeamMember marshalled with no json tags — Go field names verbatim. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200).
+        /** @description storage.ManagerTeamMember with explicit snake_case json tags (PAC-26, API-030); the keys match the manager_team_members columns. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200), both read back from storage after the write. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`ID`, `ManagerUserID`, `MemberEmail`, ...). Note the key is `member_email` here but `email` on ManagerRosterMember: this is the stored row, the roster is a view.
          *      */
         ManagerTeamMemberGoStruct: {
             /**
              * Format: uuid
-             * @description On the 201 add response this is the zero UUID "00000000-0000-0000-0000-000000000000" because the struct is echoed back without re-reading the row.
+             * @description The stored row id. Since PAC-26 (API-031) never the zero UUID on the 201 add response.
              *
              */
-            ID: string;
+            id: string;
             /** Format: uuid */
-            ManagerUserID: string;
+            manager_user_id: string;
             /** Format: email */
-            MemberEmail: string;
+            member_email: string;
             /**
              * Format: uuid
              * @description Set when the email matches a Paceday user; null for external members.
              */
-            MemberUserID: string | null;
-            DisplayName: string;
-            Source: components["schemas"]["ManagerMemberSource"];
-            Cadence: components["schemas"]["Cadence"];
-            CadenceCustomDays: number | null;
+            member_user_id: string | null;
+            display_name: string;
+            source: components["schemas"]["ManagerMemberSource"];
+            cadence: components["schemas"]["Cadence"];
+            cadence_custom_days: number | null;
             /** Format: date-time */
-            LastOneOnOneAt: string | null;
+            last_one_on_one_at: string | null;
             /**
              * Format: date-time
-             * @description Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+             * @description Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
              */
-            CreatedAt: string;
+            created_at: string;
             /**
              * Format: date-time
-             * @description Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+             * @description Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
              */
-            UpdatedAt: string;
+            updated_at: string;
         };
         /** @description api.briefResponse. Note this is NOT the `storage.MeetingBrief` struct (which has
          *     no json tags at all and is never serialised) — id, user_id and calendar_event_id
@@ -3818,14 +3819,14 @@ export interface components {
             url?: string | null;
             enabled?: boolean | null;
         };
-        /** @description calendar.GenericEvent serialized WITHOUT json tags — capitalized Go field names. All four keys are always present. */
+        /** @description calendar.GenericEvent, with explicit json tags since PAC-26 (API-029). All four keys are always present (no omitempty). Before PAC-26 the struct had no tags and the keys were `ID`, `Title`, `Start`, `End`. */
         PersonalCalendarPreviewEvent: {
-            ID: string;
-            Title: string;
+            id: string;
+            title: string;
             /** Format: date-time */
-            Start: string;
+            start: string;
             /** Format: date-time */
-            End: string;
+            end: string;
         };
         /** @description Several handlers (and requireAuth) use Go's http.Error instead of
          *     writeError. http.Error forces `Content-Type: text/plain; charset=utf-8`
@@ -3908,12 +3909,12 @@ export interface components {
             /** @description Populated only when `date` was omitted; YYYY-MM-DD strings for days within the next 60 that have at least one bookable slot. Otherwise the empty array. */
             available_dates: string[];
         };
-        /** @description calendar.TimeSlot serialized WITHOUT json tags, hence capitalized Go field names. A Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. */
+        /** @description calendar.TimeSlot, with explicit json tags `start` / `end` since PAC-26 (API-028, API-029). Same keys as FreeBusyWindow; kept as its own schema because it is a different Go type with a different failure mode: a Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. */
         RawGoogleBusyWindow: {
             /** Format: date-time */
-            Start: string;
+            start: string;
             /** Format: date-time */
-            End: string;
+            end: string;
         };
         /** @description Response of GET /api/calendar/freebusy: `map[string][]calendar.TimeSlot` keyed by the calendar id Google echoed back (normally the attendee email). */
         RawGoogleFreeBusyMap: {
@@ -4696,21 +4697,21 @@ export interface components {
             /** @description When present, the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Unknown emails are skipped silently. */
             co_host_emails?: string[];
         };
-        /** @description storage.UserProfile marshalled with no json tags — Go field names verbatim. Do not rename these keys in the spec; they are literally what the server sends.
+        /** @description storage.UserProfile with explicit snake_case json tags (PAC-26, API-030); the keys match the user_profiles columns. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`UserID`, `IsManager`, `DetectedAt`, `AnalyticsSharedWithManager`, `UpdatedAt`).
          *      */
         UserProfileGoStruct: {
             /** Format: uuid */
-            UserID: string;
-            IsManager: boolean;
+            user_id: string;
+            is_manager: boolean;
             /** Format: date-time */
-            DetectedAt: string | null;
+            detected_at: string | null;
             /** @description Member-side consent flag, defaulting to true. No endpoint in this domain sets it. */
-            AnalyticsSharedWithManager: boolean;
+            analytics_shared_with_manager: boolean;
             /**
              * Format: date-time
              * @description The value read BEFORE the upsert, not the newly written now().
              */
-            UpdatedAt: string;
+            updated_at: string;
         };
         /** @description storage.WorkingHoursSchedule. Replaced WHOLE by a PATCH that mentions it; there is no deep merge (spec AC-9).
          *     **Normalised on read** by `Settings.normalizeSchedules` (`backend/storage/settings.go:92-106`), which `loadScheduleFields` calls on every read path (`:495`): an empty `mode` becomes `{mode: all_days, default: {enabled: true, start: workStart or 09:00, end: workEnd or 18:00}, days: {}}`; an `all_days` document whose `default` is entirely empty (`enabled:false, start:"", end:""`) has that default replaced the same way (`:95-99`); and a nil `days` map becomes `{}`.
@@ -7660,7 +7661,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The persisted storage.UserProfile Go struct. That struct carries NO json tags, so encoding/json emits Go field names in PascalCase. This is inconsistent with the snake_case GET response on the same path.
+            /** @description The storage.UserProfile Go struct, with explicit snake_case json tags since PAC-26 (API-030). Before PAC-26 the struct had no tags and the keys were PascalCase. The shape still differs from the GET response on the same path (GET is a summary with team_member_count; POST is the profile row).
              *      */
             200: {
                 headers: {
@@ -7730,7 +7731,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The in-memory storage.ManagerTeamMember Go struct. It has NO json tags, so the body is PascalCase and its `ID`/`CreatedAt`/`UpdatedAt` are the Go zero values (all-zero UUID, "0001-01-01T00:00:00Z") because the upsert does not read the row back. Clients must re-fetch the roster instead of using this body.
+            /** @description The member row as stored, read back after the upsert commits (PAC-26, API-031), as storage.ManagerTeamMember with explicit snake_case json tags (API-030). Without `team_id` it is the global manager_team_members row; with `team_id` it is that row seen through this team's assignment (display name override, assignment cadence and cadence_custom_days), exactly as patchManagerTeamMember returns it. `id`, `created_at` and `updated_at` are the stored values. Before PAC-26 the body was the pre-insert struct in PascalCase with the zero UUID and "0001-01-01T00:00:00Z" timestamps. If the read-back fails the response is the 500 below, although the upsert has committed; the upsert is idempotent, so a retry is safe.
              *      */
             201: {
                 headers: {
@@ -7829,14 +7830,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The re-read storage.ManagerTeamMember, PascalCase (no json tags). The read error is discarded, so this body can legitimately be the JSON literal `null` when the re-read fails.
+            /** @description The re-read storage.ManagerTeamMember, with explicit snake_case json tags since PAC-26 (API-030). Never `null`: since PAC-26 (API-032) a failed re-read is the 500 below instead of a 200 whose body is the JSON literal `null`. The patch has committed when that 500 is sent.
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagerTeamMemberGoStruct"] | null;
+                    "application/json": components["schemas"]["ManagerTeamMemberGoStruct"];
                 };
             };
             /** @description JSON error — "team_id must be a valid UUID" or "invalid JSON". */
@@ -8367,7 +8368,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Preview events. WARNING: the element type is calendar.GenericEvent (backend/calendar/provider.go:13), which has NO json struct tags, so keys are the Go field names `ID`, `Title`, `Start`, `End` — capitalized and inconsistent with every other response in this domain. */
+            /** @description Preview events. The element type is calendar.GenericEvent (backend/calendar/provider.go), with explicit json tags since PAC-26 (API-029): keys `id`, `title`, `start`, `end`. Before PAC-26 the struct had no tags and the keys were `ID`, `Title`, `Start`, `End`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9840,14 +9841,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The re-read team. GetTeam's error is discarded, so the body can be the JSON literal `null` on a read failure even though the rename committed.
+            /** @description The re-read team. Never `null`: since PAC-26 (API-032) a failed re-read is the 500 `internal error` below instead of a 200 whose body is the JSON literal `null`. The rename has committed when that 500 is sent.
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Team"] | null;
+                    "application/json": components["schemas"]["Team"];
                 };
             };
             /** @description JSON error "invalid team id" or "name is required". */
