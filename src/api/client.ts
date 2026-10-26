@@ -7,6 +7,7 @@ import type {
   Attendee,
   CalendarEvent,
   CalendarProvider,
+  CompressionApplyProposal,
   CompressionResult,
   ConferenceLink,
   ConferenceProvider,
@@ -20,6 +21,7 @@ import type {
   WorkingHoursMode,
 
   FocusBlock,
+  FocusRunBlock,
   IntegrationAvailability,
   FocusRunResult,
   FreeBusyResponse,
@@ -178,6 +180,15 @@ function isoAt(date: Date, h: number, m: number) {
   d.setHours(h, m, 0, 0);
   return d.toISOString();
 }
+/**
+ * The apply request's proposal (snake_case, three fields) for a proposal the
+ * preview returned (camelCase). Only the event and its proposed times are
+ * sent: the server reads nothing else (contract applyCompress).
+ */
+function toApplyProposal(p: MoveProposal): CompressionApplyProposal {
+  return { event_id: p.eventId, proposed_start: p.proposedStart, proposed_end: p.proposedEnd };
+}
+
 function dateOnly(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
@@ -244,6 +255,7 @@ function seedMocks() {
       start_time: start,
       end_time: end,
       date: dateOnly(d),
+      created_at: new Date().toISOString(),
     });
     mockState.events.push({
       id: `focus-${id}`,
@@ -1025,7 +1037,7 @@ export const api = {
       () => requestApi<FocusRunResult>("POST", "/focus/run", { week }),
       () => {
         const monday = week ? new Date(week) : startOfWeek(new Date());
-        const created: FocusBlock[] = [];
+        const created: FocusRunBlock[] = [];
         const skipped: string[] = [];
         for (let i = 0; i < 5; i++) {
           const d = new Date(monday);
@@ -1049,14 +1061,13 @@ export const api = {
           );
           if (exists) continue;
           const id = mockState.nextFocusId++;
-          const block: FocusBlock = {
-            id,
+          const block: FocusRunBlock = {
             google_event_id: `gcal-focus-${id}`,
             start_time: slotStart,
             end_time: slotEnd,
             date,
           };
-          mockState.focusBlocks.push(block);
+          mockState.focusBlocks.push({ id, ...block, created_at: new Date().toISOString() });
           mockState.events.push({
             id: `focus-${id}`,
             title: mockState.settings.focus_label,
@@ -1068,13 +1079,14 @@ export const api = {
           created.push(block);
         }
         logAudit("focus.run", `Created ${created.length} focus blocks (mock)`);
-        return {
-          week_start: dateOnly(monday),
-          created_blocks: created,
-          skipped_days: skipped,
-          total_minutes: created.length * 90,
+        const result: FocusRunResult = {
+          weekStart: new Date(monday).toISOString(),
+          createdBlocks: created,
+          skippedDays: skipped,
+          totalMinutes: created.length * 90,
           errors: [],
         };
+        return result;
       },
     ),
   getFocusBlocks: (week: string) =>
@@ -1163,9 +1175,12 @@ export const api = {
     ),
   compressionApply: (body: { proposals: MoveProposal[] }) =>
     withFallback(
-      () => requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", body),
+      () =>
+        requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", {
+          proposals: body.proposals.map(toApplyProposal),
+        }),
       () => ({
-        applied: body.proposals.map((proposal) => proposal.event_id),
+        applied: body.proposals.map((proposal) => proposal.eventId),
         failed: [],
       }),
     ),

@@ -1,3 +1,5 @@
+import type { components } from "./generated/types";
+
 export type CalendarProvider = "google" | "outlook" | "webcal";
 export type PersonalCalendarType = "google" | "outlook" | "webcal";
 /** The server's llmProvider values (contract Settings.llmProvider); "" means none. */
@@ -173,21 +175,17 @@ export interface ConferenceProviderStatus {
   auto_with?: CalendarProvider;
 }
 
-export interface FocusBlock {
-  id: number;
-  google_event_id: string;
-  start_time: string;
-  end_time: string;
-  date: string;
-}
-
-export interface FocusRunResult {
-  week_start: string;
-  created_blocks: FocusBlock[];
-  skipped_days: string[];
-  total_minutes: number;
-  errors: string[];
-}
+/**
+ * Focus blocks and the focus-run result are the generated contract types
+ * (PAC-32, API-014/API-015), never hand-written copies.
+ * - FocusBlock: a stored row, GET /api/focus/blocks (snake_case, has `id`).
+ * - FocusRunBlock: a block the engine just created, inside a run result
+ *   (snake_case, no `id` or `created_at` yet).
+ * - FocusRunResult: POST /api/focus/run (camelCase wrapper).
+ */
+export type FocusBlock = components["schemas"]["FocusBlockRecord"];
+export type FocusRunBlock = components["schemas"]["FocusRunBlock"];
+export type FocusRunResult = components["schemas"]["FocusRunResult"];
 
 export interface SuggestedSlot {
   start: string;
@@ -212,22 +210,15 @@ export interface ParseResult {
   coverage?: CoverageSummary;
 }
 
-export interface MoveProposal {
-  event_id: string;
-  event_title: string;
-  current_start: string;
-  current_end: string;
-  proposed_start: string;
-  proposed_end: string;
-  reason: string;
-  focus_gain_minutes: number;
-}
-
-export interface CompressionResult {
-  date: string;
-  proposals: MoveProposal[];
-  estimated_focus_gain_minutes: number;
-}
+/**
+ * Compression is the generated contract (PAC-32, API-016). The preview
+ * response is camelCase (MoveProposal, CompressionResult); the apply request
+ * is snake_case (CompressionApplyProposal) and carries only the three fields
+ * the server reads. The client converts one into the other.
+ */
+export type MoveProposal = components["schemas"]["MoveProposal"];
+export type CompressionResult = components["schemas"]["CompressionResult"];
+export type CompressionApplyProposal = components["schemas"]["CompressionApplyProposal"];
 
 export interface AuditEntry {
   id: number;
