@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
  * The sign-in failure state (PAC-35, spec D-2): shown on the landing page when
  * the server, or the sign-in completion page, sends the user to
  * `/?error=auth_failed`. It says sign-in did not complete and offers a retry.
+ * It does not claim the user is signed out: a failed attempt leaves any
+ * session the browser already held untouched (contract PAC-35 section 2).
  * It never shows a provider, an error code or any server detail: those stay in
  * the server log.
  */
@@ -20,7 +22,7 @@ export function SignInFailedNotice({ onRetry }: { onRetry: () => void }) {
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
           <div>
             <p className="font-medium">Sign-in did not complete.</p>
-            <p className="mt-0.5 text-foreground/80">You are not signed in. Please try again.</p>
+            <p className="mt-0.5 text-foreground/80">Please try again.</p>
           </div>
         </div>
         <Button
