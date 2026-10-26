@@ -266,8 +266,15 @@ export interface paths {
         put?: never;
         /**
          * Detect which auth provider an email address should use
-         * @description Rate limited to 20 requests per minute per client IP (sliding window,
-         *     in-process map keyed by X-Real-IP / first X-Forwarded-For / RemoteAddr).
+         * @description Rate limited to 20 requests per minute per client IP (fixed one-minute
+         *     window per key, in-process map; expired buckets are swept at most once a
+         *     minute). Since PAC-39 (#215, API-062) the key is the IP of the socket peer
+         *     (`RemoteAddr` without its port). `X-Forwarded-For` is never read. A
+         *     client-supplied `X-Real-IP` is ignored; `X-Real-IP` is used only when the
+         *     socket peer is inside the operator's `TRUSTED_PROXIES` allowlist (empty
+         *     by default, so no proxy is trusted) and holds a valid IP. Still open
+         *     (API-062): the map is per process, so the effective limit is
+         *     20/min x replicas.
          *
          */
         post: operations["detectAuthProvider"];
@@ -5299,7 +5306,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "rate limit exceeded" — more than 20 detects/minute from this IP. */
+            /** @description "rate limit exceeded" — more than 20 detects in the current one-minute window from this client IP (socket peer, or X-Real-IP from a trusted proxy). */
             429: {
                 headers: {
                     [name: string]: unknown;
