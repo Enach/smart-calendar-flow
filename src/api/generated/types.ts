@@ -1880,7 +1880,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation.
-         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE affecting zero rows is NOT an error: a caller with no invite for that link still gets 200.
+         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5); "no link has that id" in the 404 means no row at all, not an inactive one.
          */
         post: operations["acceptSchedulingLinkHostInvite"];
         delete?: never;
@@ -1900,7 +1900,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation.
-         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id.
+         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["declineSchedulingLinkHostInvite"];
         delete?: never;
@@ -1971,7 +1971,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation, addressed by link id.
-         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form.
+         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["acceptSchedulingLinkInviteByLink"];
         delete?: never;
@@ -2011,7 +2011,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation, addressed by link id.
-         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key).
+         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["declineSchedulingLinkInviteByLink"];
         delete?: never;
@@ -2051,7 +2051,7 @@ export interface paths {
         put?: never;
         /**
          * Remove the caller from a link's host list.
-         * @description Deletes the caller's `scheduling_link_hosts` row. Deleting zero rows is not an error, so a non-host caller also gets 204. The owner is rejected with 400.
+         * @description Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id -> 404; caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
          */
         post: operations["leaveSchedulingLink"];
         delete?: never;
@@ -4154,7 +4154,7 @@ export interface components {
              */
             responded_at?: string;
         };
-        /** @description Echo of the status that was written. The only body accept/decline ever returns. */
+        /** @description Echo of the status that was written. The only 200 body accept/decline returns. */
         SchedulingLinkInviteResponse: {
             /** @enum {string} */
             status: "accepted" | "declined";
@@ -8817,6 +8817,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
             /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -8859,6 +8868,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
             /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -9114,6 +9132,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
             /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -9216,6 +9243,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
             /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -9312,7 +9348,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Caller removed (or was never a host). Empty body. */
+            /** @description The caller's host row was deleted. Empty body. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -9329,7 +9365,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"not found"} */
+            /** @description No link with that id, or the caller (not the owner) has no host row on it. Both are `{"error":"not found"}`; in the second case nothing is deleted (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;

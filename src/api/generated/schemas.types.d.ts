@@ -1842,7 +1842,7 @@ export type SchedulingLinkHostRecord = {
   responded_at?: string;
 }
 /**
- * Echo of the status that was written. The only body accept/decline ever returns.
+ * Echo of the status that was written. The only 200 body accept/decline returns.
  */
 export type SchedulingLinkInviteResponse = { status: ("accepted" | "declined") }
 /**
@@ -4462,7 +4462,7 @@ export type get_ListSchedulingLinkHostInvites = {
       
     }
 /**
- * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE affecting zero rows is NOT an error: a caller with no invite for that link still gets 200.
+ * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5); "no link has that id" in the 404 means no row at all, not an inactive one.
  */
 export type post_AcceptSchedulingLinkHostInvite = {
       method: "POST",
@@ -4479,12 +4479,13 @@ export type post_AcceptSchedulingLinkHostInvite = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
     }
 /**
- * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id.
+ * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_DeclineSchedulingLinkHostInvite = {
       method: "POST",
@@ -4501,6 +4502,7 @@ export type post_DeclineSchedulingLinkHostInvite = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4594,7 +4596,7 @@ export type delete_DeleteSchedulingLink = {
       
     }
 /**
- * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form.
+ * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_AcceptSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4611,6 +4613,7 @@ export type post_AcceptSchedulingLinkInviteByLink = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4640,7 +4643,7 @@ export type get_ListSchedulingLinkBookings = {
       
     }
 /**
- * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key).
+ * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_DeclineSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4657,6 +4660,7 @@ export type post_DeclineSchedulingLinkInviteByLink = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4687,7 +4691,7 @@ export type post_InviteSchedulingLinkHost = {
       
     }
 /**
- * Deletes the caller's `scheduling_link_hosts` row. Deleting zero rows is not an error, so a non-host caller also gets 204. The owner is rejected with 400.
+ * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id -> 404; caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
  */
 export type post_LeaveSchedulingLink = {
       method: "POST",
