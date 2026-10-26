@@ -58,6 +58,9 @@ export const CalendarEventConference = z.strictObject({ provider: z.string(), ur
 export type CalendarEvent = __TypedOpenapi.Schemas.CalendarEvent;
 export const CalendarEvent = z.strictObject({ id: z.string(), title: z.string(), start: z.string(), end: z.string(), color: z.enum(["#7986CB", "#33B679", "#8E24AA", "#E67C73", "#F6BF26", "#F4511E", "#039BE5", "#3F51B5", "#0B8043", "#D50000", "#616161"]).optional(), attendees: z.array(z.email()).optional(), attendee_details: z.array(CalendarEventAttendee).optional(), is_personal_block: z.boolean().optional(), description: z.string().optional(), location: z.string().optional(), conference: CalendarEventConference.optional() });
 
+export type CalendarNotConnectedError = __TypedOpenapi.Schemas.CalendarNotConnectedError;
+export const CalendarNotConnectedError = z.strictObject({ error: z.literal("calendar not connected") });
+
 export type CalendarRoom = __TypedOpenapi.Schemas.CalendarRoom;
 export const CalendarRoom = z.strictObject({ id: z.string(), name: z.string() });
 
@@ -281,7 +284,7 @@ export type NLPParseResult = __TypedOpenapi.Schemas.NLPParseResult;
 export const NLPParseResult = z.strictObject({ intent: z.string(), title: z.string().optional(), duration_minutes: z.number().int().optional(), attendees: z.array(z.string()).optional(), range_start: z.iso.datetime().optional(), range_end: z.iso.datetime().optional(), preferred_times: z.array(z.string()).optional(), avoid_times: z.array(z.string()).optional(), constraints: z.string().optional(), timezone_notes: z.string().optional(), error: z.string().optional(), suggested_slots: z.array(SuggestedSlot).optional(), participant_infos: z.array(ParticipantInfo).optional() });
 
 export type NLPConfirmRequest = __TypedOpenapi.Schemas.NLPConfirmRequest;
-export const NLPConfirmRequest = z.object({ parse_result: NLPParseResult, selected_slot_index: z.number().int() }).catchall(z.unknown());
+export const NLPConfirmRequest = z.object({ parse_result: NLPParseResult, selected_slot_index: z.number().int().min(0) }).catchall(z.unknown());
 
 export type NLPParseRequest = __TypedOpenapi.Schemas.NLPParseRequest;
 export const NLPParseRequest = z.object({ text: z.string().min(1) }).catchall(z.unknown());

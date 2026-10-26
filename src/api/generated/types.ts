@@ -581,7 +581,7 @@ export interface paths {
         };
         /**
          * Raw Google free/busy lookup for a comma-separated attendee list
-         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint.
+         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body unchanged. U-03 is therefore resolved as "keep, unchanged" (assumed by the factory for PAC-21, pending owner confirmation): deleting it or aligning its shape with POST /api/freebusy would break that consumer and belongs to its own issue.
          */
         get: operations["getCalendarFreeBusy"];
         put?: never;
@@ -674,7 +674,7 @@ export interface paths {
         head?: never;
         /**
          * Partially update a Google Calendar event
-         * @description Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained.
+         * @description Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained. The 200 body is the raw google.golang.org/api/calendar/v3.Event that UpdateEvent returned, re-encoded as-is (`json.NewEncoder(w).Encode(updated)` in handlers_events.go), NOT the flattened CalendarEvent DTO used by GET /api/calendar/events. U-04 resolved by PAC-21 from the handler, to be pinned by TestPatchEvent_SuccessBodyIsRawGoogleEvent (AC-6, written in the backend PR before the code). Whether the endpoint should return CalendarEvent instead (the web app types it that way) is a separate product question (API-017), not part of this contract.
          */
         patch: operations["patchEvent"];
         trace?: never;
@@ -1512,7 +1512,7 @@ export interface paths {
         put?: never;
         /**
          * Create the meeting for a chosen parsed slot
-         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned.
+         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
          *
          */
         post: operations["confirmNaturalLanguage"];
@@ -1649,7 +1649,7 @@ export interface paths {
         put?: never;
         /**
          * Run a personal-calendar sync now
-         * @description Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body.
+         * @description Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body. The sync writes busy blocks into the user's work calendar, so it is calendar-dependent: a user with no stored Google credential gets the 401 CalendarNotConnected (PAC-21; before, a 500).
          */
         post: operations["syncPersonalCalendar"];
         delete?: never;
@@ -1689,7 +1689,7 @@ export interface paths {
         put?: never;
         /**
          * Preview meeting-compression proposals
-         * @description Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+         * @description Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors, and returns `[]` if all five do. The credential check that runs before any day is computed can still answer 401 or 500 in week mode. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054). Before PAC-21 was finished single-day mode answered 500 and week mode answered 200 `[]`, which a client cannot tell apart from "nothing to compress".
          *
          */
         post: operations["previewCompression"];
@@ -1752,7 +1752,7 @@ export interface paths {
         put?: never;
         /**
          * Suggest meeting slots
-         * @description `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)).
+         * @description `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)). There is no 15-minute increment rule on this route: every step in engine/smart_schedule.go (lines 113, 121 and 135) is 30 minutes, so every suggested start is the start of a free interval (`range_start` or the end of a busy interval) plus a multiple of 30 minutes. The 15-minute stepping in engine/booking.go, engine/habits.go and engine/team_availability.go backs other domains. U-07 resolved by PAC-21 from the engine, to be pinned by TestSmartScheduler_Suggest_StepsThirtyMinutes (AC-6, written in the backend PR before the code); assumed by the factory, pending owner confirmation that no 15-minute rule was intended.
          *
          */
         post: operations["suggestMeetingSlots"];
@@ -2556,9 +2556,9 @@ export interface components {
              *      */
             email: string;
         };
-        /** @description Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The two exceptions in this domain are the requireAuth 401 and the Zoom OAuth callback, both of which use http.Error and therefore send text/plain. */
+        /** @description Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21). */
         BookingError: {
-            /** @description Human-readable message. Several 500s concatenate the underlying Go error text. */
+            /** @description Human-readable, server-chosen message. Never the text of a Go, driver or provider error (PAC-21): those go to the server log and Sentry only. */
             error: string;
         };
         /**
@@ -2636,6 +2636,11 @@ export interface components {
             url: string;
             /** @description "Google Meet" for hangout links, otherwise the provider string uppercased (e.g. "ZOOM", "CUSTOM"). Omitted when empty. */
             label?: string;
+        };
+        /** @description The JSON error envelope for "this user has no calendar connected". The message is a single fixed value so a client can branch on it. */
+        CalendarNotConnectedError: {
+            /** @enum {string} */
+            error: "calendar not connected";
         };
         /** @description calendar.Room — only two fields exist server-side. */
         CalendarRoom: {
@@ -2885,6 +2890,8 @@ export interface components {
         };
         /** @description The shared JSON error envelope, written by writeError()
          *     (backend/api/handlers_settings.go:206). Content-Type: application/json.
+         *     `error` is a server-chosen message, never the text of a Go, driver or
+         *     provider error; every 5xx in this document uses this envelope (PAC-21).
          *      */
         ErrorResponse: {
             error: string;
@@ -3538,7 +3545,7 @@ export interface components {
         };
         NLPConfirmRequest: {
             parse_result: components["schemas"]["NLPParseResult"];
-            /** @description Index into `parse_result.suggested_slots`. Only the upper bound is checked; see the operation's x-uncertain note about negatives.
+            /** @description Index into `parse_result.suggested_slots`. A negative value or one >= the slot count is a 400 `invalid selected_slot_index`.
              *      */
             selected_slot_index: number;
         } & {
@@ -3912,7 +3919,7 @@ export interface components {
             /** @description At most 3 entries; `[]` when no candidate survived. */
             slots: components["schemas"]["SuggestedSlot"][];
         };
-        /** @description The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
+        /** @description The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Every 5xx in this domain uses it, with a fixed server-chosen message (PAC-21). Handlers that use the Go stdlib `http.Error` for a 4xx return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
          *      */
         SchedulingErrorResponse: {
             error: string;
@@ -4189,7 +4196,7 @@ export interface components {
             /** @description DB default true. */
             recapIncludeHabits: boolean;
             /**
-             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
              *
              * @enum {string}
              */
@@ -4337,7 +4344,7 @@ export interface components {
             /** @description DB default true. */
             recapIncludeHabits?: boolean;
             /**
-             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
              *
              * @enum {string}
              */
@@ -4631,6 +4638,16 @@ export interface components {
                 "text/plain": "{\"error\":\"unauthorized\"}\n";
             };
         };
+        /** @description Either the requireAuth middleware rejected the request (text/plain, MiddlewareUnauthorized), or the session is valid but the caller has no stored Google Calendar credential, so an operation that must read or write their calendar cannot run. The second case is application/json with the exact body `{"error":"calendar not connected"}`: no provider, Go or storage error text and no user id (PAC-21, API-054). A failure to READ the credential store is not this response; it is the operation's 500. The two cases are told apart by Content-Type, or by the body. The web app's Dashboard decides "not connected" from GET /api/auth/status, not from this 401; no web code signs the user out on this 401 (only a 401 on GET /api/auth/me does). */
+        CalendarNotConnected: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["CalendarNotConnectedError"];
+                "text/plain": components["schemas"]["MiddlewareUnauthorized"];
+            };
+        };
         /** @description The habit exists but belongs to another user. Body is `{"error":"forbidden"}`. */
         Forbidden: {
             headers: {
@@ -4687,16 +4704,6 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description text/plain; charset=utf-8. Written by http.Error, NOT by writeError, so there is no JSON envelope. Typical bodies: "db error", or a raw wrapped storage/engine error string on the /api/teams routes.
-         *      */
-        PlainTextServerError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "text/plain": string;
-            };
-        };
         /** @description Validation failure from validateSchedulingLink / parseClock. Messages: "title is required"; "at least one duration is required"; "durations must be positive integers"; "at least one day is required"; "days_of_week must contain values between 0 and 6"; "window times must use HH:MM"; "window_start must be before window_end"; "buffers must be zero or positive"; "min_notice_minutes must be zero or positive"; "usage_type must be reusable, recurring, or single_use"; "max_uses must be set to a positive integer for recurring links"; "slug cannot be empty" (PATCH only). */
         SchedulingLinkValidationError: {
             headers: {
@@ -4706,10 +4713,20 @@ export interface components {
                 "application/json": components["schemas"]["BookingError"];
             };
         };
+        /** @description A server-side failure. JSON error envelope (application/json) with a fixed, server-chosen message: "internal error" on the /api/teams routes, "internal error" or "db error" on the /api/manager routes. Never the storage or engine error text, which is written to the server log and Sentry only (PAC-21). Replaces PlainTextServerError, the text/plain response these routes documented before PAC-21 was finished.
+         *      */
+        ServerError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Malformed JSON, or a value the server refuses. JSON error shape (writeError). A body property set to `null` is refused here: no property of SettingsUpdate is nullable (spec AC-8).
-         *     Messages that already exist: `invalid JSON: <err>`; `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid: <err>`; `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
+         *     Messages that already exist: `invalid JSON` (the body cannot be read; fixed text, PAC-21: before, the read error was appended); `invalid JSON: the body must be an object` (the body is not a JSON object, or is `null`; an existing fixed literal, unchanged); `invalid JSON: <property> has the wrong type` (a value of the wrong JSON type; `<property>` is the dotted path of JSON property names from the request, e.g. `timeFormat` or `workingHours.days.monday.start`, never a Go type or struct name; before PAC-21 was finished this was the decoder's own error text, which named Go types); `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid` (fixed text; before PAC-21 was finished the cron parser's error was appended); `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
          *     Messages PAC-24 adds, closing API-081 and API-082 - each of these is a value the server accepted before and then failed on, silently or as a 500 (spec AC-17): `workEnd must be after workStart`; `lunchEnd must be after lunchStart`; `focusMinBlockMinutes must not exceed focusMaxBlockMinutes`; `bufferMinMeetingMinutes must be zero or positive`; `timezone is not a known IANA location`; `recapSendTo must be dm or channel` (previously reached the DB CHECK and surfaced as a 500 - API-081); `recapSendTime must be in HH:MM format` (previously reached the Postgres TIME cast and surfaced as a 500); `calendarProvider must be one of: google, outlook, webcal` (resolves U-18); `conferencingProvider must be one of: meet, zoom, teams`.
-         *     Message PAC-55 adds: `timeFormat must be 12h or 24h`, for `""` and any other string (a non-string is `invalid JSON: <err>`).
+         *     Message PAC-55 adds: `timeFormat must be 12h or 24h`, for `""` and any other string (a non-string is `invalid JSON: timeFormat has the wrong type`).
          *     Messages revision 2 of this contract adds, each with its reason: `recapSendTime must be in HH:MM format` now also covers `""`. The write path previously substituted `08:00` for an empty value (`recapSendTimeOrDefault`, `backend/storage/settings.go:356-361`); under the merge rule a present property must be stored exactly as given, so a silent substitution is a contract violation and the empty value is refused instead. See `Settings.recapSendTime`; this is the one clock property for which `""` is NOT a value, and it needs a narrow amendment to spec AC-7. `workingHours.days must contain at least one weekday when mode is by_day` - a `by_day` document with an empty `days` map is the only remaining stored state that makes the consumer delete the working-hours section with no error (`smart-calendar-flow/src/api/client.ts:505-517,543`); the `all_days` equivalent is already normalised away on read (`backend/storage/settings.go:95-99`). Serves spec AC-20.
          *     `workingHours.days.<day> is not a valid weekday` and `lunchBreaks.<day> is not a valid weekday` are how a weekday key that is not exactly one of the seven lowercase names is refused: generators drop `propertyNames`, so the handler is the only enforcement point (revision 3/4).
          *     Messages PAC-66 adds, each produced only when the write CHANGES the property to a non-empty value (`""` is always accepted for all three, spec AC-15): `azureEndpoint must be an https URL whose host is approved for azure_openai on this deployment` (an unapproved host, a scheme other than `https`, a port other than 443, userinfo, or a value that does not parse as an absolute URL); `azureEndpoint cannot be set: azure_openai is not enabled on this deployment` (the operator approved no Azure host); `gcpLocation must be a region whose Vertex host is approved on this deployment` (including any value that changes the URL's authority, e.g. `attacker.example/x`); `gcpLocation cannot be set: vertex is not enabled on this deployment`; `awsRegion must be a valid AWS region name`. Each names the property first, so a client can attach it to the field.
@@ -4805,7 +4822,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Query failed — body is the raw err.Error() in the JSON error envelope. */
+            /** @description Query failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4865,7 +4882,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "save failed: <err>". */
+            /** @description Save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4912,7 +4929,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Delete failed — raw err.Error() in the JSON error envelope. */
+            /** @description Delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4944,12 +4961,8 @@ export interface operations {
                     "application/json": components["schemas"]["AnalyticsMeeting"][];
                 };
             };
-            401: components["responses"]["Unauthorized"];
-            /** @description `error` is the literal prefix "internal error: " plus the underlying error.
-             *     NOTE this is also what a user with no connected Google account receives —
-             *     `calOpsForUser` returns "no token for user <uuid>" and the handler maps it
-             *     to 500 rather than a 4xx.
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description The calendar read failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Before PAC-21 was finished a user with no credential got this 500 (API-054). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5045,7 +5058,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `error` is the literal prefix "compute failed: " plus the underlying error. */
+            /** @description Compute failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5077,16 +5090,8 @@ export interface operations {
                     "application/json": components["schemas"]["AttendeeSuggestion"][];
                 };
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Google Calendar API error. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5152,7 +5157,7 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description `audit: <err>` as JSON via writeError. */
+            /** @description Query failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5199,15 +5204,13 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, userinfo fetch, user upsert or token save failed.
-             *     Body is the bare message + ": " + err.Error().
-             *      */
+            /** @description Token exchange, userinfo fetch, user upsert or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5254,13 +5257,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "OIDC setup: <err>", "OIDC exchange: <err>" or "upsert user: <err>". */
+            /** @description OIDC setup, code exchange or user upsert failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5305,7 +5308,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "detection failed: <err>" — the SSO provider lookup errored. */
+            /** @description The SSO provider lookup failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5343,13 +5346,13 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token delete failed — body is the raw err.Error() string. */
+            /** @description Token delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5522,27 +5525,25 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, user upsert (`save user failed`) or token save (`save token failed: <err>`) failed (text/plain).
-             *      */
+            /** @description Token exchange or token save failed (`{"error":"internal error"}`), or the user upsert failed (`{"error":"save user failed"}`). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The Graph profile could not be read, or carried no email (`could not read the Microsoft account`, text/plain). Added by PAC-24.
-             *      */
+            /** @description The Graph profile could not be read, or carried no email. Body: `{"error":"could not read the Microsoft account"}`. Added by PAC-24. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `MICROSOFT_CLIENT_ID` unset — JSON error, unlike the other failures here. */
+            /** @description `MICROSOFT_CLIENT_ID` is unset. Body: `{"error":"Microsoft OAuth not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5584,7 +5585,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "OIDC setup: <err>" — issuer discovery failed. */
+            /** @description Issuer discovery failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5703,13 +5704,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Token exchange or token persistence failed. */
+            /** @description Token exchange or token persistence failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["BookingError"];
                 };
             };
         };
@@ -5834,7 +5835,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Storage or engine failure. Messages: "internal error"; "booking conflict check failed"; "booking failed: <engine error>". */
+            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5940,22 +5941,14 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Either the requireAuth middleware rejected the request (MiddlewareUnauthorized), or the handler could not build a calendar client because no OAuth token is stored for this user — in that case the body is the plain-text string `not connected: <err>`. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
-                };
-            };
-            /** @description Google Calendar API error, verbatim error text via http.Error. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5997,22 +5990,14 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description `not connected: <err>` (plain text), or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
-                };
-            };
-            /** @description Google Calendar API error (plain text). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6039,7 +6024,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConferenceMeetingDetails"];
                 };
             };
-            /** @description "invalid body"; "teams: not connected - visit /api/auth/microsoft to authenticate"; or a provider-construction error such as "zoom: not connected - visit /api/auth/zoom to authenticate". */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended). The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it today; the new stored-credential sentence uses the same character on purpose, so the three read alike: "invalid body"; "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails, not only when there is none: the server does not separate the two on this path; see the PAC-21 contract's doesNotResolve); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom" (the stored Zoom token does not decode; before PAC-21 was finished this was "zoom: invalid token: " plus the JSON decoder's error). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6049,7 +6034,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description "settings: <err>" or "create meeting: <err>" */
+            /** @description Settings load or meeting creation failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6079,7 +6064,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"settings: <err>"} */
+            /** @description Settings load failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6107,7 +6092,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"disconnect zoom: <err>"} */
+            /** @description Clearing the tokens failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6137,16 +6122,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description `delete failed: <err>`. Deleting an already-deleted or non-existent event surfaces here as 500, never as 404. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description The Google delete call failed, or the stored credential could not be read. Deleting an already-deleted or non-existent event surfaces here as 500, never as 404. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6191,16 +6168,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `not authenticated` (no stored OAuth token), or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description `event not found: <err>`. Any GetEvent failure maps to 404, including transport and permission errors, not only a genuine 404 from Google. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404, including transport and permission errors, not only a genuine 404 from Google. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6209,7 +6178,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `update failed: <err>`. */
+            /** @description The Google update call failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6245,7 +6214,7 @@ export interface operations {
                     "application/json": components["schemas"]["EventConferenceLink"];
                 };
             };
-            /** @description "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time"; or an unsupported-provider message from the factory such as 'unsupported conference provider "whereby"'. */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended): The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it. "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time" (the existing literal, kept: the event has no start or end, or, new in PAC-21, Google's value does not parse; before PAC-21 was finished a parse failure returned Go's time.Parse error text); 'unsupported conference provider "<provider>"' (echoes the request's own `provider`); "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom". */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6254,16 +6223,8 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description The calendar client could not be built (no Google token). Unlike the middleware 401 this one IS the shared JSON envelope with the underlying error text. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BookingError"];
-                };
-            };
-            /** @description Body: {"error":"event not found: <err>"} */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6281,7 +6242,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "create Google Meet: <err>", "settings: <err>", or "update failed: <err>" */
+            /** @description Google Meet creation, settings load, or the event update failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6290,7 +6251,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Upstream provider problem: "Google Meet creation is still pending", "create meeting: <err>", or "conference provider returned no join URL". */
+            /** @description Upstream provider problem. `error` is one of "Google Meet creation is still pending", "upstream provider error" (the provider's create-meeting call failed) or "conference provider returned no join URL". The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -6320,16 +6281,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Calendar client could not be built. JSON envelope with the underlying error text. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BookingError"];
-                };
-            };
-            /** @description Body: {"error":"event not found: <err>"} */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6338,7 +6291,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "remove Google Meet: <err>" or "remove conference: <err>" */
+            /** @description Removing the Google Meet or the conference properties failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6381,13 +6334,13 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description DB failure, raw Go error as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6423,13 +6376,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine failure, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6466,14 +6420,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine failure. Written with http.Error, so the body is the raw Go error string as text/plain, NOT the JSON error shape.
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6500,7 +6454,7 @@ export interface operations {
                     "application/json": components["schemas"]["FreeBusyQueryResponse"];
                 };
             };
-            /** @description JSON error (writeError). One of: `invalid JSON: <err>`, `emails is required` (empty or missing array), `max 20 emails per request`, `start_time must be RFC3339`, `end_time must be RFC3339`. */
+            /** @description JSON error (writeError). One of: `invalid JSON` (fixed text: the decoder's error is not appended, PAC-21), `emails is required` (empty or missing array), `max 20 emails per request`, `start_time must be RFC3339`, `end_time must be RFC3339`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6518,13 +6472,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description engine.FreeBusyService.Query failure — in practice only a settings-read failure. Emitted with http.Error, so PLAIN TEXT, unlike every other error path in this handler. */
+            /** @description engine.FreeBusyService.Query failed - in practice only a settings-read failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6586,7 +6540,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description Insert failed. `error` is the literal prefix "create failed: " plus the driver error. */
+            /** @description Insert failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6670,7 +6624,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Lookup failed ("internal error") or the UPDATE failed ("deactivate failed: " + driver error). */
+            /** @description Lookup or UPDATE failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6718,7 +6672,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Lookup failed ("internal error") or the UPDATE failed ("update failed: " + driver error). */
+            /** @description Lookup or UPDATE failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6916,22 +6870,22 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "db error" — the upsert failed. */
+            /** @description The upsert failed. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description PLAIN TEXT "token exchange failed: " plus the error (transport error, unparseable JSON, or a non-empty `error` field from Notion). */
+            /** @description The token exchange failed (transport error, unparseable JSON, or a non-empty `error` field from Notion). Body: `{"error":"upstream provider error"}`. Notion's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6957,13 +6911,13 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `NOTION_CLIENT_ID` is unset. PLAIN TEXT body "Notion not configured". */
+            /** @description `NOTION_CLIENT_ID` is unset. Body: `{"error":"Notion not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7043,22 +6997,22 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "db error" — the upsert failed. */
+            /** @description The upsert failed. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description PLAIN TEXT "token exchange failed: " plus the error (transport error, unparseable JSON, or Slack's `error` string when `ok:false`). */
+            /** @description The token exchange failed (transport error, unparseable JSON, or Slack's `error` string when `ok:false`). Body: `{"error":"upstream provider error"}`. Slack's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7084,13 +7038,13 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `SLACK_CLIENT_ID` is unset. PLAIN TEXT body "Slack not configured". */
+            /** @description `SLACK_CLIENT_ID` is unset. Body: `{"error":"Slack not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7158,19 +7112,16 @@ export interface operations {
                     "application/json": components["schemas"]["LLMDestinationRefusal"];
                 };
             };
-            /** @description Two different encodings share this code. Settings load failure -> text/plain (http.Error). Client construction failure (e.g. `LLM not configured - set API key in Settings`) -> JSON error shape (writeError). A PAC-66 destination refusal is NEVER a 500; it is the 422.
-             *      */
+            /** @description Settings load failure (`{"error":"internal error"}`), or the LLM client could not be constructed (a fixed configuration sentence such as `LLM not configured - set API key in Settings`). One encoding, the JSON error envelope, for both (before PAC-21 was finished the settings-load failure was text/plain). A PAC-66 destination refusal is NEVER a 500; it is the 422. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
-                    "text/plain": string;
                 };
             };
-            /** @description The provider call failed. JSON error shape (writeError) carrying the upstream error string. A 502 does NOT imply an inference request was sent: the handler maps every provider-call error to 502, including failures before any request leaves the server - Azure or Vertex credential acquisition (`azure: credential: …`, `azure: get token: …`, `vertex: find credentials: …`, `vertex: get token: …`) and Bedrock configuration loading (`bedrock: load config: …`, e.g. a stored `awsProfile` absent from the deployment's shared config). PAC-66: this includes an approved ambient-provider host answering with a redirect, which is not followed with the deployment credential to any other host or to `http` (spec AC-8). The body never carries the deployment credential. It is never used for a destination refusal; see 422.
-             *      */
+            /** @description The provider call failed. Body: `{"error":"upstream provider error"}`. The upstream error string is NOT returned: it is redacted of both keys and written to the server log and Sentry only (PAC-21). A 502 does NOT imply an inference request was sent: the handler maps every provider-call error to 502, including failures before any request leaves the server - Azure or Vertex credential acquisition and Bedrock configuration loading (e.g. a stored `awsProfile` absent from the deployment's shared config). PAC-66: this includes an approved ambient-provider host answering with a redirect, which is not followed with the deployment credential to any other host or to `http` (spec AC-8). The body never carries the deployment credential. It is never used for a destination refusal; see 422. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -7215,7 +7166,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     previewManagerDetection: {
@@ -7255,15 +7206,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["CalendarNotConnected"];
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain. Either "detection error: <wrapped engine error>" (calendar/OAuth failure) or "db error" from the per-candidate assignment lookup.
-             *      */
+            /** @description Detection failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the per-candidate assignment lookup failed: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7315,7 +7266,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getManagerCadenceGaps: {
@@ -7350,13 +7301,13 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain — "gap detection error: <err>" or "db error". */
+            /** @description Gap detection or a database read failed. `error` is "internal error" or "db error". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7379,7 +7330,7 @@ export interface operations {
                     "application/json": components["schemas"]["ManagerProfileSummary"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     setManagerProfile: {
@@ -7406,7 +7357,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["JsonError"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getManagerRoster: {
@@ -7445,7 +7396,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     addManagerTeamMember: {
@@ -7495,7 +7446,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     removeManagerTeamMember: {
@@ -7602,7 +7553,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     scheduleManagerOneOnOne: {
@@ -7663,7 +7614,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getMeetingBrief: {
@@ -7702,13 +7653,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description "db error" as PLAIN TEXT via `http.Error` — not the JSON error shape. */
+            /** @description Database error. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7747,13 +7698,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "generation error: " plus the underlying error. */
+            /** @description Brief generation returned an error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7780,7 +7731,7 @@ export interface operations {
                     "application/json": components["schemas"]["GoogleCalendarEvent"];
                 };
             };
-            /** @description `invalid JSON`, or `invalid selected_slot_index` (empty slot list, or index >= len). JSON error shape (writeError).
+            /** @description `invalid JSON`, or `invalid selected_slot_index` (empty slot list, index < 0, or index >= len). JSON error shape (writeError).
              *      */
             400: {
                 headers: {
@@ -7790,14 +7741,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description CreateMeeting error as text/plain (http.Error), or an empty-body panic-derived 500 for a negative index (see x-uncertain).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description CreateMeeting failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}`. A negative `selected_slot_index` is a 400, never a 500 (resolves U-06 / API-024). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -7833,13 +7784,13 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Parser error, raw Go error as text/plain (http.Error). */
+            /** @description Parse() returned an error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -7871,13 +7822,13 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description Body is the JSON literal `{"error":"internal"}` served as text/plain; charset=utf-8 (http.Error). */
+            /** @description Database error. Body: `{"error":"internal"}`, served as application/json (until PAC-21 was finished it was this same JSON literal with a text/plain Content-Type). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["MiddlewareUnauthorized"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7909,7 +7860,7 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description Database error, message passed through verbatim. */
+            /** @description Database error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8178,15 +8129,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["MiddlewareUnauthorized"];
-                };
-            };
+            401: components["responses"]["CalendarNotConnected"];
             /** @description `personal calendar not found` (before or after the sync). */
             404: {
                 headers: {
@@ -8196,7 +8139,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The blocker's Sync returned an error, or the last_synced_at update failed. Verified by TestPersonalCalendarSyncPropagatesBlockerError. */
+            /** @description The blocker's Sync returned an error other than "no stored Google credential" (for example the personal feed could not be read, or reading the credential store failed), or the last_synced_at update failed. Body `{"error":"internal error"}`. Verified by TestPersonalCalendarSyncPropagatesBlockerError. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8228,16 +8171,8 @@ export interface operations {
                     "application/json": components["schemas"]["CalendarRoom"][];
                 };
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Google CalendarList API error, message passed through verbatim. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google CalendarList API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8261,7 +8196,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Array of per-day results. `[]` when the slice stayed empty (week mode with every day failing).
+            /** @description Array of per-day results. `[]` when the slice stayed empty (week mode with every day's engine call failing after the credential check passed).
              *      */
             200: {
                 headers: {
@@ -8281,14 +8216,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Single-day mode only. Raw Go error as text/plain (http.Error).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Single-day mode: engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Both modes: reading the credential store failed (checked before any day is computed). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8324,13 +8259,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine Apply() error, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine Apply() failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8367,13 +8303,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Calendar/engine error, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Calendar or engine error for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8410,14 +8347,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine error (freebusy failure, settings load, or the out-of-hours allowance counter). Raw Go error as text/plain (http.Error).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine error (freebusy failure or settings load) for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}` (still a 500, not a 4xx: changing that status is not part of this change). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8494,7 +8431,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description Messages: "user not found"; "slug generation failed"; "slug check failed"; "create failed: <err>"; "owner host failed: <err>". */
+            /** @description `error` is one of "user not found", "slug generation failed", "slug check failed" or "internal error" (insert or owner-host insert failed). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8566,7 +8503,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8608,7 +8545,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8747,7 +8684,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "delete failed: <err>" */
+            /** @description Lookup or delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8821,7 +8758,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description "internal error", "slug check failed", or "update failed: <err>" */
+            /** @description `error` is "internal error" (lookup or update failed) or "slug check failed". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8863,7 +8800,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8965,7 +8902,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9038,7 +8975,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "invite failed: <err>" */
+            /** @description Lookup or invite failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9087,7 +9024,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "leave failed: <err>" */
+            /** @description Lookup or leave failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9116,13 +9053,13 @@ export interface operations {
                     "application/json": components["schemas"]["Settings"];
                 };
             };
-            /** @description DB failure, raw Go error as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9150,13 +9087,13 @@ export interface operations {
                 };
             };
             400: components["responses"]["SettingsValidationError"];
-            /** @description Save or re-read failure, text/plain (http.Error). */
+            /** @description Load, save or re-read failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9179,13 +9116,13 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapSettings"];
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9220,13 +9157,13 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9249,13 +9186,13 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapPreview"];
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9288,22 +9225,22 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description `send error: <err>` as text/plain (http.Error). */
+            /** @description Sending the test message failed. Body: `{"error":"upstream provider error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9327,7 +9264,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["JsonUnauthorized"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     createTeam: {
@@ -9363,7 +9300,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["JsonUnauthorized"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeamInvite: {
@@ -9407,7 +9344,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     acceptTeamInvite: {
@@ -9458,7 +9395,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeam: {
@@ -9502,7 +9439,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     deleteTeam: {
@@ -9534,7 +9471,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     renameTeam: {
@@ -9573,7 +9510,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getFormalTeamAnalytics: {
@@ -9611,7 +9548,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeamAvailability: {
@@ -9651,7 +9588,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     inviteTeamMember: {
@@ -9699,7 +9636,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     removeTeamMember: {
@@ -9733,7 +9670,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     listNoMeetingZones: {
@@ -9767,7 +9704,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     createNoMeetingZone: {
@@ -9815,7 +9752,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     deleteNoMeetingZone: {
@@ -9848,7 +9785,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     updateNoMeetingZone: {
@@ -9905,7 +9842,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
 }
