@@ -49,6 +49,9 @@ export const CadenceGap = z.strictObject({ member_email: z.email(), display_name
 export type CadenceGapList = __TypedOpenapi.Schemas.CadenceGapList;
 export const CadenceGapList = z.strictObject({ gaps: z.array(CadenceGap) });
 
+export type CalendarDisconnectUnsupported = __TypedOpenapi.Schemas.CalendarDisconnectUnsupported;
+export const CalendarDisconnectUnsupported = z.strictObject({ error: z.literal("disconnecting this kind of calendar is not available yet"), provider: z.enum(["outlook", "webcal"]) });
+
 export type CalendarEventAttendee = __TypedOpenapi.Schemas.CalendarEventAttendee;
 export const CalendarEventAttendee = z.strictObject({ email: z.email(), name: z.string().optional(), rsvp: z.enum(["accepted", "declined", "tentative", "pending"]).optional(), organizer: z.boolean().optional() });
 
@@ -101,7 +104,7 @@ export type OrgSummary = __TypedOpenapi.Schemas.OrgSummary;
 export const OrgSummary = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.string(), createdAt: z.iso.datetime() });
 
 export type CurrentUserResponse = __TypedOpenapi.Schemas.CurrentUserResponse;
-export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.string(), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
+export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
 
 export type DailyRecapPatch = __TypedOpenapi.Schemas.DailyRecapPatch;
 export const DailyRecapPatch = z.strictObject({ enabled: z.boolean(), send_time: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), send_to: z.enum(["dm", "channel"]), channel_id: z.string(), include_briefs: z.boolean(), include_focus_blocks: z.boolean(), include_habits: z.boolean() }).partial();

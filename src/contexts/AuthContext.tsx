@@ -17,7 +17,8 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
-  avatar?: string;
+  /** The picture, under the contract's one name for it (CurrentUserResponse.avatarUrl, PAC-35). May be "". */
+  avatarUrl?: string;
 }
 
 const DEMO_USER: AuthUser = {
@@ -45,25 +46,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mounted.current = false;
   }, []);
 
-  const refresh = useCallback(async () => {
+  /**
+   * Re-reads /api/auth/me. Resolves to the user, to null when the server says
+   * there is no session (401/403), or to undefined when it could not tell
+   * (network failure, 5xx). The sign-in completion page needs that difference
+   * (PAC-35 AC-6).
+   */
+  const refresh = useCallback(async (): Promise<AuthUser | null | undefined> => {
     try {
-      const me = await apiFetch<AuthUser>("/api/auth/me", { method: "GET" });
+      const me = (await apiFetch<AuthUser>("/api/auth/me", { method: "GET" })) ?? null;
       if (mounted.current) {
-        setUser(me ?? null);
+        setUser(me);
         setSessionStale(false);
       }
+      return me;
     } catch (e) {
       const status = (e as ApiError)?.status;
-      if (!mounted.current) return;
       if (status === 401 || status === 403) {
         // Explicit authentication failure → the session is really gone.
-        setUser(null);
-        setSessionStale(false);
-        return;
+        if (mounted.current) {
+          setUser(null);
+          setSessionStale(false);
+        }
+        return null;
       }
       // Network failure / 5xx / unreachable backend: keep the last known user
       // and mark the session as temporarily unavailable so the UI can retry.
-      setSessionStale(true);
+      if (mounted.current) setSessionStale(true);
+      return undefined;
     }
   }, []);
 

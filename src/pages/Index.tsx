@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowRight,
   Calendar as CalendarIcon,
@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import logo from "@/assets/paceday-logo.png";
 import { AuthDialog } from "@/components/auth/AuthDialog";
+import { SignInFailedNotice } from "@/components/auth/SignInFailedNotice";
 import { useAuth } from "@/contexts/useAuth";
 
 /* ---------- shared bits ---------- */
@@ -560,9 +561,22 @@ const Index = ({ initialAuth }: IndexProps = {}) => {
     setAuthOpen(true);
   };
 
+  // The sign-in failure state (PAC-35): the server and the completion page
+  // send a sign-in that produced no session here. Only this one fixed value is
+  // recognised; nothing from the URL is ever displayed.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const signInFailed = searchParams.get("error") === "auth_failed";
+  const retrySignIn = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("error");
+    setSearchParams(next, { replace: true });
+    openAuth("signin");
+  };
+
   return (
     <main className="min-h-screen bg-background text-foreground">
       <Nav onOpenAuth={openAuth} />
+      {signInFailed && <SignInFailedNotice onRetry={retrySignIn} />}
       <Hero onOpenAuth={openAuth} />
       <Problem />
       <Solution />
