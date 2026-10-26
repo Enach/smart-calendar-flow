@@ -219,6 +219,10 @@ export interface paths {
          *     exchanges the code, upserts the user, stores the OAuth token, associates
          *     the org, issues the `auth_token` JWT cookie, then redirects to
          *     `<FRONTEND_URL>/auth/callback`.
+         *     Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
+         *     the session cookie was actually set. If the session cannot be issued
+         *     (empty signing secret, or token generation fails) the user is sent to
+         *     the sign-in failure state instead; see the `302` response.
          *
          */
         get: operations["googleOAuthCallback"];
@@ -240,10 +244,14 @@ export interface paths {
         /**
          * OIDC SSO callback
          * @description Verifies `sso_state` (both the random half and the embedded domain),
-         *     re-discovers the OIDC client, exchanges the code, upserts the user with
+         *     re-discovers the OIDC client, exchanges the code, checks that the
+         *     asserted email belongs to `{domain}` (PAC-45), upserts the user with
          *     provider="sso", and issues the JWT cookie.
-         *     Inconsistent error encoding: the 404 uses the JSON helper while every
-         *     other failure in this handler uses http.Error (text/plain).
+         *     Since PAC-35 (API-011) the redirect to `/auth/callback?provider=sso`
+         *     happens only when the session cookie was actually set; otherwise the
+         *     user goes to the sign-in failure state (see `302`).
+         *     Inconsistent error encoding: the 404 and 500 use the JSON helpers while
+         *     the 400s and the 403 use http.Error (text/plain).
          *
          */
         get: operations["ssoOidcCallback"];
@@ -295,9 +303,31 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete the stored calendar OAuth token and clear the session cookie
-         * @description Deletes the current user's OAuth token row and expires the `auth_token`
-         *     cookie — i.e. this also logs the user out, which the name does not suggest.
+         * Disconnect the caller's Google calendar (the session is kept)
+         * @description Never touches the session: no response of this operation sets or
+         *     expires the `auth_token` cookie (PAC-35, API-061; before PAC-35 the
+         *     204 expired it and so logged the user out).
+         *
+         *     Branches on the caller's calendar provider exactly as `getAuthStatus`
+         *     does (`calendarProvider` from the caller's own settings row; blank or
+         *     any value other than `outlook` / `webcal` means Google; a caller with
+         *     no settings row yet gets the default row, provider `google`, exactly as
+         *     `getAuthStatus` creates it), so the server and the app classify every
+         *     user the same way (spec PAC-35 D-8):
+         *     - Google: deletes the caller's stored Google OAuth token row and answers
+         *       204. As before, this also turns Google Meet to not connected for the
+         *       caller (it depends on the same credential). A caller with no stored
+         *       token gets 204 too.
+         *     - `outlook` or `webcal`: deletes NOTHING (the stored Google token, if
+         *       the caller holds one, the Microsoft credential and the webcal link
+         *       are all kept) and answers 409 `CalendarDisconnectUnsupported`.
+         *       Disconnect for these calendars is not implemented (spec PAC-35 OQ-5).
+         *     - The settings row cannot be read (or created): deletes nothing and
+         *       answers 500.
+         *       The provider is never guessed as Google on this path, so a read
+         *       failure cannot delete an Outlook or webcal user's Google token.
+         *       (`getAuthStatus` still answers "google" on its own read failure;
+         *       disconnect deliberately does not follow it there.)
          *
          */
         delete: operations["disconnectCalendar"];
@@ -317,6 +347,10 @@ export interface paths {
          * Begin Google OAuth
          * @description Sets an httpOnly `oauth_state` cookie (MaxAge 300, SameSite=Lax) and
          *     redirects to Google's consent screen. Never returns a body.
+         *     Since PAC-35 (API-064) a valid `login_hint` is forwarded to Google so the
+         *     account the user typed is preselected. Google still shows its consent
+         *     screen every time (`oauth2.ApprovalForce`); the hint chooses the
+         *     account, it does not skip the screen.
          *
          */
         get: operations["startGoogleOAuth"];
@@ -340,7 +374,8 @@ export interface paths {
         /**
          * Clear the session cookie
          * @description Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
-         *     out with an already-expired token returns 401 rather than succeeding.
+         *     out with an already-expired token returns 401 rather than succeeding
+         *     (unchanged by PAC-35, spec section 5).
          *
          */
         post: operations["logout"];
@@ -357,7 +392,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The authenticated user */
+        /**
+         * The authenticated user
+         * @description Since PAC-35 (API-065) the user's picture has one name in the
+         *     current-user read: `avatarUrl`, the name the server already sends.
+         *     Clients read it under that name; the server does not rename it.
+         *     Scheduling-link and booking hosts carry the same stored value as
+         *     `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+         *
+         */
         get: operations["getCurrentUser"];
         put?: never;
         post?: never;
@@ -379,6 +422,7 @@ export interface paths {
          * @description Sets an httpOnly `ms_oauth_state` cookie and redirects to Microsoft.
          *     Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
          *     if the client id is blank the route 503s.
+         *     Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
          *
          */
         get: operations["startMicrosoftOAuth"];
@@ -404,9 +448,13 @@ export interface paths {
          *     settings row (making Outlook their calendar provider), sets the session
          *     cookie and redirects. Since PAC-24 the profile fetch is required, not
          *     best-effort: without it there is no user to attach the credential to, so
-         *     a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
-         *     saved on the single shared settings row and the provider flipped for
-         *     everyone.
+         *     nothing is saved. Before PAC-24 the token was saved on the single shared
+         *     settings row and the provider flipped for everyone.
+         *     Since PAC-35 (API-011, API-012) three failures after a successful code
+         *     exchange end on the app's sign-in failure state rather than on a JSON
+         *     error page on the API origin: the Graph profile could not be read (or
+         *     carried no email), the user could not be saved, or the session could
+         *     not be issued. See the `302` response.
          *
          */
         get: operations["microsoftOAuthCallback"];
@@ -430,6 +478,17 @@ export interface paths {
          * @description Looks up the SSO provider row for `{domain}`, builds the OIDC redirect
          *     URL as `os.Getenv("APP_URL") + "/api/auth/callback/oidc/" + domain`, sets
          *     an `sso_state` cookie of the form `<state>|<domain>`, and redirects.
+         *     This is the destination `detectAuthProvider` names in `redirect_url`;
+         *     the web app reaches it by resolving that path against the API origin and
+         *     appending `?login_hint=<typed email>` (PAC-35, API-010).
+         *     Since PAC-35 (API-064) a `login_hint` that passes the LoginHint rule AND
+         *     whose domain is exactly `{domain}` (case-insensitive, no subdomains, the
+         *     same test as the callback's PAC-45 check) is forwarded to the IdP. A hint
+         *     at another domain is dropped, so this route never sends one
+         *     organisation's IdP an address outside that organisation's domain.
+         *     Unchanged by PAC-35 (spec D-5): the 404, 500 and 501 answers below.
+         *     API-060 (SAML and incomplete OIDC rows accepted at create time) stays
+         *     with PAC-22.
          *
          */
         get: operations["startSsoLogin"];
@@ -2594,6 +2653,21 @@ export interface components {
         CadenceGapList: {
             gaps: components["schemas"]["CadenceGap"][];
         };
+        /** @description Body of `disconnectCalendar`'s 409 (PAC-35, spec D-8): the caller's
+         *     calendar is not Google, disconnect for that kind of calendar is not
+         *     implemented, and nothing was deleted. `error` keeps the shared
+         *     `{error}` member so a client that only shows `data.error` still shows a
+         *     true sentence.
+         *      */
+        CalendarDisconnectUnsupported: {
+            /** @constant */
+            error: "disconnecting this kind of calendar is not available yet";
+            /**
+             * @description The caller's calendar provider, as `getAuthStatus` reports it.
+             * @enum {string}
+             */
+            provider: "outlook" | "webcal";
+        };
         /** @description api.calendarEventDTO — the flattened event shape returned by GET /api/calendar/events. */
         CalendarEvent: {
             /** @description Google Calendar event id. Always present as a key; may be "". */
@@ -2820,14 +2894,34 @@ export interface components {
             /** Format: email */
             email: string;
             name: string;
-            /** @description May be the empty string (Microsoft and SSO logins always upsert "").
-             *     Not omitempty, so the key is always present.
+            /** @description The user's picture URL. In the current-user read (`getCurrentUser`)
+             *     this is the only name for it; clients read it as `avatarUrl`, not
+             *     `avatar` (PAC-35, API-065: the web app read it as `avatar`, or not at
+             *     all). Scheduling-link and booking hosts carry the same stored value
+             *     as `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by
+             *     PAC-35. May be the empty string. Every sign-in overwrites it: Google
+             *     writes the Google picture, Microsoft and SSO always write "" (so a
+             *     Microsoft or SSO sign-in clears a picture an earlier Google sign-in
+             *     stored). Not omitempty, so the key is always present.
              *      */
             avatarUrl: string;
-            /** @description Login provider recorded at upsert time.
-             *     x-uncertain applies — see property-level note.
-             *      */
-            provider: string;
+            /**
+             * @description The provider of the user's FIRST sign-in: set when the row is
+             *     inserted and never updated (UpsertUser's ON CONFLICT does not touch
+             *     `provider`), so a user who first signed in with Google and later
+             *     with Microsoft still reads "google".
+             *     Closed by PAC-35 (U-13): `users.provider` has no CHECK constraint
+             *     (migration 006, `TEXT NOT NULL DEFAULT 'google'`), but its only
+             *     writer is storage.UpsertUser, and every call site in the history
+             *     of the repository passes one of these three literals
+             *     (handlers_auth.go "google", handlers_microsoft_auth.go "microsoft",
+             *     handlers_sso.go "sso"; tests and the e2e seed write "google").
+             *     A CHECK constraint is not added (spec PAC-35 section 7: no
+             *     migration).
+             *
+             * @enum {string}
+             */
+            provider: "google" | "microsoft" | "sso";
             /** @description Present only when the user has an org_id AND the org row loads
              *     (json tag "org,omitempty"). org_id itself is `json:"-"` and never
              *     serialized.
@@ -4407,7 +4501,14 @@ export interface components {
             type: "google" | "microsoft" | "sso" | "generic";
             /** @description Display name of the SSO provider. Omitted unless type == "sso". */
             provider_name?: string;
-            /** @description Relative path `/api/auth/sso/<domain>`. Omitted unless type == "sso".
+            /** @description Relative path `/api/auth/sso/<domain>` (the email's domain,
+             *     lowercased and trimmed, not URL-escaped). Omitted unless
+             *     type == "sso". It is a path on the API's origin, not the web app's:
+             *     a client resolves it against its API base URL, which may be a
+             *     different origin (PAC-35 AC-7). The client appends
+             *     `?login_hint=<email>` itself (see `startSsoLogin`); the detection
+             *     answer does not carry the email. This is the only field a client
+             *     needs to reach SSO; there is no `domain` field (API-010).
              *      */
             redirect_url?: string;
         };
@@ -4773,6 +4874,37 @@ export interface components {
         /** @description Opaque invite token — a UUID string generated by CreateTeamInvite. Not validated as a UUID by the handler; any string is looked up verbatim.
          *      */
         InviteTokenPath: string;
+        /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+         *     `login_hint` so it can preselect or prefill that account (PAC-35,
+         *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+         *     links a Paceday account; the account signed in is the one the provider
+         *     authenticates, checked exactly as before.
+         *     The LoginHint rule: the value is forwarded only when it is a bare email
+         *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+         *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+         *     name and an `Address` equal to the whole value (so no `<...>`, display
+         *     name, comment, whitespace or other extra text); (4) the local part
+         *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+         *     names such as `o'brien`); (5) the domain (after
+         *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+         *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+         *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+         *     no single-label host (`localhost`). Anything else, including an empty
+         *     value, is dropped silently and sign-in starts without a hint. Examples
+         *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+         *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+         *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+         *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+         *     `o'brien@acme.com`.
+         *     When `login_hint` is repeated, only the first value is considered
+         *     (`url.Values.Get`); the others are ignored.
+         *     It is never a 400: the schema is a plain string on purpose, because a
+         *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+         *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+         *     to the provider request, and no other query parameter of the start
+         *     request is forwarded.
+         *      */
+        LoginHint: string;
         /** @description The roster member's email address, percent-encoded in the path (the `@` MUST be sent as %40 — chi splits on `/` only, but the frontend and the Go tests both use encodeURIComponent/%40 form). The handler applies url.PathUnescape to the raw chi param and falls back to the raw value if unescaping fails. Storage lowercases and trims before matching, so lookup is case-insensitive even though this path segment is not normalized by the handler itself.
          *      */
         MemberEmailPath: string;
@@ -5187,15 +5319,26 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Success — JWT cookie issued, redirect to the SPA. */
+            /** @description One of exactly two destinations (PAC-35, API-011):
+             *     - Success: the `auth_token` cookie is set and Location is
+             *       `<FRONTEND_URL>/auth/callback` (no query string, unlike the
+             *       Microsoft/SSO callbacks).
+             *     - Session not issued (signing secret empty, or token generation
+             *       failed) after the user and token were saved: NO `auth_token`
+             *       cookie is set or expired, and Location is the sign-in failure
+             *       state `<FRONTEND_URL>/?error=auth_failed`. Never `/auth/callback`.
+             *     The user row and stored Google token written before that point are
+             *     kept; nothing is deleted on the failure path. The cause is written
+             *     to the server log and Sentry only; the Location carries no cause.
+             *      */
             302: {
                 headers: {
-                    /** @description <FRONTEND_URL>/auth/callback (no query string, unlike the Microsoft/SSO callbacks) */
+                    /** @description `<FRONTEND_URL>/auth/callback` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
+                     *      */
                     Location?: string;
-                    /** @description auth_token=<HS256 JWT>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
-                     *     NOTE: if jwtSecret is empty, authHandlers.issueJWT returns silently
-                     *     and NO cookie is set — the 302 still happens and the user lands
-                     *     logged-out.
+                    /** @description On success: auth_token=<HS256 JWT>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
+                     *     On the failure redirect: no `auth_token` cookie at all.
                      *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -5236,11 +5379,25 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=sso`. */
+            /** @description One of exactly two destinations (PAC-35, API-011):
+             *     - Success: the `auth_token` cookie is set and Location is
+             *       `<FRONTEND_URL>/auth/callback?provider=sso`.
+             *     - Session not issued (signing secret empty, or token generation
+             *       failed) after the user was saved: NO `auth_token` cookie is set
+             *       or expired, and Location is the sign-in failure state
+             *       `<FRONTEND_URL>/?error=auth_failed`. The saved user row is kept.
+             *     Every other failure stays a non-302 response below (spec PAC-35
+             *     D-1).
+             *      */
             302: {
                 headers: {
+                    /** @description `<FRONTEND_URL>/auth/callback?provider=sso` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
+                     *      */
                     Location?: string;
-                    /** @description auth_token JWT cookie (skipped silently when jwtSecret is empty). */
+                    /** @description On success: auth_token JWT cookie. On the failure redirect: no
+                     *     `auth_token` cookie at all.
+                     *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -5248,6 +5405,20 @@ export interface operations {
             };
             /** @description "missing state cookie", "invalid state", or "no email in OIDC token claims". */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description "email domain does not match SSO provider domain": the IdP asserted
+             *     an email whose domain is not exactly `{domain}` (PAC-45). No user is
+             *     upserted and no session is issued. text/plain (http.Error).
+             *     Documented by PAC-35: the response has existed since PAC-45 (#172)
+             *     but was missing from this contract.
+             *      */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5335,11 +5506,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Disconnected. No body. */
+            /** @description The caller's calendar is Google and its stored token row is gone
+             *     (or there was none). No body. No Set-Cookie.
+             *      */
             204: {
                 headers: {
-                    /** @description auth_token=; Path=/; Max-Age=-1; HttpOnly; SameSite=Lax */
-                    "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -5353,7 +5524,22 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description The caller's calendar provider is `outlook` or `webcal`. Nothing was
+             *     deleted and the session is kept. This is the only 409 this
+             *     operation returns, so a client can tell "disconnect is not available
+             *     for this kind of calendar" from every other failure by status
+             *     alone; `provider` says which kind. A client must treat it as a
+             *     failure, never as a success (spec PAC-35 D-8).
+             *      */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarDisconnectUnsupported"];
+                };
+            };
+            /** @description The caller's settings could not be read, or the token delete failed. Nothing else is changed and the session is kept. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5367,11 +5553,37 @@ export interface operations {
     startGoogleOAuth: {
         parameters: {
             query?: {
-                /** @description Sent by the frontend (src/components/auth/AuthDialog.tsx) but the Go
-                 *     handler (authHandlers.startOAuth) reads no query parameters at all,
-                 *     so it is silently discarded and NOT forwarded to Google.
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
                  *      */
-                login_hint?: string;
+                login_hint?: components["parameters"]["LoginHint"];
             };
             header?: never;
             path?: never;
@@ -5379,10 +5591,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to Google's authorization endpoint. */
+            /** @description Redirect to Google's authorization endpoint. Always a 302, whatever
+             *     `login_hint` holds: an invalid hint is dropped, never a 400.
+             *      */
             302: {
                 headers: {
-                    /** @description auth.GetAuthURL(oauthConfig, state) */
+                    /** @description auth.GetAuthURL(oauthConfig, state), plus `login_hint=<hint>`
+                     *     (URL-encoded) when the request's `login_hint` passed the
+                     *     LoginHint rule. No other query parameter of this request is
+                     *     copied into it.
+                     *      */
                     Location?: string;
                     /** @description oauth_state=<32 hex chars>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5401,10 +5619,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Logged out. Empty body and NO Content-Type header (w.WriteHeader(200)
-             *     with nothing written) — a 204 would be the honest status.
+            /** @description Logged out. No body (PAC-35, API-063; before PAC-35 this was a 200
+             *     with an empty body and no Content-Type, which the strict web client
+             *     would classify as "server unreachable").
              *      */
-            200: {
+            204: {
                 headers: {
                     /** @description auth_token=; Path=/; Max-Age=-1; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5469,8 +5688,37 @@ export interface operations {
     startMicrosoftOAuth: {
         parameters: {
             query?: {
-                /** @description Sent by the frontend; ignored by the handler (same as /api/auth/google). */
-                login_hint?: string;
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
+                 *      */
+                login_hint?: components["parameters"]["LoginHint"];
             };
             header?: never;
             path?: never;
@@ -5478,9 +5726,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to Microsoft's authorization endpoint. */
+            /** @description Redirect to Microsoft's authorization endpoint. An invalid
+             *     `login_hint` is dropped, never a 400.
+             *      */
             302: {
                 headers: {
+                    /** @description auth.GetMicrosoftAuthURL(cfg, state), plus `login_hint=<hint>`
+                     *     (URL-encoded) when the request's `login_hint` passed the
+                     *     LoginHint rule. No other query parameter of this request is
+                     *     copied into it.
+                     *      */
                     Location?: string;
                     /** @description ms_oauth_state=<32 hex chars>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5511,13 +5766,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=outlook`, with the
-             *     `auth_token` cookie set. Every failure is a non-302 response below.
+            /** @description One of exactly two destinations (PAC-35):
+             *     - Success: Location `<FRONTEND_URL>/auth/callback?provider=outlook`,
+             *       with the `auth_token` cookie set.
+             *     - Sign-in failure state, Location `<FRONTEND_URL>/?error=auth_failed`,
+             *       with NO `auth_token` cookie set or expired, when any of these
+             *       happens after the code exchange succeeded:
+             *       (a) the Graph profile could not be read, or carried no email
+             *           (nothing is saved; API-012, was a 502);
+             *       (b) the user upsert failed (nothing is saved; API-012, was a 500
+             *           with `{"error":"save user failed"}`);
+             *       (c) the session could not be issued (signing secret empty, or
+             *           token generation failed) after the user and the Microsoft
+             *           token were saved; they are kept (API-011).
+             *     The cause is written to the server log and Sentry only; the
+             *     Location carries no cause, provider name or detail.
+             *     State mismatch, token exchange failure, token save failure and an
+             *     unconfigured client are NOT redirects; they are the 400, 500 and
+             *     503 below (spec PAC-35 D-1).
              *      */
             302: {
                 headers: {
+                    /** @description `<FRONTEND_URL>/auth/callback?provider=outlook` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` on the failures (a)-(c).
+                     *      */
                     Location?: string;
-                    /** @description auth_token JWT for the upserted user. */
+                    /** @description On success: auth_token JWT for the upserted user. On the failure
+                     *     redirect: no `auth_token` cookie at all.
+                     *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -5532,17 +5808,8 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange or token save failed (`{"error":"internal error"}`), or the user upsert failed (`{"error":"save user failed"}`). The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Token exchange or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A failed user upsert is no longer a 500, and an unreadable Graph profile is no longer a 502: since PAC-35 both are the failure redirect under `302`. */
             500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description The Graph profile could not be read, or carried no email. Body: `{"error":"could not read the Microsoft account"}`. Added by PAC-24. The detail is written to the server log and Sentry only (PAC-21). */
-            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5563,7 +5830,39 @@ export interface operations {
     };
     startSsoLogin: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
+                 *      */
+                login_hint?: components["parameters"]["LoginHint"];
+            };
             header?: never;
             path: {
                 /** @description Email domain, e.g. "acme.com". */
@@ -5573,9 +5872,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the identity provider. */
+            /** @description Redirect to the identity provider. Always a 302 for a usable OIDC
+             *     row, whatever `login_hint` holds: an invalid or other-domain hint is
+             *     dropped, never a 400.
+             *      */
             302: {
                 headers: {
+                    /** @description The IdP authorization URL (OIDCClient.AuthURL(state)), plus
+                     *     `login_hint=<hint>` (URL-encoded) when the hint passed the
+                     *     LoginHint rule and belongs to `{domain}`. No other query
+                     *     parameter of this request is copied into it.
+                     *      */
                     Location?: string;
                     /** @description sso_state=<32 hex chars>|<domain>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;

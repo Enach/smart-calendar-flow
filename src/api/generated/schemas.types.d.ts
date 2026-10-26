@@ -247,6 +247,20 @@ export type CadenceGap = {
 }
 export type CadenceGapList = { gaps: Array<CadenceGap> }
 /**
+ * Body of `disconnectCalendar`'s 409 (PAC-35, spec D-8): the caller's
+ * calendar is not Google, disconnect for that kind of calendar is not
+ * implemented, and nothing was deleted. `error` keeps the shared
+ * `{error}` member so a client that only shows `data.error` still shows a
+ * true sentence.
+ */
+export type CalendarDisconnectUnsupported = {
+  error: "disconnecting this kind of calendar is not available yet";
+  /**
+   * The caller's calendar provider, as `getAuthStatus` reports it.
+   */
+  provider: ("outlook" | "webcal");
+}
+/**
  * api.attendeeDTO.
  */
 export type CalendarEventAttendee = {
@@ -550,15 +564,32 @@ export type CurrentUserResponse = {
   email: string;
   name: string;
   /**
-   * May be the empty string (Microsoft and SSO logins always upsert "").
-   * Not omitempty, so the key is always present.
+   * The user's picture URL. In the current-user read (`getCurrentUser`)
+   * this is the only name for it; clients read it as `avatarUrl`, not
+   * `avatar` (PAC-35, API-065: the web app read it as `avatar`, or not at
+   * all). Scheduling-link and booking hosts carry the same stored value
+   * as `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by
+   * PAC-35. May be the empty string. Every sign-in overwrites it: Google
+   * writes the Google picture, Microsoft and SSO always write "" (so a
+   * Microsoft or SSO sign-in clears a picture an earlier Google sign-in
+   * stored). Not omitempty, so the key is always present.
    */
   avatarUrl: string;
   /**
-   * Login provider recorded at upsert time.
-   * x-uncertain applies — see property-level note.
+   * The provider of the user's FIRST sign-in: set when the row is
+   * inserted and never updated (UpsertUser's ON CONFLICT does not touch
+   * `provider`), so a user who first signed in with Google and later
+   * with Microsoft still reads "google".
+   * Closed by PAC-35 (U-13): `users.provider` has no CHECK constraint
+   * (migration 006, `TEXT NOT NULL DEFAULT 'google'`), but its only
+   * writer is storage.UpsertUser, and every call site in the history
+   * of the repository passes one of these three literals
+   * (handlers_auth.go "google", handlers_microsoft_auth.go "microsoft",
+   * handlers_sso.go "sso"; tests and the e2e seed write "google").
+   * A CHECK constraint is not added (spec PAC-35 section 7: no
+   * migration).
    */
-  provider: string;
+  provider: ("google" | "microsoft" | "sso");
   org?: OrgSummary;
   createdAt: string;
 }
@@ -2229,7 +2260,14 @@ export type SsoDetectResponse = {
    */
   provider_name?: string;
   /**
-   * Relative path `/api/auth/sso/<domain>`. Omitted unless type == "sso".
+   * Relative path `/api/auth/sso/<domain>` (the email's domain,
+   * lowercased and trimmed, not URL-escaped). Omitted unless
+   * type == "sso". It is a path on the API's origin, not the web app's:
+   * a client resolves it against its API base URL, which may be a
+   * different origin (PAC-35 AC-7). The client appends
+   * `?login_hint=<email>` itself (see `startSsoLogin`); the detection
+   * answer does not carry the email. This is the only field a client
+   * needs to reach SSO; there is no `domain` field (API-010).
    */
   redirect_url?: string;
 }
@@ -2669,6 +2707,10 @@ export type get_ListAuditEntries = {
  * exchanges the code, upserts the user, stores the OAuth token, associates
  * the org, issues the `auth_token` JWT cookie, then redirects to
  * `<FRONTEND_URL>/auth/callback`.
+ * Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
+ * the session cookie was actually set. If the session cannot be issued
+ * (empty signing secret, or token generation fails) the user is sent to
+ * the sign-in failure state instead; see the `302` response.
  */
 export type get_GoogleOAuthCallback = {
       method: "GET",
@@ -2691,10 +2733,14 @@ export type get_GoogleOAuthCallback = {
     }
 /**
  * Verifies `sso_state` (both the random half and the embedded domain),
- * re-discovers the OIDC client, exchanges the code, upserts the user with
+ * re-discovers the OIDC client, exchanges the code, checks that the
+ * asserted email belongs to `{domain}` (PAC-45), upserts the user with
  * provider="sso", and issues the JWT cookie.
- * Inconsistent error encoding: the 404 uses the JSON helper while every
- * other failure in this handler uses http.Error (text/plain).
+ * Since PAC-35 (API-011) the redirect to `/auth/callback?provider=sso`
+ * happens only when the session cookie was actually set; otherwise the
+ * user goes to the sign-in failure state (see `302`).
+ * Inconsistent error encoding: the 404 and 500 use the JSON helpers while
+ * the 400s and the 403 use http.Error (text/plain).
  */
 export type get_SsoOidcCallback = {
       method: "GET",
@@ -2710,6 +2756,7 @@ export type get_SsoOidcCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
+403: Schemas.PlainTextError,
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -2747,8 +2794,30 @@ export type post_DetectAuthProvider = {
       
     }
 /**
- * Deletes the current user's OAuth token row and expires the `auth_token`
- * cookie — i.e. this also logs the user out, which the name does not suggest.
+ * Never touches the session: no response of this operation sets or
+ * expires the `auth_token` cookie (PAC-35, API-061; before PAC-35 the
+ * 204 expired it and so logged the user out).
+ * 
+ * Branches on the caller's calendar provider exactly as `getAuthStatus`
+ * does (`calendarProvider` from the caller's own settings row; blank or
+ * any value other than `outlook` / `webcal` means Google; a caller with
+ * no settings row yet gets the default row, provider `google`, exactly as
+ * `getAuthStatus` creates it), so the server and the app classify every
+ * user the same way (spec PAC-35 D-8):
+ * - Google: deletes the caller's stored Google OAuth token row and answers
+ *   204. As before, this also turns Google Meet to not connected for the
+ *   caller (it depends on the same credential). A caller with no stored
+ *   token gets 204 too.
+ * - `outlook` or `webcal`: deletes NOTHING (the stored Google token, if
+ *   the caller holds one, the Microsoft credential and the webcal link
+ *   are all kept) and answers 409 `CalendarDisconnectUnsupported`.
+ *   Disconnect for these calendars is not implemented (spec PAC-35 OQ-5).
+ * - The settings row cannot be read (or created): deletes nothing and
+ *   answers 500.
+ *   The provider is never guessed as Google on this path, so a read
+ *   failure cannot delete an Outlook or webcal user's Google token.
+ *   (`getAuthStatus` still answers "google" on its own read failure;
+ *   disconnect deliberately does not follow it there.)
  */
 export type delete_DisconnectCalendar = {
       method: "DELETE",
@@ -2758,14 +2827,18 @@ export type delete_DisconnectCalendar = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.PlainTextError,
+409: Schemas.CalendarDisconnectUnsupported,
 500: Schemas.ErrorResponse,
 },
-      responseHeaders: {204: { "Set-Cookie": string },
-},
+      
     }
 /**
  * Sets an httpOnly `oauth_state` cookie (MaxAge 300, SameSite=Lax) and
  * redirects to Google's consent screen. Never returns a body.
+ * Since PAC-35 (API-064) a valid `login_hint` is forwarded to Google so the
+ * account the user typed is preselected. Google still shows its consent
+ * screen every time (`oauth2.ApprovalForce`); the hint chooses the
+ * account, it does not skip the screen.
  */
 export type get_StartGoogleOAuth = {
       method: "GET",
@@ -2786,7 +2859,8 @@ export type get_StartGoogleOAuth = {
     }
 /**
  * Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
- * out with an already-expired token returns 401 rather than succeeding.
+ * out with an already-expired token returns 401 rather than succeeding
+ * (unchanged by PAC-35, spec section 5).
  */
 export type post_Logout = {
       method: "POST",
@@ -2794,12 +2868,19 @@ export type post_Logout = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: never,
-      responses: {200: unknown,
+      responses: {204: unknown,
 401: Schemas.PlainTextError,
 },
-      responseHeaders: {200: { "Set-Cookie": string },
+      responseHeaders: {204: { "Set-Cookie": string },
 },
     }
+/**
+ * Since PAC-35 (API-065) the user's picture has one name in the
+ * current-user read: `avatarUrl`, the name the server already sends.
+ * Clients read it under that name; the server does not rename it.
+ * Scheduling-link and booking hosts carry the same stored value as
+ * `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+ */
 export type get_GetCurrentUser = {
       method: "GET",
       path: "/api/auth/me",
@@ -2816,6 +2897,7 @@ export type get_GetCurrentUser = {
  * Sets an httpOnly `ms_oauth_state` cookie and redirects to Microsoft.
  * Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
  * if the client id is blank the route 503s.
+ * Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
  */
 export type get_StartMicrosoftOAuth = {
       method: "GET",
@@ -2841,9 +2923,13 @@ export type get_StartMicrosoftOAuth = {
  * settings row (making Outlook their calendar provider), sets the session
  * cookie and redirects. Since PAC-24 the profile fetch is required, not
  * best-effort: without it there is no user to attach the credential to, so
- * a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
- * saved on the single shared settings row and the provider flipped for
- * everyone.
+ * nothing is saved. Before PAC-24 the token was saved on the single shared
+ * settings row and the provider flipped for everyone.
+ * Since PAC-35 (API-011, API-012) three failures after a successful code
+ * exchange end on the app's sign-in failure state rather than on a JSON
+ * error page on the API origin: the Graph profile could not be read (or
+ * carried no email), the user could not be saved, or the session could
+ * not be issued. See the `302` response.
  */
 export type get_MicrosoftOAuthCallback = {
       method: "GET",
@@ -2860,7 +2946,6 @@ export type get_MicrosoftOAuthCallback = {
       responses: {302: unknown,
 400: Schemas.PlainTextError,
 500: Schemas.ErrorResponse,
-502: Schemas.ErrorResponse,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -2870,6 +2955,17 @@ export type get_MicrosoftOAuthCallback = {
  * Looks up the SSO provider row for `{domain}`, builds the OIDC redirect
  * URL as `os.Getenv("APP_URL") + "/api/auth/callback/oidc/" + domain`, sets
  * an `sso_state` cookie of the form `<state>|<domain>`, and redirects.
+ * This is the destination `detectAuthProvider` names in `redirect_url`;
+ * the web app reaches it by resolving that path against the API origin and
+ * appending `?login_hint=<typed email>` (PAC-35, API-010).
+ * Since PAC-35 (API-064) a `login_hint` that passes the LoginHint rule AND
+ * whose domain is exactly `{domain}` (case-insensitive, no subdomains, the
+ * same test as the callback's PAC-45 check) is forwarded to the IdP. A hint
+ * at another domain is dropped, so this route never sends one
+ * organisation's IdP an address outside that organisation's domain.
+ * Unchanged by PAC-35 (spec D-5): the 404, 500 and 501 answers below.
+ * API-060 (SAML and incomplete OIDC rows accepted at create time) stays
+ * with PAC-22.
  */
 export type get_StartSsoLogin = {
       method: "GET",
@@ -2877,7 +2973,7 @@ export type get_StartSsoLogin = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            
+            query?:  Partial<{ login_hint: string }>,
         path:  { domain: string },
         
         
