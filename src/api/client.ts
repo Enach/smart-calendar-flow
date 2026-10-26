@@ -1,5 +1,5 @@
 import type { ApiPort, CompressionApplyResponse } from "./contract";
-import { SettingsUpdate } from "./generated/schemas";
+import { CalendarDisconnectUnsupported, SettingsUpdate } from "./generated/schemas";
 
 import type {
   AuditEntry,
@@ -319,6 +319,27 @@ export function isApiHttpError(e: unknown): e is ApiHttpError {
 }
 export function isApiUnreachableError(e: unknown): e is ApiUnreachableError {
   return e instanceof ApiUnreachableError;
+}
+
+/** What both calendar-disconnect surfaces say when disconnect is not offered (PAC-35). */
+export const CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE = "Disconnecting this kind of calendar is not available yet.";
+
+/**
+ * Whether the app offers a disconnect for a calendar the server's status
+ * reports as `provider`. The server disconnects only Google calendars, and its
+ * status answers "google" for a blank or unknown provider, so only Outlook
+ * and WebCal are excluded (PAC-35, spec D-6/D-8).
+ */
+export function canDisconnectCalendar(provider: string | undefined): boolean {
+  return provider !== "outlook" && provider !== "webcal";
+}
+
+/**
+ * The server's 409 CalendarDisconnectUnsupported: the caller's calendar is
+ * not Google, nothing was deleted. A failure, never a success (PAC-35 D-8).
+ */
+export function isCalendarDisconnectUnsupported(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 409 && CalendarDisconnectUnsupported.safeParse(e.data).success;
 }
 
 /**

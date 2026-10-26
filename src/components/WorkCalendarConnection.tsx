@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogIn, LogOut, Calendar, Mail, Link as LinkIcon } from "lucide-react";
-import { api, apiErrorMessage } from "@/api/client";
+import {
+  api,
+  apiErrorMessage,
+  CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE,
+  canDisconnectCalendar,
+  isCalendarDisconnectUnsupported,
+} from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider, Settings } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
@@ -87,8 +93,15 @@ export function WorkCalendarConnection({
       await api.authDisconnect();
       toast.success("Disconnected");
       qc.invalidateQueries({ queryKey: ["auth"] });
-    } catch {
-      toast.error("Failed to disconnect");
+    } catch (e) {
+      if (isCalendarDisconnectUnsupported(e)) {
+        // The calendar is not Google after all (a stale status): nothing was
+        // disconnected. Say so and re-read the status (PAC-35).
+        toast.error(CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE);
+        qc.invalidateQueries({ queryKey: ["auth"] });
+      } else {
+        toast.error("Failed to disconnect");
+      }
     } finally {
       setBusy(false);
     }
@@ -122,7 +135,12 @@ export function WorkCalendarConnection({
             </p>
           </div>
         </div>
-        {status?.connected && (
+        {status?.connected && !canDisconnectCalendar(status.provider) && (
+          <p className="max-w-[14rem] shrink-0 text-right text-[11px] text-muted-foreground">
+            {CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE}
+          </p>
+        )}
+        {status?.connected && canDisconnectCalendar(status.provider) && (
           <button
             onClick={handleDisconnect}
             disabled={busy}
