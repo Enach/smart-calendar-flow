@@ -134,22 +134,22 @@ export type EventPatchRequest = __TypedOpenapi.Schemas.EventPatchRequest;
 export const EventPatchRequest = z.strictObject({ title: z.string().nullable(), description: z.string().nullable(), location: z.string().nullable(), start: z.iso.datetime().nullable(), end: z.iso.datetime().nullable(), attendees: z.array(z.email()).nullable() }).partial();
 
 export type FocusBlockRecord = __TypedOpenapi.Schemas.FocusBlockRecord;
-export const FocusBlockRecord = z.strictObject({ ID: z.number().int(), GoogleEventID: z.string(), StartTime: z.iso.datetime(), EndTime: z.iso.datetime(), Date: z.iso.date(), CreatedAt: z.iso.datetime() });
+export const FocusBlockRecord = z.strictObject({ id: z.number().int(), google_event_id: z.string(), start_time: z.iso.datetime(), end_time: z.iso.datetime(), date: z.iso.date(), created_at: z.iso.datetime() });
 
 export type FocusClearResult = __TypedOpenapi.Schemas.FocusClearResult;
 export const FocusClearResult = z.strictObject({ deleted: z.number().int() });
 
 export type FocusRunBlock = __TypedOpenapi.Schemas.FocusRunBlock;
-export const FocusRunBlock = z.strictObject({ GoogleEventID: z.string(), Start: z.iso.datetime(), End: z.iso.datetime(), Date: z.iso.date() });
+export const FocusRunBlock = z.strictObject({ google_event_id: z.string(), start_time: z.iso.datetime(), end_time: z.iso.datetime(), date: z.iso.date() });
 
 export type FocusRunRequest = __TypedOpenapi.Schemas.FocusRunRequest;
 export const FocusRunRequest = z.object({ week: z.iso.date() }).partial().catchall(z.unknown());
 
 export type FocusRunResult = __TypedOpenapi.Schemas.FocusRunResult;
-export const FocusRunResult = z.strictObject({ weekStart: z.iso.datetime(), createdBlocks: z.array(FocusRunBlock), skippedDays: z.array(z.string()), totalMinutes: z.number().int(), errors: z.array(z.string()) });
+export const FocusRunResult = z.strictObject({ weekStart: z.iso.datetime(), createdBlocks: z.array(FocusRunBlock), skippedDays: z.array(z.iso.date()), totalMinutes: z.number().int(), errors: z.array(z.string()) });
 
 export type RawGoogleBusyWindow = __TypedOpenapi.Schemas.RawGoogleBusyWindow;
-export const RawGoogleBusyWindow = z.strictObject({ Start: z.iso.datetime(), End: z.iso.datetime() });
+export const RawGoogleBusyWindow = z.strictObject({ start: z.iso.datetime(), end: z.iso.datetime() });
 
 export type FreeBusyLegacyResult = __TypedOpenapi.Schemas.FreeBusyLegacyResult;
 export const FreeBusyLegacyResult = z.strictObject({ email: z.email(), coverage: z.enum(["known", "unknown"]), busy: z.array(RawGoogleBusyWindow) });
@@ -257,7 +257,7 @@ export type ManagerRoster = __TypedOpenapi.Schemas.ManagerRoster;
 export const ManagerRoster = z.strictObject({ team_id: z.uuid(), members: z.array(ManagerRosterMember) });
 
 export type ManagerTeamMemberGoStruct = __TypedOpenapi.Schemas.ManagerTeamMemberGoStruct;
-export const ManagerTeamMemberGoStruct = z.strictObject({ ID: z.uuid(), ManagerUserID: z.uuid(), MemberEmail: z.email(), MemberUserID: z.uuid().nullable(), DisplayName: z.string(), Source: ManagerMemberSource, Cadence: Cadence, CadenceCustomDays: z.number().int().min(1).max(365).nullable(), LastOneOnOneAt: z.iso.datetime().nullable(), CreatedAt: z.iso.datetime(), UpdatedAt: z.iso.datetime() });
+export const ManagerTeamMemberGoStruct = z.strictObject({ id: z.uuid(), manager_user_id: z.uuid(), member_email: z.email(), member_user_id: z.uuid().nullable(), display_name: z.string(), source: ManagerMemberSource, cadence: Cadence, cadence_custom_days: z.number().int().min(1).max(365).nullable(), last_one_on_one_at: z.iso.datetime().nullable(), created_at: z.iso.datetime(), updated_at: z.iso.datetime() });
 
 export type SlackMessage = __TypedOpenapi.Schemas.SlackMessage;
 export const SlackMessage = z.strictObject({ channel_name: z.string(), author_name: z.string(), text: z.string(), timestamp: z.string(), permalink: z.string() });
@@ -317,7 +317,7 @@ export type PersonalCalendarPatchRequest = __TypedOpenapi.Schemas.PersonalCalend
 export const PersonalCalendarPatchRequest = z.strictObject({ name: z.string().nullable(), url: z.string().nullable(), enabled: z.boolean().nullable() }).partial();
 
 export type PersonalCalendarPreviewEvent = __TypedOpenapi.Schemas.PersonalCalendarPreviewEvent;
-export const PersonalCalendarPreviewEvent = z.strictObject({ ID: z.string(), Title: z.string(), Start: z.iso.datetime(), End: z.iso.datetime() });
+export const PersonalCalendarPreviewEvent = z.strictObject({ id: z.string(), title: z.string(), start: z.iso.datetime(), end: z.iso.datetime() });
 
 export type PlainTextError = __TypedOpenapi.Schemas.PlainTextError;
 export const PlainTextError = z.string();
@@ -446,7 +446,7 @@ export type UpdateSchedulingLinkRequest = __TypedOpenapi.Schemas.UpdateSchedulin
 export const UpdateSchedulingLinkRequest = z.strictObject({ title: z.string().nullable(), slug: z.string().nullable(), duration_options: z.array(z.number().int()), durations: z.array(z.number().int()), days_of_week: z.array(z.number().int().min(0).max(6)), days: z.array(z.string()), window_start_time: z.string().nullable(), window_start: z.string().nullable(), window_end_time: z.string().nullable(), window_end: z.string().nullable(), buffer_before: z.number().int().min(0).nullable(), buffer_after: z.number().int().min(0).nullable(), min_notice_minutes: z.number().int().min(0).nullable(), usage_type: z.enum(["reusable", "recurring", "single_use"]).nullable(), max_uses: z.number().int().nullable(), active: z.boolean().nullable(), co_host_emails: z.array(z.email()) }).partial();
 
 export type UserProfileGoStruct = __TypedOpenapi.Schemas.UserProfileGoStruct;
-export const UserProfileGoStruct = z.strictObject({ UserID: z.uuid(), IsManager: z.boolean(), DetectedAt: z.iso.datetime().nullable(), AnalyticsSharedWithManager: z.boolean(), UpdatedAt: z.iso.datetime() });
+export const UserProfileGoStruct = z.strictObject({ user_id: z.uuid(), is_manager: z.boolean(), detected_at: z.iso.datetime().nullable(), analytics_shared_with_manager: z.boolean(), updated_at: z.iso.datetime() });
 
 // </Schemas>
 
