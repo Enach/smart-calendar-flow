@@ -37,8 +37,8 @@ describe("AnalyticsTab", () => {
         is_paceday_user: true,
         data_available: true,
         weeks: [
-          { week_start: "2026-10-05", meeting_minutes: 240, focus_minutes: 615, free_minutes: 1545 },
-          { week_start: "2026-09-28", meeting_minutes: 300, focus_minutes: 410, free_minutes: 1690 },
+          { week_start: "2026-10-05", meeting_minutes: 240, focus_minutes: 615, free_minutes: 1545, data_available: true },
+          { week_start: "2026-09-28", meeting_minutes: 300, focus_minutes: 410, free_minutes: 1690, data_available: true },
         ],
         one_on_ones: [{ date: "2026-10-01", title: "Riley / salary review" }],
       },
@@ -60,6 +60,53 @@ describe("AnalyticsTab", () => {
     // The 1:1 event title is never shown to the manager.
     expect(screen.queryByText(/salary review/)).not.toBeInTheDocument();
     expect(screen.getByText("1:1")).toBeInTheDocument();
+  });
+
+  it("shows 'no data' instead of a zero chart for a member with no measured week (PAC-34 AC-4)", async () => {
+    vi.spyOn(managerApi.remote, "analytics").mockResolvedValue([
+      {
+        email: "report@co.com",
+        is_paceday_user: false,
+        data_available: false,
+        weeks: [
+          { week_start: "2026-10-05", meeting_minutes: 0, focus_minutes: 0, free_minutes: 0, data_available: false },
+          { week_start: "2026-09-28", meeting_minutes: 0, focus_minutes: 0, free_minutes: 0, data_available: false },
+        ],
+        one_on_ones: [],
+      },
+    ]);
+
+    renderTab(team);
+    fireEvent.click(await screen.findByRole("button", { name: "Members" }));
+
+    expect(await screen.findByTestId("analytics-member-no-data")).toHaveTextContent(/no data/i);
+    expect(screen.queryByTitle(/Focus 0m/)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Week of/)).not.toBeInTheDocument();
+  });
+
+  it("draws an unmeasured bucket as 'no data', not as zero minutes", async () => {
+    vi.spyOn(managerApi.remote, "analytics").mockResolvedValue([
+      {
+        email: "report@co.com",
+        is_paceday_user: true,
+        data_available: true,
+        weeks: [
+          { week_start: "2026-10-05", meeting_minutes: 0, focus_minutes: 0, free_minutes: 0, data_available: false },
+          { week_start: "2026-09-28", meeting_minutes: 300, focus_minutes: 410, free_minutes: 1690, data_available: true },
+        ],
+        one_on_ones: [],
+      },
+    ]);
+
+    renderTab(team);
+    fireEvent.click(await screen.findByRole("button", { name: "Members" }));
+
+    expect(await screen.findByTitle(/Focus 6h 50m, Meetings 5h/)).toBeInTheDocument();
+    const gaps = screen.getAllByTestId("analytics-week-no-data");
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toHaveAttribute("title", expect.stringMatching(/no data/i));
+    expect(screen.queryByTitle(/Focus 0m, Meetings 0m/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("analytics-member-no-data")).not.toBeInTheDocument();
   });
 
   it("shows an empty state, not generated numbers, when there is no team", () => {

@@ -6,6 +6,7 @@
  */
 
 import type { Attendee } from "./types";
+import type { components } from "./generated/types";
 import { api, isUsingMocks, requestApi } from "./client";
 
 async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
@@ -42,6 +43,8 @@ export interface FocusWeekStat {
   meeting_minutes: number;
   focus_minutes: number;
   free_minutes: number;
+  /** False when this bucket was not measured: draw it as "no data", never as zero minutes. */
+  data_available: boolean;
 }
 
 export interface MemberAnalytics {
@@ -233,6 +236,7 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
       meeting_minutes: meetings,
       focus_minutes: focus,
       free_minutes: free,
+      data_available: m.data_available,
     });
   }
   const oneOnOnes = m.last_one_on_one
@@ -575,12 +579,8 @@ export interface RawAnalyticsMember {
   meeting_minutes?: number;
   focus_minutes?: number;
   free_minutes?: number;
-  weeks?: Array<{
-    week_start?: string;
-    meeting_minutes?: number;
-    focus_minutes?: number;
-    free_minutes?: number;
-  }>;
+  /** Contract ManagerAnalyticsWeek; every key is required on the wire, read defensively. */
+  weeks?: Array<Partial<components["schemas"]["ManagerAnalyticsWeek"]>>;
   one_on_ones?: Array<{ date: string; title?: string }>;
 }
 
@@ -589,20 +589,24 @@ export function normalizeAnalytics(
   week: string,
 ): MemberAnalytics[] {
   return (raw?.members ?? []).map((m) => {
-    const source =
+    const source: Array<Partial<components["schemas"]["ManagerAnalyticsWeek"]>> =
       m.weeks && m.weeks.length > 0
         ? m.weeks
         : [{ week_start: m.week_start ?? week, meeting_minutes: m.meeting_minutes, focus_minutes: m.focus_minutes, free_minutes: m.free_minutes }];
+    // A missing flag is never read as "measured": defaulting it to true drew
+    // unmeasured weeks as zero minutes (API-022, PAC-34).
+    const weeks = source.map((w) => ({
+      week_start: w.week_start ?? week,
+      meeting_minutes: Number(w.meeting_minutes ?? 0),
+      focus_minutes: Number(w.focus_minutes ?? 0),
+      free_minutes: Number(w.free_minutes ?? 0),
+      data_available: w.data_available === true,
+    }));
     return {
       email: m.email,
       is_paceday_user: m.is_paceday_user ?? false,
-      data_available: m.data_available ?? true,
-      weeks: source.map((w) => ({
-        week_start: w.week_start ?? week,
-        meeting_minutes: Number(w.meeting_minutes ?? 0),
-        focus_minutes: Number(w.focus_minutes ?? 0),
-        free_minutes: Number(w.free_minutes ?? 0),
-      })),
+      data_available: m.data_available ?? weeks.some((w) => w.data_available),
+      weeks,
       one_on_ones: (m.one_on_ones ?? []).map((o) => ({ date: o.date, title: o.title ?? "1:1" })),
     };
   });

@@ -5,8 +5,36 @@ import { AlertTriangle, Check, Loader2, RefreshCw, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { apiErrorMessage } from "@/api/client";
-import { teamInvitesApi, teamKeys } from "@/api/teams";
+import { teamInvitesApi, teamKeys, type TeamInvite as TeamInviteModel } from "@/api/teams";
 import { toast } from "@/hooks/useToast";
+import { UI_LOCALE } from "@/lib/locale";
+
+/** "Invited by Name (email)", by name or email alone, or nothing when neither was read. */
+function InviterLine({ invite }: { invite: TeamInviteModel }) {
+  const { inviter_name: name, inviter_email: email } = invite;
+  if (!name && !email) return null;
+  return (
+    <p data-testid="invite-inviter" className="mt-3 text-sm text-muted-foreground">
+      Invited by <span className="font-medium text-foreground">{name ?? email}</span>
+      {name && email ? <> ({email})</> : null}
+    </p>
+  );
+}
+
+/** The expiry date, or that the invite has expired; nothing when no valid date was sent. */
+function ExpiryLine({ expiresAt }: { expiresAt: string | null }) {
+  if (!expiresAt) return null;
+  const at = new Date(expiresAt);
+  if (Number.isNaN(at.getTime())) return null;
+  const label = at.toLocaleDateString(UI_LOCALE, { month: "long", day: "numeric", year: "numeric" });
+  const expired = at.getTime() <= Date.now();
+  return (
+    <p data-testid="invite-expiry" className="mt-1 text-sm text-muted-foreground">
+      {expired ? "This invitation expired on " : "This invitation expires on "}
+      <time dateTime={expiresAt}>{label}</time>.
+    </p>
+  );
+}
 
 /**
  * Authenticated invite consumption.
@@ -75,6 +103,8 @@ export default function TeamInvite() {
                 ) : null}
                 .
               </p>
+              <InviterLine invite={inviteQ.data} />
+              <ExpiryLine expiresAt={inviteQ.data.expires_at} />
 
               {acceptMut.error && (
                 <p role="alert" className="mt-4 flex items-start gap-2 text-sm text-destructive">

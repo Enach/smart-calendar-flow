@@ -1102,6 +1102,14 @@ export type ManagerAnalyticsMember = {
   email: string;
   display_name: string;
   /**
+   * True iff the member's member_user_id resolved to a Paceday user row; the same value ManagerRosterMember.is_paceday_user carries for this member (PAC-34).
+   */
+  is_paceday_user: boolean;
+  /**
+   * True iff at least one entry of `weeks` has data_available=true (PAC-34). Derived from the buckets of this response, never read or cached separately, so it cannot disagree with them. False means no bucket is measured (degraded FreeBusy, no analytics_weeks rows, consent withheld, or the PAC-60 visibility gate): the member's minutes must be shown as "no data", not as zeroes. True does NOT mean every bucket is measured; each bucket's own data_available still decides how that bucket is drawn.
+   */
+  data_available: boolean;
+  /**
    * Exactly 12 buckets, newest first.
    */
   weeks: Array<ManagerAnalyticsWeek>;
@@ -2369,7 +2377,7 @@ export type TeamInvite = {
   expiresAt: string;
 }
 /**
- * A deliberately narrow projection — NOT a TeamInvite. Built as a map[string]string, so every value is a plain string and a missing team or inviter yields "" rather than null.
+ * A narrow projection of a pending invite, NOT a TeamInvite (no id, token, status, invitedBy or createdAt). The three original keys are camelCase and stay so for existing readers; the three keys added by PAC-34 are snake_case, the spelling the PAC-34 acceptance criteria name and the web normalizer reads (see contracts/features/PAC-34.md section 3 for the rejected alternatives). team_id and expires_at come from the invite row itself, so they are always present. The team and inviter rows are read separately and a failed read is not an error: teamName and inviterName become "" and inviter_email becomes null.
  */
 export type TeamInvitePreview = {
   /**
@@ -2384,6 +2392,18 @@ export type TeamInvitePreview = {
    * The invitee email the invite was issued to.
    */
   email: string;
+  /**
+   * team_invites.team_id of this invite (PAC-34). Never empty.
+   */
+  team_id: string;
+  /**
+   * team_invites.expires_at, RFC 3339 (PAC-34): createdAt + 7 days, computed in Go when the invite was created. A 200 is returned only while the invite is pending and ExpireOldInvites runs first, so a client normally sees a future instant; a client must still treat a past value as expired rather than assume otherwise.
+   */
+  expires_at: string;
+  /**
+   * The inviter's account email, users.email of team_invites.invited_by (PAC-34). null, never "", when the inviter's user row could not be read. invited_by is NOT NULL with ON DELETE CASCADE, so a deleted inviter removes the invite (404), and null only arises from a failed read.
+   */
+  inviter_email: (string | null);
 }
 export type TeamNameRequest = ({
   /**
@@ -3807,7 +3827,7 @@ export type post_TestLLMConnection = {
       
     }
 /**
- * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy).
+ * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy). PAC-34 (API-022): each member also carries is_paceday_user (same derivation as the roster's) and a member-level data_available that is true iff at least one of its 12 buckets has data_available=true. A client must render a bucket with data_available=false, and a member with data_available=false, as "no data", never as zero minutes. Neither field widens visibility: is_paceday_user is already on the roster for the same caller and members, and data_available is derived only from the buckets this response already returns.
  */
 export type get_GetManagerAnalytics = {
       method: "GET",
@@ -4862,7 +4882,7 @@ export type get_ListTeams = {
       
     }
 /**
- * Despite the "(public)" comment on the handler, this route is registered inside the requireAuth group and therefore requires a valid JWT. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. The response deliberately omits team_id, token and expires_at.
+ * Registered inside the requireAuth group and therefore requires a valid JWT. The handler comment says "(public)", which is wrong (API-089); PAC-34 corrects the comment, not the routing. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. PAC-34 (API-021): the 200 also carries team_id, expires_at and inviter_email, so the invite page can show who invited the caller and when the link expires. The audience is unchanged: any authenticated caller holding the token, as before (the invitee email is checked on accept, not on preview). The token is still not echoed; the caller already has it in the path.
  */
 export type get_GetTeamInvite = {
       method: "GET",

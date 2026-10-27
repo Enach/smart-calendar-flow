@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiHttpError, isUsingMocks, setMockMode } from "./client";
+import type { components } from "./generated/types";
 import {
   managerApi,
   managerKeys,
@@ -92,9 +93,47 @@ describe("manager response normalization", () => {
       "2026-05-04",
     );
     expect(out[0].weeks).toEqual([
-      { week_start: "2026-05-04", meeting_minutes: 300, focus_minutes: 120, free_minutes: 0 },
+      { week_start: "2026-05-04", meeting_minutes: 300, focus_minutes: 120, free_minutes: 0, data_available: false },
     ]);
     expect(out[0].is_paceday_user).toBe(true);
+    // No flag was sent, so nothing is claimed as measured (API-022).
+    expect(out[0].data_available).toBe(false);
+  });
+
+  it("keeps the member and per-bucket data_available exactly as sent (PAC-34 AC-4)", () => {
+    const member: components["schemas"]["ManagerAnalyticsMember"] = {
+      email: "sam@co.com",
+      display_name: "Sam",
+      is_paceday_user: true,
+      data_available: true,
+      weeks: [
+        { week_start: "2026-05-04", focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false },
+        { week_start: "2026-04-27", focus_minutes: 300, meeting_minutes: 120, free_minutes: 600, data_available: true },
+      ],
+    };
+    const external: components["schemas"]["ManagerAnalyticsMember"] = {
+      email: "ext@gmail.com",
+      display_name: "Ext",
+      is_paceday_user: false,
+      data_available: false,
+      weeks: [{ week_start: "2026-05-04", focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false }],
+    };
+    const [sam, ext] = normalizeAnalytics({ members: [member, external] }, "2026-05-04");
+    expect(sam.data_available).toBe(true);
+    expect(sam.is_paceday_user).toBe(true);
+    expect(sam.weeks.map((w) => w.data_available)).toEqual([false, true]);
+    expect(ext.data_available).toBe(false);
+    expect(ext.is_paceday_user).toBe(false);
+    expect(ext.weeks[0].data_available).toBe(false);
+  });
+
+  it("never defaults a missing data_available to true", () => {
+    const [m] = normalizeAnalytics(
+      { members: [{ email: "a@b.com", weeks: [{ week_start: "2026-04-27", focus_minutes: 60 }] }] },
+      "2026-05-04",
+    );
+    expect(m.data_available).toBe(false);
+    expect(m.weeks[0].data_available).toBe(false);
   });
 
   it("prefers a nested weeks array when present", () => {
@@ -108,6 +147,7 @@ describe("manager response normalization", () => {
       meeting_minutes: 0,
       focus_minutes: 60,
       free_minutes: 0,
+      data_available: false,
     });
   });
 

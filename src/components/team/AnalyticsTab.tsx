@@ -394,7 +394,13 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
   const data = analyticsQ.data?.find((a) => a.email.toLowerCase() === member.email.toLowerCase());
   // Oldest week first, so the chart reads left to right.
   const weeks = (data?.weeks ?? []).slice().sort((a, b) => a.week_start.localeCompare(b.week_start));
-  const maxMin = Math.max(...weeks.map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes), 1);
+  // Unmeasured buckets carry zeros that are not data, so they never set the scale.
+  const maxMin = Math.max(
+    ...weeks.filter((w) => w.data_available).map((w) => w.meeting_minutes + w.focus_minutes + w.free_minutes),
+    1,
+  );
+  const weekLabel = (weekStart: string) =>
+    new Date(weekStart).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" });
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
@@ -434,10 +440,25 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
           </div>
         ) : weeks.length === 0 ? (
           <p className="text-sm text-muted-foreground">No analytics for this member yet.</p>
+        ) : data && !data.data_available ? (
+          <p data-testid="analytics-member-no-data" className="text-sm text-muted-foreground">
+            No data for these 12 weeks. Their calendar could not be measured, so nothing is shown rather than zeros.
+          </p>
         ) : (
           <>
             <div className="flex h-40 items-end gap-1.5">
               {weeks.map((w) => {
+                if (!w.data_available) {
+                  return (
+                    <div
+                      key={w.week_start}
+                      data-testid="analytics-week-no-data"
+                      className="h-full flex-1 rounded-sm border border-dashed border-border"
+                      title={`Week of ${weekLabel(w.week_start)} — no data`}
+                      aria-label={`Week of ${weekLabel(w.week_start)}: no data`}
+                    />
+                  );
+                }
                 const totalH = (w.meeting_minutes + w.focus_minutes + w.free_minutes) / maxMin;
                 const mtgH = w.meeting_minutes / maxMin;
                 const focH = w.focus_minutes / maxMin;
@@ -446,7 +467,7 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
                   <div
                     key={w.week_start}
                     className="relative flex flex-1 flex-col-reverse"
-                    title={`Week of ${new Date(w.week_start).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" })} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
+                    title={`Week of ${weekLabel(w.week_start)} — Focus ${fmtMin(w.focus_minutes)}, Meetings ${fmtMin(w.meeting_minutes)}`}
                     style={{ height: `${totalH * 100}%` }}
                   >
                     <div style={{ height: `${(mtgH / totalH) * 100}%`, backgroundColor: "#E9B949" }} />
@@ -467,6 +488,11 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
               <span className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: "#EDEEE9" }} /> Free
               </span>
+              {weeks.some((w) => !w.data_available) ? (
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm border border-dashed border-muted-foreground" /> No data
+                </span>
+              ) : null}
             </div>
           </>
         )}
