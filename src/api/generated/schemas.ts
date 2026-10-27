@@ -221,7 +221,7 @@ export type ManagerAnalyticsWeek = __TypedOpenapi.Schemas.ManagerAnalyticsWeek;
 export const ManagerAnalyticsWeek = z.strictObject({ week_start: z.iso.date(), focus_minutes: z.number().int(), meeting_minutes: z.number().int(), free_minutes: z.number().int(), data_available: z.boolean() });
 
 export type ManagerAnalyticsMember = __TypedOpenapi.Schemas.ManagerAnalyticsMember;
-export const ManagerAnalyticsMember = z.strictObject({ email: z.email(), display_name: z.string(), weeks: z.array(ManagerAnalyticsWeek).min(12).max(12) });
+export const ManagerAnalyticsMember = z.strictObject({ email: z.email(), display_name: z.string(), is_paceday_user: z.boolean(), data_available: z.boolean(), weeks: z.array(ManagerAnalyticsWeek).min(12).max(12) });
 
 export type ManagerAnalytics = __TypedOpenapi.Schemas.ManagerAnalytics;
 export const ManagerAnalytics = z.strictObject({ members: z.array(ManagerAnalyticsMember) });
@@ -419,7 +419,7 @@ export type TeamInvite = __TypedOpenapi.Schemas.TeamInvite;
 export const TeamInvite = z.strictObject({ id: z.uuid(), teamId: z.uuid(), inviteeEmail: z.email(), invitedBy: z.uuid(), token: z.string(), status: z.enum(["pending", "accepted", "declined", "expired"]), createdAt: z.iso.datetime(), expiresAt: z.iso.datetime() });
 
 export type TeamInvitePreview = __TypedOpenapi.Schemas.TeamInvitePreview;
-export const TeamInvitePreview = z.strictObject({ teamName: z.string(), inviterName: z.string(), email: z.email() });
+export const TeamInvitePreview = z.strictObject({ teamName: z.string(), inviterName: z.string(), email: z.email(), team_id: z.uuid(), expires_at: z.iso.datetime(), inviter_email: z.email().nullable() });
 
 export type TeamNameRequest = __TypedOpenapi.Schemas.TeamNameRequest;
 export const TeamNameRequest = z.object({ name: z.string().min(1) }).catchall(z.unknown());
