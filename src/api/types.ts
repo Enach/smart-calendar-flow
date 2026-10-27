@@ -1,6 +1,9 @@
 import type { components } from "./generated/types";
 
 export type CalendarProvider = "google" | "outlook" | "webcal";
+
+/** PAC-67: the 200 of disconnectMicrosoft and disconnectZoom (generated). */
+export type ProviderDisconnectResult = components["schemas"]["ProviderDisconnectResult"];
 export type PersonalCalendarType = "google" | "outlook" | "webcal";
 /** The server's llmProvider values (contract Settings.llmProvider); "" means none. */
 export type LLMProvider =

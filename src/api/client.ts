@@ -1,5 +1,9 @@
 import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
-import { CalendarDisconnectUnsupported, SettingsUpdate } from "./generated/schemas";
+import {
+  CalendarDisconnectUnsupported,
+  ProviderDisconnectResult as ProviderDisconnectResultSchema,
+  SettingsUpdate,
+} from "./generated/schemas";
 
 import type {
   AuditEntry,
@@ -31,6 +35,7 @@ import type {
   ParticipantCoverage,
   PersonalCalendar,
   PersonalCalendarType,
+  ProviderDisconnectResult,
   Room,
   Settings,
   SuggestedSlot,
@@ -492,6 +497,67 @@ export function formatAuditDetails(details: unknown): string {
   } catch {
     return "";
   }
+}
+
+const PROVIDER_NAME: Record<string, string> = { google: "Google Calendar", outlook: "Outlook", zoom: "Zoom" };
+
+/**
+ * PAC-67: what the user is told after disconnecting Outlook or Zoom. A
+ * revocation the provider did not confirm is never shown as a plain success
+ * (spec D-2, AC-15); for Outlook, Microsoft offers no revocation Paceday can
+ * call, so the user is told where to remove the grant (AC-17).
+ */
+export function disconnectNotice(result: ProviderDisconnectResult): { kind: "success" | "info"; message: string } {
+  const name = PROVIDER_NAME[result.provider] ?? result.provider;
+  switch (result.revocation) {
+    case "unconfirmed":
+      return {
+        kind: "info",
+        message: `Disconnected ${name} here, but ${name} did not confirm it removed Paceday's access. To be sure, remove Paceday from the apps connected to your ${name} account.`,
+      };
+    case "not_offered":
+      return {
+        kind: "info",
+        message: `Disconnected ${name}. To remove Paceday's access completely, remove Paceday from the apps on your Microsoft account.`,
+      };
+    case "nothing_stored":
+      return { kind: "success", message: `${name} was not connected` };
+    default:
+      return { kind: "success", message: `Disconnected ${name}` };
+  }
+}
+
+/**
+ * PAC-67: the activity log's three connection kinds, worded from their
+ * server-chosen details. Every other kind, and details that are not the
+ * documented JSON, are shown as they are.
+ */
+export function describeAuditEntry(action: string, details: string): { title: string; detail: string } {
+  const raw = { title: action, detail: details };
+  if (action !== "connection_lost" && action !== "provider_disconnected" && action !== "revocation_unconfirmed") return raw;
+  let parsed: { provider?: unknown; revocation?: unknown };
+  try {
+    parsed = JSON.parse(details) as typeof parsed;
+  } catch {
+    return raw;
+  }
+  const name = typeof parsed?.provider === "string" ? PROVIDER_NAME[parsed.provider] : undefined;
+  if (!name) return raw;
+  if (action === "connection_lost") {
+    return { title: `${name} connection lost`, detail: "Paceday could no longer use this connection. Reconnect it to keep using it." };
+  }
+  if (action === "revocation_unconfirmed") {
+    return { title: `${name} revocation not confirmed`, detail: `Remove Paceday from the apps connected to your ${name} account.` };
+  }
+  const detail =
+    parsed.revocation === "confirmed"
+      ? `${name} confirmed that Paceday's access was removed.`
+      : parsed.revocation === "unconfirmed"
+        ? `${name} did not confirm that Paceday's access was removed.`
+        : parsed.revocation === "not_offered"
+          ? "Paceday's access can be removed from the apps on your Microsoft account."
+          : "";
+  return { title: `${name} disconnected`, detail };
 }
 
 /** Normalize the audit list response; tolerates missing/odd fields and envelopes. */
@@ -1520,10 +1586,19 @@ export const api = {
   zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
   zoomDisconnect: () =>
     withFallback(
-      () => requestApi<void>("POST", "/conference/zoom/disconnect"),
-      () => {
+      async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/conference/zoom/disconnect")),
+      (): ProviderDisconnectResult => {
         mockState.conference.zoom = { connected: false, email: undefined };
         logAudit("conference.zoom.disconnect", "Disconnected Zoom (mock)");
+        return { provider: "zoom", revocation: "confirmed" };
+      },
+    ),
+  microsoftDisconnect: () =>
+    withFallback(
+      async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/auth/microsoft/disconnect")),
+      (): ProviderDisconnectResult => {
+        logAudit("auth.microsoft.disconnect", "Disconnected Outlook (mock)");
+        return { provider: "outlook", revocation: "not_offered" };
       },
     ),
 } satisfies ApiPort;
