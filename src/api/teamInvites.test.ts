@@ -1,7 +1,20 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiHttpError, setMockMode } from "./client";
+import type { components } from "./generated/types";
 import { normalizeInvite, teamInvitesApi, teamKeys, teamsApi } from "./teams";
+
+type TeamInvitePreview = components["schemas"]["TeamInvitePreview"];
+
+// The exact GET /api/teams/invites/{token} body the backend sends (PAC-34, AC-1).
+const preview: TeamInvitePreview = {
+  teamName: "Platform",
+  inviterName: "Ines Inviter",
+  email: "A@B.com",
+  team_id: "5f0c2a8e-0b7a-4d9e-9c43-0d6c1f6f1a11",
+  expires_at: "2026-11-03T10:00:00.123456Z",
+  inviter_email: "ines@co.com",
+};
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -24,25 +37,34 @@ afterAll(() => {
 });
 
 describe("team invite normalization", () => {
-  it("accepts camelCase and snake_case payloads", () => {
-    expect(normalizeInvite({ teamId: "t1", teamName: "Platform", invitedEmail: "A@B.com" }, "tok")).toEqual({
+  it("maps the contract's TeamInvitePreview onto the page model (PAC-34 AC-2)", () => {
+    expect(normalizeInvite(preview, "tok")).toEqual({
       token: "tok",
-      team_id: "t1",
+      team_id: "5f0c2a8e-0b7a-4d9e-9c43-0d6c1f6f1a11",
       team_name: "Platform",
       invited_email: "a@b.com",
-      inviter_email: undefined,
-      expires_at: undefined,
+      inviter_name: "Ines Inviter",
+      inviter_email: "ines@co.com",
+      expires_at: "2026-11-03T10:00:00.123456Z",
     });
-    expect(normalizeInvite({ team_id: "t2", team_name: "Design", email: "c@d.com" }, "tok2").team_id).toBe("t2");
+  });
+
+  it("keeps an unreadable inviter as absent, never as a string", () => {
+    const out = normalizeInvite({ ...preview, inviterName: "", inviter_email: null }, "tok");
+    expect(out.inviter_name).toBeNull();
+    expect(out.inviter_email).toBeNull();
   });
 });
 
 describe("team invite endpoints", () => {
   it("GETs /api/teams/invites/:token", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ teamId: "t1", teamName: "Platform", email: "a@b.com" }));
+    fetchMock.mockResolvedValueOnce(jsonResponse(preview));
     const invite = await teamInvitesApi.get("abc123");
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/teams/invites/abc123");
     expect(invite.team_name).toBe("Platform");
+    expect(invite.team_id).toBe(preview.team_id);
+    expect(invite.expires_at).toBe(preview.expires_at);
+    expect(invite.inviter_email).toBe("ines@co.com");
   });
 
   it("POSTs the accept endpoint and surfaces the server message on mismatch", async () => {
