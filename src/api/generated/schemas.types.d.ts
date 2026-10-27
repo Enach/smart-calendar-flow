@@ -343,11 +343,11 @@ export type CalendarEvent = {
  */
 export type CalendarNotConnectedError = { error: "calendar not connected" }
 /**
- * calendar.Room — only two fields exist server-side.
+ * calendar.Room — only two fields exist server-side, and both are always emitted. There is no building, floor, capacity, email or availability field (API-041; PAC-41 D-1): a client that needs the room's bookable address reads `id`. This is the only room type; clients consume this generated shape rather than a hand-written one (PAC-41).
  */
 export type CalendarRoom = {
   /**
-   * The Google resource calendar id, which is also the room's bookable email address (contains `resource.calendar.google.com`).
+   * The Google resource calendar id, which is also the room's bookable email address (contains `resource.calendar.google.com`). To book the room, send this value unchanged as EventPatchRequest.room_resource_email. The list keeps any id that contains that substring and does not itself check the stricter `^[^@\s]+@resource\.calendar\.google\.com$` that PATCH enforces; Google room resource ids have that form.
    */
   id: string;
   /**
@@ -796,7 +796,7 @@ export type FreeBusyLegacyResult = { email: string, coverage: ("known" | "unknow
  */
 export type FreeBusyWindow = { start: string, end: string }
 /**
- * api.freeBusyParticipantDTO.
+ * api.freeBusyParticipantDTO. Exactly three keys. There is no provider key (the answer does not say which calendar provider supplied the data) and no status saying whether the address belongs to a Paceday user; `status` has two values only (API-046; PAC-41 D-2).
  */
 export type FreeBusyParticipant = {
   /**
@@ -4307,7 +4307,7 @@ export type post_SyncPersonalCalendar = {
       
     }
 /**
- * Enumerates the user's Google CalendarList and keeps entries whose id contains `resource.calendar.google.com`, optionally filtered by a case-insensitive substring match against the summary or the id. Returns `[]` rather than null when nothing matches.
+ * Enumerates the user's Google CalendarList and keeps entries whose id contains `resource.calendar.google.com`, optionally filtered by a case-insensitive substring match against the summary or the id. Returns `[]` rather than null when nothing matches. `q` is the only parameter the handler reads: there is no time-window filter and no availability check, so any other query parameter (`start`, `end` included) is ignored and changes nothing; clients send `q` only (API-040, PAC-41). Each room is exactly `{id, name}` (CalendarRoom): the server reads no building, floor, capacity or availability for a room (API-041; PAC-41 D-1). The list always reads the caller's Google calendar, so a caller with no stored Google credential, an Outlook-connected caller included, gets the 401 `calendar not connected`.
  */
 export type get_ListRooms = {
       method: "GET",
