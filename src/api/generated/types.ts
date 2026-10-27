@@ -590,7 +590,10 @@ export interface paths {
         /** Public metadata for a bookable scheduling link. */
         get: operations["getPublicLinkInfo"];
         put?: never;
-        /** Book a slot on a public scheduling link. */
+        /**
+         * Book a slot on a public scheduling link.
+         * @description Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422 or 500), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+         */
         post: operations["createPublicBooking"];
         delete?: never;
         options?: never;
@@ -607,7 +610,7 @@ export interface paths {
         };
         /**
          * Available slots for a date, or the list of dates that have any slot.
-         * @description Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes.
+         * @description Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
          */
         get: operations["getPublicBookingSlots"];
         put?: never;
@@ -2622,10 +2625,15 @@ export interface components {
              *      */
             email: string;
         };
-        /** @description Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21). */
+        /** @description Shared error envelope written by api.writeError (handlers_settings.go:388): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21). */
         BookingError: {
             /** @description Human-readable, server-chosen message. Never the text of a Go, driver or provider error (PAC-21): those go to the server log and Sentry only. */
             error: string;
+        };
+        /** @description The `BookingError` envelope with its one possible message pinned, so a client can tell a rate-limit refusal from every other error by status and body alone (NEW-booking-rate-limit). Written by api.writeError. */
+        BookingRateLimitError: {
+            /** @enum {string} */
+            error: "rate limit exceeded";
         };
         /**
          * @description 1:1 cadence. "none" disables gap detection for that member.
@@ -4708,6 +4716,28 @@ export interface components {
         };
     };
     responses: {
+        /** @description The client has already made 20 requests to `createPublicBooking` in its current 10-minute window (NEW-booking-rate-limit). Nothing was looked up or written. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json, the same envelope and message as the detect limiter's 429. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 600. The header is not listed in `Access-Control-Expose-Headers`, so a page on another origin cannot read it; the web booking page does not need it. */
+        BookingCreateRateLimited: {
+            headers: {
+                /** @description Delay-seconds form of RFC 9110 section 10.2.3 (never the HTTP-date form): seconds remaining in the client's booking window, rounded up. */
+                "Retry-After": number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["BookingRateLimitError"];
+            };
+        };
+        /** @description The client has already made 120 requests to `getPublicBookingSlots` in its current 1-minute window (NEW-booking-rate-limit). Nothing was looked up. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 60. Not exposed to cross-origin pages, as for `BookingCreateRateLimited`. */
+        BookingSlotsRateLimited: {
+            headers: {
+                /** @description Delay-seconds form of RFC 9110 section 10.2.3 (never the HTTP-date form): seconds remaining in the client's slot-listing window, rounded up. */
+                "Retry-After": number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["BookingRateLimitError"];
+            };
+        };
         /** @description Emitted by the requireAuth middleware when the `auth_token` cookie and the `Authorization: Bearer` header are both absent or invalid. The body is the JSON text `{"error":"unauthorized"}` but the response is sent with `http.Error`, so the Content-Type header is `text/plain; charset=utf-8`, not application/json. */
         BookingUnauthorized: {
             headers: {
@@ -6075,7 +6105,7 @@ export interface operations {
                     "application/json": components["schemas"]["PublicBookingConfirmation"];
                 };
             };
-            /** @description Validation failure. Messages: "invalid request body"; "name, email, and start are required"; "invalid start time, use RFC3339"; "invalid end time, use RFC3339"; "duration does not match end time"; "invalid duration". */
+            /** @description Validation failure. Messages: "invalid request body"; "name, email, and start are required"; "invalid start time, use RFC3339"; "invalid end time, use RFC3339"; "duration does not match end time"; "invalid duration"; "end must be after start" (reachable only when the end computed from `duration_minutes` overflows, which needs a link duration option above about 153,722,867 minutes; an ordinary end at or before start answers "duration does not match end time" or "invalid duration" instead). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6120,6 +6150,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
+            429: components["responses"]["BookingCreateRateLimited"];
             /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -6183,6 +6214,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
+            429: components["responses"]["BookingSlotsRateLimited"];
             /** @description Storage or engine failure. Body: {"error":"internal error"} */
             500: {
                 headers: {
