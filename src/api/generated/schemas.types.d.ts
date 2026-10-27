@@ -493,7 +493,7 @@ export type CreatePublicBookingRequest = {
   duration_minutes?: (number | null);
 }
 /**
- * backend/api/handlers_scheduling_links.go schedulingLinkInput. Several fields have two accepted spellings; the canonical one wins when both are sent. Nothing is required at the JSON level, but validation rejects an empty title.
+ * backend/api/handlers_scheduling_links.go schedulingLinkInput. Several fields have two accepted spellings. For durations and days the canonical spelling wins whenever it is carried (present and not null; `[]` counts as carried), on create and PATCH alike (PAC-40 D-5). The window aliases follow their own rule (see each field). Nothing is required at the JSON level, but validation rejects an empty title.
  */
 export type CreateSchedulingLinkRequest = Partial<{
   /**
@@ -505,37 +505,37 @@ export type CreateSchedulingLinkRequest = Partial<{
    */
   slug: string;
   /**
-   * Canonical spelling. Wins over `durations`. Defaults to [30] when both are absent (a present-but-empty array is a 422).
+   * Canonical spelling. Wins over `durations` whenever it is carried (present and not null), even as `[]`, which is then a 422 "at least one duration is required" whatever `durations` says. Defaults to [30] when both are absent or null.
    */
-  duration_options: Array<number>;
+  duration_options: (Array<number> | null);
   /**
-   * Alias for duration_options, used only when duration_options is absent.
+   * Alias for duration_options, used only when duration_options is absent or null.
    */
-  durations: Array<number>;
+  durations: (Array<number> | null);
   /**
-   * Canonical spelling, 0=Sunday..6=Saturday. Wins over `days`. Defaults to [1,2,3,4,5] when both are absent.
+   * Canonical spelling, 0=Sunday..6=Saturday. Wins over `days` whenever it is carried (present and not null), even as `[]` (then a 422). Defaults to [1,2,3,4,5] when both are absent or null.
    */
-  days_of_week: Array<number>;
+  days_of_week: (Array<number> | null);
   /**
-   * Alias for days_of_week, used only when days_of_week is absent. Accepts "mon"/"monday"/"1" etc, case-insensitive; unrecognised entries are silently dropped, which can turn a non-empty list into a 422 "at least one day".
+   * Alias for days_of_week, used only when days_of_week is absent or null. Accepts "mon"/"monday"/"1" etc, case-insensitive; unrecognised entries are silently dropped, which can turn a non-empty list into a 422 "at least one day".
    */
-  days: Array<string>;
+  days: (Array<string> | null);
   /**
-   * Canonical spelling. "HH:MM" or "HH:MM:SS". Defaults to "09:00".
+   * Canonical spelling. "HH:MM" or "HH:MM:SS". Defaults to "09:00". An explicit null is the same as absent (the server decodes it to the empty string).
    */
-  window_start_time: string;
+  window_start_time: (string | null);
   /**
-   * Alias, used only when window_start_time is empty.
+   * Alias, used only when window_start_time is absent, null or the empty string. Not covered by PAC-40's precedence rule: PATCH treats an empty canonical value differently (PAC-40 D-10, OQ-7).
    */
-  window_start: string;
+  window_start: (string | null);
   /**
-   * Canonical spelling. "HH:MM" or "HH:MM:SS". Defaults to "17:00".
+   * Canonical spelling. "HH:MM" or "HH:MM:SS". Defaults to "17:00". An explicit null is the same as absent (the server decodes it to the empty string).
    */
-  window_end_time: string;
+  window_end_time: (string | null);
   /**
-   * Alias, used only when window_end_time is empty.
+   * Alias, used only when window_end_time is absent, null or the empty string. Not covered by PAC-40's precedence rule (D-10, OQ-7).
    */
-  window_end: string;
+  window_end: (string | null);
   buffer_before: number;
   buffer_after: number;
   min_notice_minutes: number;
@@ -1752,9 +1752,12 @@ export type SchedulingLink = {
    */
   max_uses?: number;
   /**
-   * Count of non-cancelled bookings, computed by subquery at read time.
+   * Number of booking rows stored for this link, whatever their status, so cancelled bookings are included and the figure never goes down when a booking is cancelled (PAC-40 D-6, API-051). Bookings made before PAC-40 count under the same rule (D-8). Exhaustion (410 on the public paths) is judged on this figure. No product path removes a booking row (cancel keeps it, delete of a link is a soft delete, D-2), so through the API the figure only grows. A row removed outside the product (e2e teardown, a manual database edit) is no longer counted (PAC-40 C-3). Whether the server stores or computes the figure is not part of the contract, provided it equals this count.
    */
   uses_count: number;
+  /**
+   * false means paused: the owner switched the link off and can switch it back on with PATCH. A deleted link is never returned, so this field never describes one (PAC-40).
+   */
   active: boolean;
   /**
    * Every host regardless of status, ordered by invited_at. Always an array, never null.
@@ -1784,7 +1787,7 @@ export type SchedulingLinkBookingRecord = {
   start_time: string;
   end_time: string;
   /**
-   * DB default is `confirmed`; `cancelled` rows are excluded from uses_count and from conflict checks.
+   * DB default is `confirmed`. `cancelled` rows are excluded from conflict checks but still count in the link's `uses_count` (PAC-40 D-6). No API path sets `cancelled` today.
    */
   status: string;
   /**
@@ -1842,7 +1845,7 @@ export type SchedulingLinkInviteResponse = { status: ("accepted" | "declined") }
 export type SchedulingLinkListResponse = {
   owned: Array<SchedulingLink>;
   /**
-   * Links where the caller is an accepted co-host but not the owner.
+   * Links where the caller is an accepted co-host but not the owner. Deleted links are never included (PAC-40).
    */
   shared: Array<SchedulingLink>;
 }
@@ -2432,24 +2435,30 @@ export type UpdateSchedulingLinkRequest = Partial<{
    * Normalised. If it normalises to empty the request is a 422 "slug cannot be empty".
    */
   slug: (string | null);
-  duration_options: Array<number>;
   /**
-   * Applied AFTER duration_options, so when both are sent `durations` wins - the opposite precedence from create.
+   * Canonical spelling. When carried (present and not null) it wins over `durations`, as on create (PAC-40 D-5, API-049); `[]` counts as carried and fails 422 "at least one duration is required", leaving the link unchanged.
    */
-  durations: Array<number>;
-  days_of_week: Array<number>;
+  duration_options: (Array<number> | null);
   /**
-   * Applied after days_of_week, so `days` wins when both are sent - again the opposite of create.
+   * Alias for duration_options, applied only when duration_options is absent or null. Ignored when duration_options is carried (PAC-40; before PAC-40 the alias won on PATCH).
    */
-  days: Array<string>;
+  durations: (Array<number> | null);
+  /**
+   * Canonical spelling. When carried (present and not null) it wins over `days`, as on create (PAC-40 D-5); `[]` counts as carried and fails 422.
+   */
+  days_of_week: (Array<number> | null);
+  /**
+   * Alias for days_of_week, applied only when days_of_week is absent or null. Ignored when days_of_week is carried (PAC-40; before PAC-40 the alias won on PATCH).
+   */
+  days: (Array<string> | null);
   window_start_time: (string | null);
   /**
-   * Alias, applied only when window_start_time is absent.
+   * Alias, applied only when window_start_time is absent or null. An empty-string window_start_time is carried and wins (then 422), unlike create; unchanged by PAC-40 (D-10, OQ-7).
    */
   window_start: (string | null);
   window_end_time: (string | null);
   /**
-   * Alias, applied only when window_end_time is absent.
+   * Alias, applied only when window_end_time is absent or null; same empty-string caveat as window_start (PAC-40 D-10, OQ-7).
    */
   window_end: (string | null);
   buffer_before: (number | null);
@@ -2461,7 +2470,7 @@ export type UpdateSchedulingLinkRequest = Partial<{
    */
   max_uses: (number | null);
   /**
-   * Setting false is the same soft-deactivation that DELETE performs.
+   * Pause (false) or resume (true). Not the same as DELETE: a paused link stays listed and fetchable by its owner and accepted co-hosts, and its public page answers 404 until resumed. Cannot reach a deleted link: PATCH on one answers 404 whatever this value is (PAC-40 AC-3, AC-11).
    */
   active: (boolean | null);
   /**
@@ -4439,6 +4448,9 @@ export type post_CreateSchedulingLink = {
 },
       
     }
+/**
+ * Deleted links are never listed, in either group (PAC-40 AC-1). Paused links (`active=false`), including every link that was inactive before PAC-40 (D-1), are listed with `active: false`.
+ */
 export type get_ListSchedulingLinks = {
       method: "GET",
       path: "/api/scheduling-links",
@@ -4452,7 +4464,7 @@ export type get_ListSchedulingLinks = {
       
     }
 /**
- * Invites whose link or owner can no longer be loaded are silently dropped from the list. Returns `[]` (never null) when there are none.
+ * Invites whose link or owner can no longer be loaded are silently dropped from the list, and so are invites to a deleted link (PAC-40 AC-5). Invites to a paused link (`active=false`) are still listed (PAC-30 D-5). Returns `[]` (never null) when there are none.
  */
 export type get_ListSchedulingLinkHostInvites = {
       method: "GET",
@@ -4467,7 +4479,7 @@ export type get_ListSchedulingLinkHostInvites = {
       
     }
 /**
- * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5); "no link has that id" in the 404 means no row at all, not an inactive one.
+ * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 to every caller and no host row changes (PAC-40 AC-5), even though its host rows are kept in storage.
  */
 export type post_AcceptSchedulingLinkHostInvite = {
       method: "POST",
@@ -4490,7 +4502,7 @@ export type post_AcceptSchedulingLinkHostInvite = {
       
     }
 /**
- * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
+ * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
  */
 export type post_DeclineSchedulingLinkHostInvite = {
       method: "POST",
@@ -4513,7 +4525,7 @@ export type post_DeclineSchedulingLinkHostInvite = {
       
     }
 /**
- * routes.go:157-158 registers `slh.listHostInvites` at BOTH `/host-invites` and `/invites`. Byte-for-byte identical behaviour and response; neither is deprecated in code. The frontend only ever calls `/host-invites`.
+ * routes.go:157-158 registers `slh.listHostInvites` at BOTH `/host-invites` and `/invites`. Byte-for-byte identical behaviour and response; neither is deprecated in code. The frontend only ever calls `/host-invites`. Invites to a deleted link are omitted, as there (PAC-40).
  */
 export type get_ListSchedulingLinkInvitesAlias = {
       method: "GET",
@@ -4528,7 +4540,7 @@ export type get_ListSchedulingLinkInvitesAlias = {
       
     }
 /**
- * No ownership or membership check: any authenticated user who knows the UUID receives the full link including every host's email, name and avatar. `is_owner` is computed against the caller and `my_status` is only emitted when the caller is one of the hosts.
+ * Readable by the people who see the link in `listSchedulingLinks`: its owner and its accepted co-hosts (PAC-40 D-7, resolving API-006 / U-08). Checked in this order: `{id}` not a UUID -> 400; no link with that id, or the link was deleted -> 404 for every caller, whatever their role (PAC-40 D-9); caller is neither the owner nor an accepted co-host (a pending or declined invitee, or a stranger) -> 403 with no link field in the body; otherwise 200. A paused link (`active=false`) is still returned to its owner and accepted co-hosts. `is_owner` is computed against the caller and `my_status` is the caller's own host status.
  */
 export type get_GetSchedulingLink = {
       method: "GET",
@@ -4545,13 +4557,14 @@ export type get_GetSchedulingLink = {
       responses: {200: Schemas.SchedulingLink,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+403: Schemas.BookingError,
 404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
     }
 /**
- * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
+ * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined). For `duration_options` / `durations` and `days_of_week` / `days` the canonical spelling wins when both are carried, exactly as on create (PAC-40 D-5, API-049). A deleted link answers 404 to every caller before the owner check and before the body is read, and stays deleted whatever the body says, `active: true` included (PAC-40 AC-3, AC-6a).
  */
 export type patch_UpdateSchedulingLink = {
       method: "PATCH",
@@ -4577,7 +4590,7 @@ export type patch_UpdateSchedulingLink = {
       
     }
 /**
- * Soft delete -- `UPDATE scheduling_links SET active=false`. The row and its bookings survive; the public `/api/book/{slug}` lookup filters on `active=true` and will start returning 404, while `GET /api/scheduling-links/{id}` still returns the link.
+ * Soft delete, distinct from pausing (PAC-40). The link record, its bookings and its host rows are kept (D-2) and its slug stays reserved (D-3), but from then on the link does not exist through the API: it is absent from `listSchedulingLinks` and from the co-host invite list, and every operation that names it by id, and every public operation that names it by slug (`/api/book/{slug}` and its slots), answers the same 404 as an id or slug that never existed, for every caller (D-4, D-9). Creating or patching another link to its slug is still a 409 "slug already exists" (D-3), so a signed-in user can learn that the slug was once used. There is no un-delete; PATCH `active: true` cannot bring it back. Its bookings still make their hosts busy. Deleting a link that is already deleted is a 404, not a 204. Pausing (PATCH `active: false`) is a different state and keeps the link visible. Links that were inactive before PAC-40 are paused, not deleted (D-1).
  */
 export type delete_DeleteSchedulingLink = {
       method: "DELETE",
@@ -4601,7 +4614,7 @@ export type delete_DeleteSchedulingLink = {
       
     }
 /**
- * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
+ * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
  */
 export type post_AcceptSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4624,7 +4637,7 @@ export type post_AcceptSchedulingLinkInviteByLink = {
       
     }
 /**
- * Returns the raw `storage.Booking` rows, ordered by `start_time DESC`, never null. NOTE the field names differ from the public booking confirmation DTO (`start_time`/`end_time` here vs `start`/`end` there).
+ * Returns the raw `storage.Booking` rows, ordered by `start_time DESC`, never null, cancelled bookings included. NOTE the field names differ from the public booking confirmation DTO (`start_time`/`end_time` here vs `start`/`end` there). A deleted link answers 404 to every caller (PAC-40 AC-6, OQ-1).
  */
 export type get_ListSchedulingLinkBookings = {
       method: "GET",
@@ -4648,7 +4661,7 @@ export type get_ListSchedulingLinkBookings = {
       
     }
 /**
- * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
+ * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
  */
 export type post_DeclineSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4671,7 +4684,7 @@ export type post_DeclineSchedulingLinkInviteByLink = {
       
     }
 /**
- * The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
+ * The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink. A deleted link answers 404 "not found" to every caller, before the owner check and before the body is read, and no host row is written (PAC-40 AC-6, AC-6a).
  */
 export type post_InviteSchedulingLinkHost = {
       method: "POST",
@@ -4696,7 +4709,7 @@ export type post_InviteSchedulingLinkHost = {
       
     }
 /**
- * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id -> 404; caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
+ * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id, or the link was deleted -> 404 for every caller, owner and pending invitee included, and no host row is removed (PAC-40 AC-5); caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
  */
 export type post_LeaveSchedulingLink = {
       method: "POST",
