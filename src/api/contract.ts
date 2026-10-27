@@ -17,6 +17,7 @@ import type {
   ParseResult,
   PersonalCalendar,
   PersonalCalendarType,
+  ProviderDisconnectResult,
   Room,
   Settings,
   SuggestedSlot,
@@ -110,5 +111,8 @@ export interface ApiPort {
   removeConference(eventId: string): Promise<void>;
   conferenceProviders(): Promise<ConferenceProviderStatus[]>;
   zoomConnectUrl(): string;
-  zoomDisconnect(): Promise<void>;
+  /** PAC-67: answers what became of the grant at Zoom. */
+  zoomDisconnect(): Promise<ProviderDisconnectResult>;
+  /** PAC-67: POST /api/auth/microsoft/disconnect (the session is kept). */
+  microsoftDisconnect(): Promise<ProviderDisconnectResult>;
 }
