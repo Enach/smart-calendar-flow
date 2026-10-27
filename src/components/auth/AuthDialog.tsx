@@ -17,6 +17,7 @@ import {
 import { PacedayMark } from "@/components/auth/AuthLayout";
 
 import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
+import type { SsoDetectResponse } from "@/api/generated/schemas";
 import { useAuth } from "@/contexts/useAuth";
 import { useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 
@@ -25,13 +26,6 @@ interface AuthDialogProps {
   onOpenChange: (open: boolean) => void;
   /** "signin" or "signup" — only changes copy, not behaviour. */
   mode?: "signin" | "signup";
-}
-
-type DetectType = "google" | "microsoft" | "sso" | "generic";
-
-interface DetectResponse {
-  type: DetectType;
-  domain?: string;
 }
 
 const emailSchema = z.string().trim().email("Enter a valid email address.").max(255);
@@ -96,7 +90,7 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
     setPending("email");
 
     try {
-      const res = await apiFetch<DetectResponse>("/api/auth/detect", {
+      const res = await apiFetch<SsoDetectResponse>("/api/auth/detect", {
         method: "POST",
         json: { email: parsed.data },
       });
@@ -108,8 +102,10 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
         window.location.href = apiUrl(`/api/auth/microsoft?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
-      if (res.type === "sso" && res.domain) {
-        window.location.href = apiUrl(`/api/auth/sso/${encodeURIComponent(res.domain)}`);
+      if (res.type === "sso" && res.redirect_url) {
+        // redirect_url is a path on the API origin, not this app's (PAC-35,
+        // API-010); the typed email goes with it as the IdP's login hint.
+        window.location.href = apiUrl(`${res.redirect_url}?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
       // generic → go to password step

@@ -33,7 +33,8 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
     setRunning(true);
     try {
       const res = await api.runFocus(weekISO);
-      toast.success(`Created ${res.created_blocks.length} focus block${res.created_blocks.length === 1 ? "" : "s"}`);
+      const n = res.createdBlocks.length;
+      toast.success(`Created ${n} focus block${n === 1 ? "" : "s"}`);
       refreshAll();
     } catch (e) {
       toast.error(apiErrorMessage(e));

@@ -1,5 +1,5 @@
-import type { ApiPort, CompressionApplyResponse } from "./contract";
-import { SettingsUpdate } from "./generated/schemas";
+import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
+import { CalendarDisconnectUnsupported, SettingsUpdate } from "./generated/schemas";
 
 import type {
   AuditEntry,
@@ -7,6 +7,7 @@ import type {
   Attendee,
   CalendarEvent,
   CalendarProvider,
+  CompressionApplyProposal,
   CompressionResult,
   ConferenceLink,
   ConferenceProvider,
@@ -20,6 +21,7 @@ import type {
   WorkingHoursMode,
 
   FocusBlock,
+  FocusRunBlock,
   IntegrationAvailability,
   FocusRunResult,
   FreeBusyResponse,
@@ -178,6 +180,15 @@ function isoAt(date: Date, h: number, m: number) {
   d.setHours(h, m, 0, 0);
   return d.toISOString();
 }
+/**
+ * The apply request's proposal (snake_case, three fields) for a proposal the
+ * preview returned (camelCase). Only the event and its proposed times are
+ * sent: the server reads nothing else (contract applyCompress).
+ */
+function toApplyProposal(p: MoveProposal): CompressionApplyProposal {
+  return { event_id: p.eventId, proposed_start: p.proposedStart, proposed_end: p.proposedEnd };
+}
+
 function dateOnly(d: Date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
@@ -244,6 +255,7 @@ function seedMocks() {
       start_time: start,
       end_time: end,
       date: dateOnly(d),
+      created_at: new Date().toISOString(),
     });
     mockState.events.push({
       id: `focus-${id}`,
@@ -319,6 +331,27 @@ export function isApiHttpError(e: unknown): e is ApiHttpError {
 }
 export function isApiUnreachableError(e: unknown): e is ApiUnreachableError {
   return e instanceof ApiUnreachableError;
+}
+
+/** What both calendar-disconnect surfaces say when disconnect is not offered (PAC-35). */
+export const CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE = "Disconnecting this kind of calendar is not available yet.";
+
+/**
+ * Whether the app offers a disconnect for a calendar the server's status
+ * reports as `provider`. The server disconnects only Google calendars, and its
+ * status answers "google" for a blank or unknown provider, so only Outlook
+ * and WebCal are excluded (PAC-35, spec D-6/D-8).
+ */
+export function canDisconnectCalendar(provider: string | undefined): boolean {
+  return provider !== "outlook" && provider !== "webcal";
+}
+
+/**
+ * The server's 409 CalendarDisconnectUnsupported: the caller's calendar is
+ * not Google, nothing was deleted. A failure, never a success (PAC-35 D-8).
+ */
+export function isCalendarDisconnectUnsupported(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 409 && CalendarDisconnectUnsupported.safeParse(e.data).success;
 }
 
 /**
@@ -488,6 +521,30 @@ export function normalizeAuditEntries(raw: unknown): AuditEntry[] {
  * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
  * rethrown so the UI can surface an actionable error instead of fake success.
  */
+/**
+ * The preview (mock) answer of the three event mutations, in the shape the
+ * server sends (the generated CalendarEvent DTO, PAC-29): only the declared
+ * keys, and colour only when it is one of the server's palette.
+ */
+const DTO_COLORS: ReadonlyArray<string> = ["#7986CB", "#33B679", "#8E24AA", "#E67C73", "#F6BF26", "#F4511E", "#039BE5", "#3F51B5", "#0B8043", "#D50000", "#616161"];
+function mockEventDTO(ev: CalendarEvent): CalendarEventDTO {
+  const dto: CalendarEventDTO = { id: ev.id, title: ev.title, start: ev.start, end: ev.end };
+  if (ev.color && DTO_COLORS.includes(ev.color)) dto.color = ev.color as CalendarEventDTO["color"];
+  if (ev.attendees?.length) dto.attendees = [...ev.attendees];
+  if (ev.attendee_details?.length) {
+    dto.attendee_details = ev.attendee_details.map(({ email, name, rsvp, organizer }) => ({
+      email,
+      ...(name ? { name } : {}),
+      ...(rsvp ? { rsvp } : {}),
+      ...(organizer ? { organizer } : {}),
+    }));
+  }
+  if (ev.description) dto.description = ev.description;
+  if (ev.location) dto.location = ev.location;
+  if (ev.conference) dto.conference = { ...ev.conference };
+  return dto;
+}
+
 export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (usingMocks) return mock();
   try {
@@ -1004,7 +1061,7 @@ export const api = {
       () => requestApi<FocusRunResult>("POST", "/focus/run", { week }),
       () => {
         const monday = week ? new Date(week) : startOfWeek(new Date());
-        const created: FocusBlock[] = [];
+        const created: FocusRunBlock[] = [];
         const skipped: string[] = [];
         for (let i = 0; i < 5; i++) {
           const d = new Date(monday);
@@ -1028,14 +1085,13 @@ export const api = {
           );
           if (exists) continue;
           const id = mockState.nextFocusId++;
-          const block: FocusBlock = {
-            id,
+          const block: FocusRunBlock = {
             google_event_id: `gcal-focus-${id}`,
             start_time: slotStart,
             end_time: slotEnd,
             date,
           };
-          mockState.focusBlocks.push(block);
+          mockState.focusBlocks.push({ id, ...block, created_at: new Date().toISOString() });
           mockState.events.push({
             id: `focus-${id}`,
             title: mockState.settings.focus_label,
@@ -1047,13 +1103,14 @@ export const api = {
           created.push(block);
         }
         logAudit("focus.run", `Created ${created.length} focus blocks (mock)`);
-        return {
-          week_start: dateOnly(monday),
-          created_blocks: created,
-          skipped_days: skipped,
-          total_minutes: created.length * 90,
+        const result: FocusRunResult = {
+          weekStart: new Date(monday).toISOString(),
+          createdBlocks: created,
+          skippedDays: skipped,
+          totalMinutes: created.length * 90,
           errors: [],
         };
+        return result;
       },
     ),
   getFocusBlocks: (week: string) =>
@@ -1119,7 +1176,7 @@ export const api = {
     description?: string;
   }) =>
     withFallback(
-      () => requestApi<CalendarEvent>("POST", "/schedule/create", body),
+      () => requestApi<CalendarEventDTO>("POST", "/schedule/create", body),
       () => {
         const ev: CalendarEvent = {
           id: String(mockState.nextEventId++),
@@ -1132,7 +1189,7 @@ export const api = {
         };
         mockState.events.push(ev);
         logAudit("schedule.create", `Created "${body.title}" (mock)`);
-        return ev;
+        return mockEventDTO(ev);
       },
     ),
   compressionPreview: (body: { date?: string; week?: string }) =>
@@ -1142,9 +1199,12 @@ export const api = {
     ),
   compressionApply: (body: { proposals: MoveProposal[] }) =>
     withFallback(
-      () => requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", body),
+      () =>
+        requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", {
+          proposals: body.proposals.map(toApplyProposal),
+        }),
       () => ({
-        applied: body.proposals.map((proposal) => proposal.event_id),
+        applied: body.proposals.map((proposal) => proposal.eventId),
         failed: [],
       }),
     ),
@@ -1190,7 +1250,7 @@ export const api = {
     ),
   nlpConfirm: (parse_result: ParseResult, selected_slot_index: number) =>
     withFallback(
-      () => requestApi<CalendarEvent>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
+      () => requestApi<CalendarEventDTO>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
       () => {
         const slot = parse_result.suggested_slots?.[selected_slot_index];
         if (!slot) throw new Error("No slot selected");
@@ -1205,7 +1265,7 @@ export const api = {
         };
         mockState.events.push(ev);
         logAudit("nlp.confirm", `Scheduled "${ev.title}" (mock)`);
-        return ev;
+        return mockEventDTO(ev);
       },
     ),
 
@@ -1328,7 +1388,7 @@ export const api = {
   ) =>
     withFallback(
       () =>
-        requestApi<CalendarEvent>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
+        requestApi<CalendarEventDTO>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
       () => {
         const ev = mockState.events.find((e) => e.id === id);
         if (!ev) throw new Error("Not found");
@@ -1338,7 +1398,7 @@ export const api = {
           ev.attendees = patch.attendee_details.map((a) => a.email);
         }
         logAudit("event.update", `Edited "${ev.title}" (mock)`);
-        return { ...ev };
+        return mockEventDTO(ev);
       },
     ),
 

@@ -220,11 +220,11 @@ export type AuthStatusResponse = {
   email: string;
 }
 /**
- * Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The two exceptions in this domain are the requireAuth 401 and the Zoom OAuth callback, both of which use http.Error and therefore send text/plain.
+ * Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21).
  */
 export type BookingError = {
   /**
-   * Human-readable message. Several 500s concatenate the underlying Go error text.
+   * Human-readable, server-chosen message. Never the text of a Go, driver or provider error (PAC-21): those go to the server log and Sentry only.
    */
   error: string;
 }
@@ -246,6 +246,20 @@ export type CadenceGap = {
   days_overdue: number;
 }
 export type CadenceGapList = { gaps: Array<CadenceGap> }
+/**
+ * Body of `disconnectCalendar`'s 409 (PAC-35, spec D-8): the caller's
+ * calendar is not Google, disconnect for that kind of calendar is not
+ * implemented, and nothing was deleted. `error` keeps the shared
+ * `{error}` member so a client that only shows `data.error` still shows a
+ * true sentence.
+ */
+export type CalendarDisconnectUnsupported = {
+  error: "disconnecting this kind of calendar is not available yet";
+  /**
+   * The caller's calendar provider, as `getAuthStatus` reports it.
+   */
+  provider: ("outlook" | "webcal");
+}
 /**
  * api.attendeeDTO.
  */
@@ -279,7 +293,7 @@ export type CalendarEventConference = {
   label?: string;
 }
 /**
- * api.calendarEventDTO — the flattened event shape returned by GET /api/calendar/events.
+ * api.calendarEventDTO, built by toCalendarEventDTO — the flattened event shape returned by GET /api/calendar/events (one per array element) and, since PAC-29, as the whole 200 body of PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm. One converter, so the four operations cannot disagree about the same event.
  */
 export type CalendarEvent = {
   /**
@@ -311,7 +325,7 @@ export type CalendarEvent = {
    */
   attendee_details?: Array<CalendarEventAttendee>;
   /**
-   * Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from responses from this endpoint.
+   * Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from every response that carries this schema (the events list and, since PAC-29, PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm).
    */
   is_personal_block?: boolean;
   /**
@@ -324,6 +338,10 @@ export type CalendarEvent = {
   location?: string;
   conference?: CalendarEventConference;
 }
+/**
+ * The JSON error envelope for "this user has no calendar connected". The message is a single fixed value so a client can branch on it.
+ */
+export type CalendarNotConnectedError = { error: "calendar not connected" }
 /**
  * calendar.Room — only two fields exist server-side.
  */
@@ -363,7 +381,7 @@ export type CompressionApplyResult = {
   failed: Array<string>;
 }
 /**
- * Both fields optional; `week` takes precedence over `date` when non-empty.
+ * Both fields optional; `week` takes precedence over `date` when non-empty. The whole body is optional too: absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; the decode error was discarded before).
  */
 export type CompressionRequest = (Partial<{
   /**
@@ -546,15 +564,32 @@ export type CurrentUserResponse = {
   email: string;
   name: string;
   /**
-   * May be the empty string (Microsoft and SSO logins always upsert "").
-   * Not omitempty, so the key is always present.
+   * The user's picture URL. In the current-user read (`getCurrentUser`)
+   * this is the only name for it; clients read it as `avatarUrl`, not
+   * `avatar` (PAC-35, API-065: the web app read it as `avatar`, or not at
+   * all). Scheduling-link and booking hosts carry the same stored value
+   * as `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by
+   * PAC-35. May be the empty string. Every sign-in overwrites it: Google
+   * writes the Google picture, Microsoft and SSO always write "" (so a
+   * Microsoft or SSO sign-in clears a picture an earlier Google sign-in
+   * stored). Not omitempty, so the key is always present.
    */
   avatarUrl: string;
   /**
-   * Login provider recorded at upsert time.
-   * x-uncertain applies — see property-level note.
+   * The provider of the user's FIRST sign-in: set when the row is
+   * inserted and never updated (UpsertUser's ON CONFLICT does not touch
+   * `provider`), so a user who first signed in with Google and later
+   * with Microsoft still reads "google".
+   * Closed by PAC-35 (U-13): `users.provider` has no CHECK constraint
+   * (migration 006, `TEXT NOT NULL DEFAULT 'google'`), but its only
+   * writer is storage.UpsertUser, and every call site in the history
+   * of the repository passes one of these three literals
+   * (handlers_auth.go "google", handlers_microsoft_auth.go "microsoft",
+   * handlers_sso.go "sso"; tests and the e2e seed write "google").
+   * A CHECK constraint is not added (spec PAC-35 section 7: no
+   * migration).
    */
-  provider: string;
+  provider: ("google" | "microsoft" | "sso");
   org?: OrgSummary;
   createdAt: string;
 }
@@ -647,6 +682,8 @@ export type DaySchedule = {
 /**
  * The shared JSON error envelope, written by writeError()
  * (backend/api/handlers_settings.go:206). Content-Type: application/json.
+ * `error` is a server-chosen message, never the text of a Go, driver or
+ * provider error; every 5xx in this document uses this envelope (PAC-21).
  */
 export type ErrorResponse = { error: string }
 /**
@@ -664,7 +701,7 @@ export type EventConferenceLink = {
   label?: string;
 }
 /**
- * Body of PATCH /api/events/{id}. Every field is optional; only non-null fields are applied. Unknown keys are silently ignored by encoding/json.
+ * Body of PATCH /api/events/{id}. Every field is optional; null or absent leaves the corresponding part of the event unchanged. Since PAC-29 the schema declares every key the web client sends (`send_updates`, `room_resource_email`, `attendee_details`, API-018). The server's decoder still ignores undeclared keys; the contract forbids them so a generated client cannot send a key that would be a silent no-op.
  */
 export type EventPatchRequest = Partial<{
   /**
@@ -674,40 +711,52 @@ export type EventPatchRequest = Partial<{
   description: (string | null);
   location: (string | null);
   /**
-   * Decoded as Go time.Time (RFC3339) and re-emitted as UTC RFC3339 in `start.dateTime`. Setting this on an all-day event converts it to a timed event.
+   * Either an RFC3339 date-time, written as Google `start.dateTime` in UTC (the event becomes or stays timed), or a bare `YYYY-MM-DD` date, written as Google `start.date` (the event becomes or stays all-day). The same dual format as CalendarEvent.start, so a client can write back what it read. PAC-29, API-043: before PAC-29 only a date-time was accepted and an all-day event was always converted to a timed one. After applying the patch, start and end must be of the same kind or the request is a 400.
    */
   start: (string | null);
   /**
-   * Same handling as `start`.
+   * Same handling as `start`. For a bare date this is Google's exclusive end date, as in CalendarEvent.end.
    */
   end: (string | null);
   /**
-   * FULL REPLACEMENT of the attendee list with email-only entries. Sending `[]` clears all attendees, including room resources.
+   * Replaces the event's NON-ROOM attendees with this list (emails compared case-insensitively, duplicates collapsed). An email already on the event keeps its existing Google attendee entry (display name, RSVP, organizer, optional); a new email is added as an email-only entry. Room resource attendees already on the event (`resource: true` or `*@resource.calendar.google.com`) are always kept, so writing back the list GET /api/calendar/events returned (which omits rooms) does not drop the room. `[]` removes every non-room attendee. The two room rules differ on purpose: the DTO hides only the `*@resource.calendar.google.com` suffix, so a `resource: true` attendee without that suffix is shown as an ordinary guest, yet PATCH still keeps it if the client leaves it out. The difference can only keep an attendee, never drop one. PAC-29, API-044: before PAC-29 this replaced the whole list with email-only entries, dropping names, RSVPs and the room.
    */
   attendees: (Array<string> | null);
+  /**
+   * Passed to Google's update call as `sendUpdates`: `all` emails the guests about the change, `none` does not. Null or absent means `none`, which is what every PATCH did before PAC-29. Any other value is a 400 and nothing is written. PAC-29, API-018.
+   */
+  send_updates: (("all" | "none") | null);
+  /**
+   * A Google room resource calendar address (as returned by GET /api/rooms). When non-empty and not already an attendee, the room is added as a resource attendee. Rooms already on the event are kept: this endpoint never removes a room (PAC-29 decision D-6). Null, absent or `""` leaves the rooms unchanged. A non-empty value that is not a `*@resource.calendar.google.com` address is a 400. PAC-29, API-018.
+   */
+  room_resource_email: (string | null);
+  /**
+   * Accepted and ignored by the server. Declared because the web client sends it alongside `attendees` on every edit (API-018). Who attends comes from `attendees`; existing attendees keep their names and RSVPs from Google (see `attendees`); a client never sets another person's RSVP. PAC-29 decision D-7.
+   */
+  attendee_details: (Array<Record<string, unknown>> | null);
 }>
 /**
- * storage.FocusBlock (backend/storage/models.go). No json tags either, so the wire field names are the Go field names.
+ * storage.FocusBlock (backend/storage/models.go), with explicit snake_case json tags (PAC-26, API-014). The keys match the `focus_blocks` columns and the web app's FocusBlock type. Before PAC-26 the struct had no tags and the keys were `ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`.
  */
-export type FocusBlockRecord = { ID: number, GoogleEventID: string, StartTime: string, EndTime: string, Date: string, CreatedAt: string }
+export type FocusBlockRecord = { id: number, google_event_id: string, start_time: string, end_time: string, date: string, created_at: string }
 /**
  * Literal `map[string]int{"deleted": n}`.
  */
 export type FocusClearResult = { deleted: number }
 /**
- * engine.FocusBlock. This struct has NO json tags, so the encoder emits exported Go field names verbatim. It is a DIFFERENT shape from FocusBlockRecord (storage.FocusBlock) returned by GET /api/focus/blocks.
+ * engine.FocusBlock, with explicit snake_case json tags (PAC-26, API-014). The keys it shares with FocusBlockRecord (storage.FocusBlock, returned by GET /api/focus/blocks) are spelled the same: the Go fields `Start`/`End` are tagged `start_time`/`end_time` so that one block shape can be read from both operations. It has no `id` and no `created_at`: the engine reports what it created before any row id is known to the response. Before PAC-26 the struct had no tags and the keys were `GoogleEventID`, `Start`, `End`, `Date`.
  */
 export type FocusRunBlock = {
-  GoogleEventID: string;
-  Start: string;
-  End: string;
+  google_event_id: string;
+  start_time: string;
+  end_time: string;
   /**
    * `YYYY-MM-DD`.
    */
-  Date: string;
+  date: string;
 }
 /**
- * Optional. A malformed body is silently treated as `{}`.
+ * Optional. Absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; it was silently treated as `{}` before).
  */
 export type FocusRunRequest = (Partial<{
   /**
@@ -716,7 +765,7 @@ export type FocusRunRequest = (Partial<{
   week: string;
 }> & Record<string, unknown>)
 /**
- * engine.FocusRunResult (backend/engine/focus_time.go). camelCase.
+ * engine.FocusRunResult (backend/engine/focus_time.go). camelCase wrapper; the blocks inside `createdBlocks` are snake_case (FocusRunBlock, PAC-26). The wrapper casing is unchanged by PAC-26: the web app's snake_case FocusRunResult type is aligned to it by PAC-32 (API-015), which needs no contract change.
  */
 export type FocusRunResult = {
   /**
@@ -728,16 +777,16 @@ export type FocusRunResult = {
    */
   createdBlocks: Array<FocusRunBlock>;
   /**
-   * x-uncertain at field level - the format of each entry is not pinned by a struct tag; it is whatever the engine appends.
+   * `YYYY-MM-DD` of each weekday the engine skipped (daily target already met, or the day is disabled in the working window). Both append sites in engine/focus_time.go append the same `day.Format("2006-01-02")` string (U-23, resolved by reading the code for PAC-26).
    */
   skippedDays: Array<string>;
   totalMinutes: number;
   errors: Array<string>;
 }
 /**
- * calendar.TimeSlot serialized WITHOUT json tags, hence capitalized Go field names. A Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded.
+ * calendar.TimeSlot, with explicit json tags `start` / `end` since PAC-26 (API-028, API-029). Same keys as FreeBusyWindow; kept as its own schema because it is a different Go type with a different failure mode: a Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. Before PAC-26 the struct had no tags and the keys were `Start` / `End`.
  */
-export type RawGoogleBusyWindow = { Start: string, End: string }
+export type RawGoogleBusyWindow = { start: string, end: string }
 /**
  * engine.ParticipantBusy, as emitted under the `results` key.
  */
@@ -781,7 +830,7 @@ export type FreeBusyQueryRequest = {
   end_time: string;
 }
 /**
- * The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy, and with different key casing). All three are always present.
+ * The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy). All three are always present. Since PAC-26 (API-028) every busy window in all three uses the same `{"start","end"}` keys; before it, `results[].busy[]` alone was `{"Start","End"}`.
  */
 export type FreeBusyQueryResponse = {
   /**
@@ -798,39 +847,10 @@ export type FreeBusyQueryResponse = {
    */
   busy: Record<string, Array<FreeBusyWindow>>;
   /**
-   * Legacy view. Uses `coverage` instead of `status`, and its busy windows are engine/calendar.TimeSlot values with CAPITALIZED `Start`/`End` keys.
+   * Legacy view. Uses `coverage` instead of `status`. Its busy windows are calendar.TimeSlot values, `{"start","end"}` since PAC-26 (API-028).
    */
   results: Array<FreeBusyLegacyResult>;
 }
-/**
- * calendar/v3.EventDateTime. This repo only ever sets `dateTime`.
- */
-export type GoogleEventDateTime = (Partial<{ dateTime: string, date: string, timeZone: string }> & Record<string, unknown>)
-/**
- * calendar/v3.EventAttendee. This repo only ever sets `email`.
- */
-export type GoogleEventAttendee = (Partial<{ email: string, displayName: string, organizer: boolean, responseStatus: string, optional: boolean }> & Record<string, unknown>)
-/**
- * The raw `google.golang.org/api/calendar/v3.Event` returned by the calendar client and re-encoded as-is. Only the members this repo sets or reads are listed; the real payload carries the full Google Calendar event resource and omits empty fields (the generated struct uses `omitempty` almost everywhere).
- */
-export type GoogleCalendarEvent = (Partial<{ id: string, summary: string, description: string, location: string, status: string, htmlLink: string, hangoutLink: string, start: GoogleEventDateTime, end: GoogleEventDateTime, attendees: Array<GoogleEventAttendee> }> & Record<string, unknown>)
-/**
- * The raw google.golang.org/api/calendar/v3.Event returned unmodified by PATCH /api/events/{id}. Its keys are Google's own camelCase API names (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`, `attendees[].responseStatus`, …), not the CalendarEvent shape. Only the most load-bearing fields are listed; the object carries the full Google event payload.
- */
-export type GoogleCalendarEventRaw = (Partial<{
-  id: string;
-  summary: string;
-  description: string;
-  location: string;
-  htmlLink: string;
-  hangoutLink: string;
-  /**
-   * Google EventDateTime — has `dateTime`, `date` and/or `timeZone`.
-   */
-  start: Record<string, unknown>;
-  end: Record<string, unknown>;
-  attendees: Array<Record<string, unknown>>;
-}> & Record<string, unknown>)
 /**
  * storage.Habit. Every field is emitted — no `omitempty` anywhere on this struct.
  */
@@ -1082,6 +1102,14 @@ export type ManagerAnalyticsMember = {
   email: string;
   display_name: string;
   /**
+   * True iff the member's member_user_id resolved to a Paceday user row; the same value ManagerRosterMember.is_paceday_user carries for this member (PAC-34).
+   */
+  is_paceday_user: boolean;
+  /**
+   * True iff at least one entry of `weeks` has data_available=true (PAC-34). Derived from the buckets of this response, never read or cached separately, so it cannot disagree with them. False means no bucket is measured (degraded FreeBusy, no analytics_weeks rows, consent withheld, or the PAC-60 visibility gate): the member's minutes must be shown as "no data", not as zeroes. True does NOT mean every bucket is measured; each bucket's own data_available still decides how that bucket is drawn.
+   */
+  data_available: boolean;
+  /**
    * Exactly 12 buckets, newest first.
    */
   weeks: Array<ManagerAnalyticsWeek>;
@@ -1147,32 +1175,32 @@ export type ManagerRoster = {
   members: Array<ManagerRosterMember>;
 }
 /**
- * storage.ManagerTeamMember marshalled with no json tags — Go field names verbatim. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200).
+ * storage.ManagerTeamMember with explicit snake_case json tags (PAC-26, API-030); the keys match the manager_team_members columns. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200), both read back from storage after the write. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`ID`, `ManagerUserID`, `MemberEmail`, ...). Note the key is `member_email` here but `email` on ManagerRosterMember: this is the stored row, the roster is a view.
  */
 export type ManagerTeamMemberGoStruct = {
   /**
-   * On the 201 add response this is the zero UUID "00000000-0000-0000-0000-000000000000" because the struct is echoed back without re-reading the row.
+   * The stored row id. Since PAC-26 (API-031) never the zero UUID on the 201 add response.
    */
-  ID: string;
-  ManagerUserID: string;
-  MemberEmail: string;
+  id: string;
+  manager_user_id: string;
+  member_email: string;
   /**
    * Set when the email matches a Paceday user; null for external members.
    */
-  MemberUserID: (string | null);
-  DisplayName: string;
-  Source: ManagerMemberSource;
-  Cadence: Cadence;
-  CadenceCustomDays: (number | null);
-  LastOneOnOneAt: (string | null);
+  member_user_id: (string | null);
+  display_name: string;
+  source: ManagerMemberSource;
+  cadence: Cadence;
+  cadence_custom_days: (number | null);
+  last_one_on_one_at: (string | null);
   /**
-   * Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+   * Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
    */
-  CreatedAt: string;
+  created_at: string;
   /**
-   * Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+   * Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
    */
-  UpdatedAt: string;
+  updated_at: string;
 }
 /**
  * storage.SlackMessage — one Slack search hit backing a brief.
@@ -1320,7 +1348,7 @@ export type NLPParseResult = {
 export type NLPConfirmRequest = ({
   parse_result: NLPParseResult;
   /**
-   * Index into `parse_result.suggested_slots`. Only the upper bound is checked; see the operation's x-uncertain note about negatives.
+   * Index into `parse_result.suggested_slots`. A negative value or one >= the slot count is a 400 `invalid selected_slot_index`.
    */
   selected_slot_index: number;
 } & Record<string, unknown>)
@@ -1444,9 +1472,9 @@ export type PersonalCalendarCreateRequest = {
  */
 export type PersonalCalendarPatchRequest = Partial<{ name: (string | null), url: (string | null), enabled: (boolean | null) }>
 /**
- * calendar.GenericEvent serialized WITHOUT json tags — capitalized Go field names. All four keys are always present.
+ * calendar.GenericEvent, with explicit json tags since PAC-26 (API-029). All four keys are always present (no omitempty). Before PAC-26 the struct had no tags and the keys were `ID`, `Title`, `Start`, `End`.
  */
-export type PersonalCalendarPreviewEvent = { ID: string, Title: string, Start: string, End: string }
+export type PersonalCalendarPreviewEvent = { id: string, title: string, start: string, end: string }
 /**
  * Several handlers (and requireAuth) use Go's http.Error instead of
  * writeError. http.Error forces `Content-Type: text/plain; charset=utf-8`
@@ -1665,7 +1693,7 @@ export type ScheduleSuggestions = {
   slots: Array<SuggestedSlot>;
 }
 /**
- * The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
+ * The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Every 5xx in this domain uses it, with a fixed server-chosen message (PAC-21). Handlers that use the Go stdlib `http.Error` for a 4xx return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
  */
 export type SchedulingErrorResponse = { error: string }
 /**
@@ -1805,7 +1833,7 @@ export type SchedulingLinkHostRecord = {
   responded_at?: string;
 }
 /**
- * Echo of the status that was written. The only body accept/decline ever returns.
+ * Echo of the status that was written. The only 200 body accept/decline returns.
  */
 export type SchedulingLinkInviteResponse = { status: ("accepted" | "declined") }
 /**
@@ -2005,7 +2033,7 @@ export type Settings = {
    */
   recapIncludeHabits: boolean;
   /**
-   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
    */
   timeFormat: ("12h" | "24h");
   /**
@@ -2185,7 +2213,7 @@ export type SettingsUpdate = Partial<{
    */
   recapIncludeHabits: boolean;
   /**
-   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+   * How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
    */
   timeFormat: ("12h" | "24h");
   /**
@@ -2223,7 +2251,14 @@ export type SsoDetectResponse = {
    */
   provider_name?: string;
   /**
-   * Relative path `/api/auth/sso/<domain>`. Omitted unless type == "sso".
+   * Relative path `/api/auth/sso/<domain>` (the email's domain,
+   * lowercased and trimmed, not URL-escaped). Omitted unless
+   * type == "sso". It is a path on the API's origin, not the web app's:
+   * a client resolves it against its API base URL, which may be a
+   * different origin (PAC-35 AC-7). The client appends
+   * `?login_hint=<email>` itself (see `startSsoLogin`); the detection
+   * answer does not carry the email. This is the only field a client
+   * needs to reach SSO; there is no `domain` field (API-010).
    */
   redirect_url?: string;
 }
@@ -2342,7 +2377,7 @@ export type TeamInvite = {
   expiresAt: string;
 }
 /**
- * A deliberately narrow projection — NOT a TeamInvite. Built as a map[string]string, so every value is a plain string and a missing team or inviter yields "" rather than null.
+ * A narrow projection of a pending invite, NOT a TeamInvite (no id, token, status, invitedBy or createdAt). The three original keys are camelCase and stay so for existing readers; the three keys added by PAC-34 are snake_case, the spelling the PAC-34 acceptance criteria name and the web normalizer reads (see contracts/features/PAC-34.md section 3 for the rejected alternatives). team_id and expires_at come from the invite row itself, so they are always present. The team and inviter rows are read separately and a failed read is not an error: teamName and inviterName become "" and inviter_email becomes null.
  */
 export type TeamInvitePreview = {
   /**
@@ -2357,6 +2392,18 @@ export type TeamInvitePreview = {
    * The invitee email the invite was issued to.
    */
   email: string;
+  /**
+   * team_invites.team_id of this invite (PAC-34). Never empty.
+   */
+  team_id: string;
+  /**
+   * team_invites.expires_at, RFC 3339 (PAC-34): createdAt + 7 days, computed in Go when the invite was created. A 200 is returned only while the invite is pending and ExpireOldInvites runs first, so a client normally sees a future instant; a client must still treat a past value as expired rather than assume otherwise.
+   */
+  expires_at: string;
+  /**
+   * The inviter's account email, users.email of team_invites.invited_by (PAC-34). null, never "", when the inviter's user row could not be read. invited_by is NOT NULL with ON DELETE CASCADE, so a deleted inviter removes the invite (404), and null only arises from a failed read.
+   */
+  inviter_email: (string | null);
 }
 export type TeamNameRequest = ({
   /**
@@ -2423,20 +2470,20 @@ export type UpdateSchedulingLinkRequest = Partial<{
   co_host_emails: Array<string>;
 }>
 /**
- * storage.UserProfile marshalled with no json tags — Go field names verbatim. Do not rename these keys in the spec; they are literally what the server sends.
+ * storage.UserProfile with explicit snake_case json tags (PAC-26, API-030); the keys match the user_profiles columns. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`UserID`, `IsManager`, `DetectedAt`, `AnalyticsSharedWithManager`, `UpdatedAt`).
  */
 export type UserProfileGoStruct = {
-  UserID: string;
-  IsManager: boolean;
-  DetectedAt: (string | null);
+  user_id: string;
+  is_manager: boolean;
+  detected_at: (string | null);
   /**
    * Member-side consent flag, defaulting to true. No endpoint in this domain sets it.
    */
-  AnalyticsSharedWithManager: boolean;
+  analytics_shared_with_manager: boolean;
   /**
    * The value read BEFORE the upsert, not the newly written now().
    */
-  UpdatedAt: string;
+  updated_at: string;
 }
 
     // </Schemas>
@@ -2528,7 +2575,7 @@ export type get_ListAnalyticsMeetings = {
         
           }
       responses: {200: Array<Schemas.AnalyticsMeeting>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
@@ -2616,7 +2663,7 @@ export type get_SuggestAttendees = {
         
           }
       responses: {200: Array<Schemas.AttendeeSuggestion>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
@@ -2663,6 +2710,10 @@ export type get_ListAuditEntries = {
  * exchanges the code, upserts the user, stores the OAuth token, associates
  * the org, issues the `auth_token` JWT cookie, then redirects to
  * `<FRONTEND_URL>/auth/callback`.
+ * Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
+ * the session cookie was actually set. If the session cannot be issued
+ * (empty signing secret, or token generation fails) the user is sent to
+ * the sign-in failure state instead; see the `302` response.
  */
 export type get_GoogleOAuthCallback = {
       method: "GET",
@@ -2678,17 +2729,21 @@ export type get_GoogleOAuthCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
     }
 /**
  * Verifies `sso_state` (both the random half and the embedded domain),
- * re-discovers the OIDC client, exchanges the code, upserts the user with
+ * re-discovers the OIDC client, exchanges the code, checks that the
+ * asserted email belongs to `{domain}` (PAC-45), upserts the user with
  * provider="sso", and issues the JWT cookie.
- * Inconsistent error encoding: the 404 uses the JSON helper while every
- * other failure in this handler uses http.Error (text/plain).
+ * Since PAC-35 (API-011) the redirect to `/auth/callback?provider=sso`
+ * happens only when the session cookie was actually set; otherwise the
+ * user goes to the sign-in failure state (see `302`).
+ * Inconsistent error encoding: the 404 and 500 use the JSON helpers while
+ * the 400s and the 403 use http.Error (text/plain).
  */
 export type get_SsoOidcCallback = {
       method: "GET",
@@ -2704,15 +2759,23 @@ export type get_SsoOidcCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
+403: Schemas.PlainTextError,
 404: Schemas.ErrorResponse,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
     }
 /**
- * Rate limited to 20 requests per minute per client IP (sliding window,
- * in-process map keyed by X-Real-IP / first X-Forwarded-For / RemoteAddr).
+ * Rate limited to 20 requests per minute per client IP (fixed one-minute
+ * window per key, in-process map; expired buckets are swept at most once a
+ * minute). Since PAC-39 (#215, API-062) the key is the IP of the socket peer
+ * (`RemoteAddr` without its port). `X-Forwarded-For` is never read. A
+ * client-supplied `X-Real-IP` is ignored; `X-Real-IP` is used only when the
+ * socket peer is inside the operator's `TRUSTED_PROXIES` allowlist (empty
+ * by default, so no proxy is trusted) and holds a valid IP. Still open
+ * (API-062): the map is per process, so the effective limit is
+ * 20/min x replicas.
  */
 export type post_DetectAuthProvider = {
       method: "POST",
@@ -2734,8 +2797,30 @@ export type post_DetectAuthProvider = {
       
     }
 /**
- * Deletes the current user's OAuth token row and expires the `auth_token`
- * cookie — i.e. this also logs the user out, which the name does not suggest.
+ * Never touches the session: no response of this operation sets or
+ * expires the `auth_token` cookie (PAC-35, API-061; before PAC-35 the
+ * 204 expired it and so logged the user out).
+ * 
+ * Branches on the caller's calendar provider exactly as `getAuthStatus`
+ * does (`calendarProvider` from the caller's own settings row; blank or
+ * any value other than `outlook` / `webcal` means Google; a caller with
+ * no settings row yet gets the default row, provider `google`, exactly as
+ * `getAuthStatus` creates it), so the server and the app classify every
+ * user the same way (spec PAC-35 D-8):
+ * - Google: deletes the caller's stored Google OAuth token row and answers
+ *   204. As before, this also turns Google Meet to not connected for the
+ *   caller (it depends on the same credential). A caller with no stored
+ *   token gets 204 too.
+ * - `outlook` or `webcal`: deletes NOTHING (the stored Google token, if
+ *   the caller holds one, the Microsoft credential and the webcal link
+ *   are all kept) and answers 409 `CalendarDisconnectUnsupported`.
+ *   Disconnect for these calendars is not implemented (spec PAC-35 OQ-5).
+ * - The settings row cannot be read (or created): deletes nothing and
+ *   answers 500.
+ *   The provider is never guessed as Google on this path, so a read
+ *   failure cannot delete an Outlook or webcal user's Google token.
+ *   (`getAuthStatus` still answers "google" on its own read failure;
+ *   disconnect deliberately does not follow it there.)
  */
 export type delete_DisconnectCalendar = {
       method: "DELETE",
@@ -2745,14 +2830,18 @@ export type delete_DisconnectCalendar = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+409: Schemas.CalendarDisconnectUnsupported,
+500: Schemas.ErrorResponse,
 },
-      responseHeaders: {204: { "Set-Cookie": string },
-},
+      
     }
 /**
  * Sets an httpOnly `oauth_state` cookie (MaxAge 300, SameSite=Lax) and
  * redirects to Google's consent screen. Never returns a body.
+ * Since PAC-35 (API-064) a valid `login_hint` is forwarded to Google so the
+ * account the user typed is preselected. Google still shows its consent
+ * screen every time (`oauth2.ApprovalForce`); the hint chooses the
+ * account, it does not skip the screen.
  */
 export type get_StartGoogleOAuth = {
       method: "GET",
@@ -2773,7 +2862,8 @@ export type get_StartGoogleOAuth = {
     }
 /**
  * Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
- * out with an already-expired token returns 401 rather than succeeding.
+ * out with an already-expired token returns 401 rather than succeeding
+ * (unchanged by PAC-35, spec section 5).
  */
 export type post_Logout = {
       method: "POST",
@@ -2781,12 +2871,19 @@ export type post_Logout = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: never,
-      responses: {200: unknown,
+      responses: {204: unknown,
 401: Schemas.PlainTextError,
 },
-      responseHeaders: {200: { "Set-Cookie": string },
+      responseHeaders: {204: { "Set-Cookie": string },
 },
     }
+/**
+ * Since PAC-35 (API-065) the user's picture has one name in the
+ * current-user read: `avatarUrl`, the name the server already sends.
+ * Clients read it under that name; the server does not rename it.
+ * Scheduling-link and booking hosts carry the same stored value as
+ * `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+ */
 export type get_GetCurrentUser = {
       method: "GET",
       path: "/api/auth/me",
@@ -2803,6 +2900,7 @@ export type get_GetCurrentUser = {
  * Sets an httpOnly `ms_oauth_state` cookie and redirects to Microsoft.
  * Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
  * if the client id is blank the route 503s.
+ * Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
  */
 export type get_StartMicrosoftOAuth = {
       method: "GET",
@@ -2828,9 +2926,13 @@ export type get_StartMicrosoftOAuth = {
  * settings row (making Outlook their calendar provider), sets the session
  * cookie and redirects. Since PAC-24 the profile fetch is required, not
  * best-effort: without it there is no user to attach the credential to, so
- * a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
- * saved on the single shared settings row and the provider flipped for
- * everyone.
+ * nothing is saved. Before PAC-24 the token was saved on the single shared
+ * settings row and the provider flipped for everyone.
+ * Since PAC-35 (API-011, API-012) three failures after a successful code
+ * exchange end on the app's sign-in failure state rather than on a JSON
+ * error page on the API origin: the Graph profile could not be read (or
+ * carried no email), the user could not be saved, or the session could
+ * not be issued. See the `302` response.
  */
 export type get_MicrosoftOAuthCallback = {
       method: "GET",
@@ -2846,8 +2948,7 @@ export type get_MicrosoftOAuthCallback = {
           }
       responses: {302: unknown,
 400: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
-502: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -2857,6 +2958,17 @@ export type get_MicrosoftOAuthCallback = {
  * Looks up the SSO provider row for `{domain}`, builds the OIDC redirect
  * URL as `os.Getenv("APP_URL") + "/api/auth/callback/oidc/" + domain`, sets
  * an `sso_state` cookie of the form `<state>|<domain>`, and redirects.
+ * This is the destination `detectAuthProvider` names in `redirect_url`;
+ * the web app reaches it by resolving that path against the API origin and
+ * appending `?login_hint=<typed email>` (PAC-35, API-010).
+ * Since PAC-35 (API-064) a `login_hint` that passes the LoginHint rule AND
+ * whose domain is exactly `{domain}` (case-insensitive, no subdomains, the
+ * same test as the callback's PAC-45 check) is forwarded to the IdP. A hint
+ * at another domain is dropped, so this route never sends one
+ * organisation's IdP an address outside that organisation's domain.
+ * Unchanged by PAC-35 (spec D-5): the 404, 500 and 501 answers below.
+ * API-060 (SAML and incomplete OIDC rows accepted at create time) stays
+ * with PAC-22.
  */
 export type get_StartSsoLogin = {
       method: "GET",
@@ -2864,7 +2976,7 @@ export type get_StartSsoLogin = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            
+            query?:  Partial<{ login_hint: string }>,
         path:  { domain: string },
         
         
@@ -2942,7 +3054,7 @@ export type get_HandleZoomOAuthCallback = {
       responses: {302: unknown,
 400: "invalid state\n",
 401: "{\"error\":\"unauthorized\"}\n",
-500: string,
+500: Schemas.BookingError,
 },
       responseHeaders: {302: { Location: "/?connected=true&provider=zoom", "Set-Cookie": string },
 },
@@ -3028,13 +3140,13 @@ export type get_ListCalendarEvents = {
           }
       responses: {200: Array<Schemas.CalendarEvent>,
 400: Schemas.PlainTextError,
-401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint.
+ * Thin passthrough over calendar.CalendarClient.GetFreeBusy. The response is `map[string][]calendar.TimeSlot`. calendar.TimeSlot (backend/calendar/freebusy.go) carries explicit json tags since PAC-26 (API-029), so each window is `{"start","end"}`, the same window shape as POST /api/freebusy. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. The map wrapper is unchanged and is still NOT the POST /api/freebusy envelope. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body to the model as text without parsing it, so the key casing change reaches the MCP client unchanged and breaks no code. U-03 stays resolved as "keep" (assumed by the factory for PAC-21, pending owner confirmation); PAC-26 changes only the window key casing, not the envelope.
  */
 export type get_GetCalendarFreeBusy = {
       method: "GET",
@@ -3050,8 +3162,8 @@ export type get_GetCalendarFreeBusy = {
           }
       responses: {200: Schemas.RawGoogleFreeBusyMap,
 400: Schemas.PlainTextError,
-401: Schemas.PlainTextError,
-500: Schemas.PlainTextError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3108,7 +3220,7 @@ export type post_DisconnectZoom = {
       
     }
 /**
- * Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained.
+ * Fetches the event, applies the non-null fields of the body, and writes it back with calendar.CalendarClient.UpdateEvent. An ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". The field-by-field semantics are on EventPatchRequest. In short, since PAC-29: `send_updates` is passed to Google (absent means `none`, which is what every PATCH did before PAC-29); a bare `YYYY-MM-DD` `start` / `end` keeps the event all-day (API-043); `attendees` replaces the non-room guests but keeps each existing guest's Google entry (name, RSVP) and every room resource attendee (API-044); `room_resource_email` adds that room (API-018); `attendee_details` is declared, accepted and ignored (API-018). The 200 body is the event UpdateEvent returned, flattened by the same toCalendarEventDTO as GET /api/calendar/events: the CalendarEvent DTO (`title`, `start`, `end`, `attendees: string[]`, ...), never Google's own keys (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`) (API-017, U-04). Like the list, the DTO drops room resource attendees (`*@resource.calendar.google.com`) from `attendees` and `attendee_details`, so a room on the event is not visible in this body even though PATCH keeps it. Only a Google 404 or 410 from the initial GetEvent, or a GetEvent answer whose `status` is `cancelled` (Google returns recently deleted events that way), is a 404; any other GetEvent failure is a 500 (API-045). Error precedence (PAC-29): checks that need only the request come first (`invalid body`, `invalid send_updates`, `invalid room_resource_email`: 400), then the stored credential (401 / 500), then GetEvent (404 / 500), then the start/end kind check against the stored event (400); Google is written only after all of them pass. PAC-29: until PAC-29's implementation lands the server still encodes the raw google.golang.org/api/calendar/v3.Event, ignores `send_updates`, `room_resource_email` and `attendee_details`, decodes `start` / `end` as date-times only (a bare date is a 400 `invalid body`) and writes them as UTC `dateTime` (converting an all-day event to a timed one), replaces the whole attendee list with email-only entries (dropping names, RSVPs and the room), maps every GetEvent failure to 404, and writes to a cancelled event like any other. This operation describes the server after that PR, not before it.
  */
 export type patch_PatchEvent = {
       method: "PATCH",
@@ -3122,16 +3234,16 @@ export type patch_PatchEvent = {
         
         body:  Schemas.EventPatchRequest,
           }
-      responses: {200: Schemas.GoogleCalendarEventRaw,
+      responses: {200: Schemas.CalendarEvent,
 400: Schemas.ErrorResponse,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Deletes the event from the user's primary calendar. The handler reads no query parameters — in particular the `send_updates` parameter the frontend sends is ignored.
+ * Deletes the event from the user's primary calendar. Since PAC-29 the `send_updates` query parameter is passed to Google's delete call (API-042), and a Google 404 or 410 is a 404 like PATCH (API-045). PAC-29: until PAC-29's implementation lands the server reads no query parameter (so guests are never notified and an invalid `send_updates` is not rejected) and every delete failure, including a missing event, is a 500. This operation describes the server after that PR, not before it. Error precedence (PAC-29): an invalid `send_updates` is a 400 before the stored credential is read (401 / 500) and before any Google call.
  */
 export type delete_DeleteEvent = {
       method: "DELETE",
@@ -3139,14 +3251,16 @@ export type delete_DeleteEvent = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            
+            query?:  Partial<{ send_updates: ("all" | "none") }>,
         path:  { id: string },
         
         
         
           }
       responses: {204: unknown,
-401: Schemas.ErrorResponse,
+400: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
@@ -3168,7 +3282,7 @@ export type post_AddEventConference = {
           }
       responses: {200: Schemas.EventConferenceLink,
 400: Schemas.BookingError,
-401: Schemas.BookingError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.BookingError,
 409: Schemas.BookingError,
 500: Schemas.BookingError,
@@ -3192,14 +3306,14 @@ export type delete_RemoveEventConference = {
         
           }
       responses: {204: unknown,
-401: Schemas.BookingError,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
     }
 /**
- * Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. NOTE: `storage.FocusBlock` carries no json struct tags, so the encoder emits Go field names (`ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`) - not snake_case and not camelCase.
+ * Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. Keys are snake_case (`id`, `google_event_id`, `start_time`, `end_time`, `date`, `created_at`) from explicit json tags on `storage.FocusBlock` (PAC-26, API-014). Before PAC-26 the struct had no tags and the encoder emitted the Go field names (`ID`, `GoogleEventID`, `StartTime`, ...), which the web app's FocusBlock type could not read.
  */
 export type get_ListFocusBlocks = {
       method: "GET",
@@ -3215,7 +3329,7 @@ export type get_ListFocusBlocks = {
           }
       responses: {200: Array<Schemas.FocusBlockRecord>,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -3236,12 +3350,13 @@ export type delete_ClearFocusBlocks = {
           }
       responses: {200: Schemas.FocusClearResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
 /**
- * Creates focus blocks for the target week. The request body is decoded best-effort: if the body is absent or is malformed JSON the handler silently falls back to `week = ""` (i.e. the current week) and returns 200 - it does NOT return 400 for malformed JSON. A 400 is only produced when `week` decodes to a non-empty string that fails `time.Parse("2006-01-02", ...)`.
+ * Creates focus blocks for the target week. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. the current week. Any other body that does not decode into FocusRunRequest is a 400 `invalid JSON`: a syntax error, a non-object top-level value (array, string, number, boolean), or a member of the wrong type such as `{"week":5}`. Before PAC-36 such a body was silently treated as `{}` and answered 200 for the current week (API-035). Only the first JSON value is read; bytes after it are not inspected, as on every sibling endpoint. A non-empty `week` that fails `time.Parse("2006-01-02", ...)` is a 400 `invalid week format, use YYYY-MM-DD`.
  */
 export type post_RunFocus = {
       method: "POST",
@@ -3257,7 +3372,8 @@ export type post_RunFocus = {
           }
       responses: {200: Schemas.FocusRunResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -3279,7 +3395,7 @@ export type post_QueryFreeBusy = {
       responses: {200: Schemas.FreeBusyQueryResponse,
 400: Schemas.ErrorResponse,
 401: Schemas.ErrorResponse,
-500: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3530,8 +3646,8 @@ export type get_NotionOauthCallback = {
       responses: {302: unknown,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
-502: string,
+500: Schemas.ErrorResponse,
+502: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string },
 },
@@ -3549,7 +3665,7 @@ export type get_ConnectNotion = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
-503: string,
+503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -3605,8 +3721,8 @@ export type get_SlackOauthCallback = {
       responses: {302: unknown,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
-502: string,
+500: Schemas.ErrorResponse,
+502: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string },
 },
@@ -3626,7 +3742,7 @@ export type get_ConnectSlack = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
-503: string,
+503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
 },
@@ -3753,13 +3869,13 @@ export type post_TestLLMConnection = {
       responses: {200: Schemas.LLMTestResult,
 400: Schemas.SchedulingErrorResponse,
 422: Schemas.LLMDestinationRefusal,
-500: (Schemas.SchedulingErrorResponse | string),
+500: Schemas.SchedulingErrorResponse,
 502: Schemas.SchedulingErrorResponse,
 },
       
     }
 /**
- * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy).
+ * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy). PAC-34 (API-022): each member also carries is_paceday_user (same derivation as the roster's) and a member-level data_available that is true iff at least one of its 12 buckets has data_available=true. A client must render a bucket with data_available=false, and a member with data_available=false, as "no data", never as zero minutes. Neither field widens visibility: is_paceday_user is already on the roster for the same caller and members, and data_available is derived only from the buckets this response already returns.
  */
 export type get_GetManagerAnalytics = {
       method: "GET",
@@ -3776,7 +3892,7 @@ export type get_GetManagerAnalytics = {
       responses: {200: Schemas.ManagerAnalytics,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3797,8 +3913,9 @@ export type post_PreviewManagerDetection = {
           }
       responses: {200: Schemas.ScanPreview,
 400: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3821,7 +3938,7 @@ export type post_ConfirmManagerDetection = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3843,7 +3960,7 @@ export type get_GetManagerCadenceGaps = {
       responses: {200: Schemas.CadenceGapList,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3857,7 +3974,7 @@ export type get_GetManagerProfile = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.ManagerProfileSummary,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3878,7 +3995,7 @@ export type post_SetManagerProfile = {
           }
       responses: {200: Schemas.UserProfileGoStruct,
 400: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3900,7 +4017,7 @@ export type get_GetManagerRoster = {
       responses: {200: Schemas.ManagerRoster,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3923,7 +4040,7 @@ export type post_AddManagerTeamMember = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3964,12 +4081,12 @@ export type patch_PatchManagerTeamMember = {
         
         body:  Schemas.PatchManagerMemberRequest,
           }
-      responses: {200: (Schemas.ManagerTeamMemberGoStruct | null),
+      responses: {200: Schemas.ManagerTeamMemberGoStruct,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3993,7 +4110,7 @@ export type post_ScheduleManagerOneOnOne = {
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4017,7 +4134,7 @@ export type get_GetMeetingBrief = {
       responses: {200: Schemas.MeetingBriefResponse,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4046,12 +4163,12 @@ export type post_RefreshMeetingBrief = {
       responses: {200: Schemas.MeetingBriefResponse,
 400: string,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned.
+ * The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the created event is returned as the CalendarEvent DTO (toCalendarEventDTO, the same shape as GET /api/calendar/events), never Google's own keys. PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
  */
 export type post_ConfirmNaturalLanguage = {
       method: "POST",
@@ -4065,9 +4182,10 @@ export type post_ConfirmNaturalLanguage = {
         
         body:  Schemas.NLPConfirmRequest,
           }
-      responses: {200: Schemas.GoogleCalendarEvent,
+      responses: {200: Schemas.CalendarEvent,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4088,7 +4206,7 @@ export type post_ParseNaturalLanguage = {
           }
       responses: {200: Schemas.NLPParseResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4103,7 +4221,7 @@ export type get_ListOrgMembers = {
       parameters: never,
       responses: {200: Array<Schemas.OrgMember>,
 401: Schemas.MiddlewareUnauthorized,
-500: Schemas.MiddlewareUnauthorized,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4214,7 +4332,7 @@ export type get_PreviewPersonalCalendar = {
       
     }
 /**
- * Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body.
+ * Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body. The sync writes busy blocks into the user's work calendar, so it is calendar-dependent: a user with no stored Google credential gets the 401 CalendarNotConnected (PAC-21; before, a 500).
  */
 export type post_SyncPersonalCalendar = {
       method: "POST",
@@ -4230,7 +4348,7 @@ export type post_SyncPersonalCalendar = {
           }
       responses: {200: Schemas.PersonalCalendar,
 400: Schemas.ErrorResponse,
-401: Schemas.MiddlewareUnauthorized,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -4252,13 +4370,13 @@ export type get_ListRooms = {
         
           }
       responses: {200: Array<Schemas.CalendarRoom>,
-401: Schemas.ErrorResponse,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+ * Read-only: computes proposals, moves nothing. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. today. Any other body that does not decode into CompressionRequest is a 400 `invalid JSON` (a syntax error, a non-object top-level value, or a member of the wrong type). Before PAC-36 the decode error was discarded and such a body answered 200 for today (API-035). Only the first JSON value is read. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and computes Mon..Fri in order. A 200 in week mode carries exactly five CompressionResult entries, one per day, Monday first; a non-working day is an entry with no proposals, not a missing entry. If ANY day's computation fails, the whole request fails exactly as single-day mode fails (401 CalendarNotConnected or 500 `internal error`) and no per-day results are returned. Before PAC-36 week mode skipped every failing day and answered 200 with the survivors, `[]` if all five failed, which a client cannot tell apart from "nothing to compress" (API-034). If `week` is empty, `date` (or today) produces a single-element array and an engine error is the 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054).
  */
 export type post_PreviewCompression = {
       method: "POST",
@@ -4274,7 +4392,8 @@ export type post_PreviewCompression = {
           }
       responses: {200: Array<Schemas.CompressionResult>,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4295,12 +4414,13 @@ export type post_ApplyCompression = {
           }
       responses: {200: Schemas.CompressionApplyResult,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
 /**
- * `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the raw Google Calendar API `calendar/v3.Event` struct as returned by the calendar client - it is NOT normalised into the app's own event shape.
+ * `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the created event flattened by toCalendarEventDTO: the CalendarEvent DTO, the same shape as one element of GET /api/calendar/events, never Google's own keys (`summary`, `start.dateTime`, `hangoutLink`). PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR.
  */
 export type post_CreateScheduledMeeting = {
       method: "POST",
@@ -4314,14 +4434,15 @@ export type post_CreateScheduledMeeting = {
         
         body:  Schemas.ScheduleCreateRequest,
           }
-      responses: {200: Schemas.GoogleCalendarEvent,
+      responses: {200: Schemas.CalendarEvent,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
 /**
- * `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)).
+ * `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)). There is no 15-minute increment rule on this route: every step in engine/smart_schedule.go (lines 113, 121 and 135) is 30 minutes, so every suggested start is the start of a free interval (`range_start` or the end of a busy interval) plus a multiple of 30 minutes. The 15-minute stepping in engine/booking.go, engine/habits.go and engine/team_availability.go backs other domains. U-07 resolved by PAC-21 from the engine, to be pinned by TestSmartScheduler_Suggest_StepsThirtyMinutes (AC-6, written in the backend PR before the code); assumed by the factory, pending owner confirmation that no 15-minute rule was intended.
  */
 export type post_SuggestMeetingSlots = {
       method: "POST",
@@ -4337,7 +4458,8 @@ export type post_SuggestMeetingSlots = {
           }
       responses: {200: Schemas.ScheduleSuggestions,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4393,7 +4515,7 @@ export type get_ListSchedulingLinkHostInvites = {
       
     }
 /**
- * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE affecting zero rows is NOT an error: a caller with no invite for that link still gets 200.
+ * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5); "no link has that id" in the 404 means no row at all, not an inactive one.
  */
 export type post_AcceptSchedulingLinkHostInvite = {
       method: "POST",
@@ -4410,12 +4532,13 @@ export type post_AcceptSchedulingLinkHostInvite = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
     }
 /**
- * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id.
+ * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_DeclineSchedulingLinkHostInvite = {
       method: "POST",
@@ -4432,6 +4555,7 @@ export type post_DeclineSchedulingLinkHostInvite = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4525,7 +4649,7 @@ export type delete_DeleteSchedulingLink = {
       
     }
 /**
- * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form.
+ * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_AcceptSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4542,6 +4666,7 @@ export type post_AcceptSchedulingLinkInviteByLink = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4571,7 +4696,7 @@ export type get_ListSchedulingLinkBookings = {
       
     }
 /**
- * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key).
+ * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
  */
 export type post_DeclineSchedulingLinkInviteByLink = {
       method: "POST",
@@ -4588,6 +4713,7 @@ export type post_DeclineSchedulingLinkInviteByLink = {
       responses: {200: Schemas.SchedulingLinkInviteResponse,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
+404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
       
@@ -4618,7 +4744,7 @@ export type post_InviteSchedulingLinkHost = {
       
     }
 /**
- * Deletes the caller's `scheduling_link_hosts` row. Deleting zero rows is not an error, so a non-host caller also gets 204. The owner is rejected with 400.
+ * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id -> 404; caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
  */
 export type post_LeaveSchedulingLink = {
       method: "POST",
@@ -4653,7 +4779,7 @@ export type get_GetSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.Settings,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4693,7 +4819,7 @@ export type patch_PatchSettings = {
           }
       responses: {200: Schemas.Settings,
 400: Schemas.SchedulingErrorResponse,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4708,7 +4834,7 @@ export type get_GetDailyRecapSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapSettings,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4731,7 +4857,7 @@ export type patch_PatchDailyRecapSettings = {
           }
       responses: {204: unknown,
 400: string,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4746,7 +4872,7 @@ export type post_PreviewDailyRecap = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapPreview,
-500: string,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4762,8 +4888,8 @@ export type post_SendDailyRecapTest = {
       parameters: never,
       responses: {200: Schemas.DailyRecapTestResult,
 400: string,
-500: string,
-502: string,
+500: Schemas.SchedulingErrorResponse,
+502: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -4785,7 +4911,7 @@ export type post_CreateTeam = {
       responses: {201: Schemas.Team,
 400: Schemas.ErrorResponse,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4800,12 +4926,12 @@ export type get_ListTeams = {
       parameters: never,
       responses: {200: Array<Schemas.Team>,
 401: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Despite the "(public)" comment on the handler, this route is registered inside the requireAuth group and therefore requires a valid JWT. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. The response deliberately omits team_id, token and expires_at.
+ * Registered inside the requireAuth group and therefore requires a valid JWT. The handler comment says "(public)", which is wrong (API-089); PAC-34 corrects the comment, not the routing. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. PAC-34 (API-021): the 200 also carries team_id, expires_at and inviter_email, so the invite page can show who invited the caller and when the link expires. The audience is unchanged: any authenticated caller holding the token, as before (the invitee email is checked on accept, not on preview). The token is still not echoed; the caller already has it in the path.
  */
 export type get_GetTeamInvite = {
       method: "GET",
@@ -4822,7 +4948,7 @@ export type get_GetTeamInvite = {
       responses: {200: Schemas.TeamInvitePreview,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4846,7 +4972,7 @@ export type post_AcceptTeamInvite = {
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4869,7 +4995,7 @@ export type get_GetTeam = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4885,10 +5011,10 @@ export type patch_RenameTeam = {
         
         body:  Schemas.TeamNameRequest,
           }
-      responses: {200: (Schemas.Team | null),
+      responses: {200: Schemas.Team,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4910,7 +5036,7 @@ export type delete_DeleteTeam = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4932,7 +5058,7 @@ export type get_GetFormalTeamAnalytics = {
       responses: {200: Schemas.TeamAnalytics,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4954,7 +5080,7 @@ export type get_GetTeamAvailability = {
       responses: {200: Schemas.TeamSlotList,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4974,7 +5100,7 @@ export type post_InviteTeamMember = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4996,7 +5122,7 @@ export type delete_RemoveTeamMember = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5019,7 +5145,7 @@ export type post_CreateNoMeetingZone = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5041,7 +5167,7 @@ export type get_ListNoMeetingZones = {
       responses: {200: Array<Schemas.NoMeetingZone>,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5065,7 +5191,7 @@ export type patch_UpdateNoMeetingZone = {
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5084,7 +5210,7 @@ export type delete_DeleteNoMeetingZone = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-500: string,
+500: Schemas.ErrorResponse,
 },
       
     }

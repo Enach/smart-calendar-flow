@@ -219,6 +219,10 @@ export interface paths {
          *     exchanges the code, upserts the user, stores the OAuth token, associates
          *     the org, issues the `auth_token` JWT cookie, then redirects to
          *     `<FRONTEND_URL>/auth/callback`.
+         *     Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
+         *     the session cookie was actually set. If the session cannot be issued
+         *     (empty signing secret, or token generation fails) the user is sent to
+         *     the sign-in failure state instead; see the `302` response.
          *
          */
         get: operations["googleOAuthCallback"];
@@ -240,10 +244,14 @@ export interface paths {
         /**
          * OIDC SSO callback
          * @description Verifies `sso_state` (both the random half and the embedded domain),
-         *     re-discovers the OIDC client, exchanges the code, upserts the user with
+         *     re-discovers the OIDC client, exchanges the code, checks that the
+         *     asserted email belongs to `{domain}` (PAC-45), upserts the user with
          *     provider="sso", and issues the JWT cookie.
-         *     Inconsistent error encoding: the 404 uses the JSON helper while every
-         *     other failure in this handler uses http.Error (text/plain).
+         *     Since PAC-35 (API-011) the redirect to `/auth/callback?provider=sso`
+         *     happens only when the session cookie was actually set; otherwise the
+         *     user goes to the sign-in failure state (see `302`).
+         *     Inconsistent error encoding: the 404 and 500 use the JSON helpers while
+         *     the 400s and the 403 use http.Error (text/plain).
          *
          */
         get: operations["ssoOidcCallback"];
@@ -266,8 +274,15 @@ export interface paths {
         put?: never;
         /**
          * Detect which auth provider an email address should use
-         * @description Rate limited to 20 requests per minute per client IP (sliding window,
-         *     in-process map keyed by X-Real-IP / first X-Forwarded-For / RemoteAddr).
+         * @description Rate limited to 20 requests per minute per client IP (fixed one-minute
+         *     window per key, in-process map; expired buckets are swept at most once a
+         *     minute). Since PAC-39 (#215, API-062) the key is the IP of the socket peer
+         *     (`RemoteAddr` without its port). `X-Forwarded-For` is never read. A
+         *     client-supplied `X-Real-IP` is ignored; `X-Real-IP` is used only when the
+         *     socket peer is inside the operator's `TRUSTED_PROXIES` allowlist (empty
+         *     by default, so no proxy is trusted) and holds a valid IP. Still open
+         *     (API-062): the map is per process, so the effective limit is
+         *     20/min x replicas.
          *
          */
         post: operations["detectAuthProvider"];
@@ -288,9 +303,31 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Delete the stored calendar OAuth token and clear the session cookie
-         * @description Deletes the current user's OAuth token row and expires the `auth_token`
-         *     cookie — i.e. this also logs the user out, which the name does not suggest.
+         * Disconnect the caller's Google calendar (the session is kept)
+         * @description Never touches the session: no response of this operation sets or
+         *     expires the `auth_token` cookie (PAC-35, API-061; before PAC-35 the
+         *     204 expired it and so logged the user out).
+         *
+         *     Branches on the caller's calendar provider exactly as `getAuthStatus`
+         *     does (`calendarProvider` from the caller's own settings row; blank or
+         *     any value other than `outlook` / `webcal` means Google; a caller with
+         *     no settings row yet gets the default row, provider `google`, exactly as
+         *     `getAuthStatus` creates it), so the server and the app classify every
+         *     user the same way (spec PAC-35 D-8):
+         *     - Google: deletes the caller's stored Google OAuth token row and answers
+         *       204. As before, this also turns Google Meet to not connected for the
+         *       caller (it depends on the same credential). A caller with no stored
+         *       token gets 204 too.
+         *     - `outlook` or `webcal`: deletes NOTHING (the stored Google token, if
+         *       the caller holds one, the Microsoft credential and the webcal link
+         *       are all kept) and answers 409 `CalendarDisconnectUnsupported`.
+         *       Disconnect for these calendars is not implemented (spec PAC-35 OQ-5).
+         *     - The settings row cannot be read (or created): deletes nothing and
+         *       answers 500.
+         *       The provider is never guessed as Google on this path, so a read
+         *       failure cannot delete an Outlook or webcal user's Google token.
+         *       (`getAuthStatus` still answers "google" on its own read failure;
+         *       disconnect deliberately does not follow it there.)
          *
          */
         delete: operations["disconnectCalendar"];
@@ -310,6 +347,10 @@ export interface paths {
          * Begin Google OAuth
          * @description Sets an httpOnly `oauth_state` cookie (MaxAge 300, SameSite=Lax) and
          *     redirects to Google's consent screen. Never returns a body.
+         *     Since PAC-35 (API-064) a valid `login_hint` is forwarded to Google so the
+         *     account the user typed is preselected. Google still shows its consent
+         *     screen every time (`oauth2.ApprovalForce`); the hint chooses the
+         *     account, it does not skip the screen.
          *
          */
         get: operations["startGoogleOAuth"];
@@ -333,7 +374,8 @@ export interface paths {
         /**
          * Clear the session cookie
          * @description Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
-         *     out with an already-expired token returns 401 rather than succeeding.
+         *     out with an already-expired token returns 401 rather than succeeding
+         *     (unchanged by PAC-35, spec section 5).
          *
          */
         post: operations["logout"];
@@ -350,7 +392,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The authenticated user */
+        /**
+         * The authenticated user
+         * @description Since PAC-35 (API-065) the user's picture has one name in the
+         *     current-user read: `avatarUrl`, the name the server already sends.
+         *     Clients read it under that name; the server does not rename it.
+         *     Scheduling-link and booking hosts carry the same stored value as
+         *     `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+         *
+         */
         get: operations["getCurrentUser"];
         put?: never;
         post?: never;
@@ -372,6 +422,7 @@ export interface paths {
          * @description Sets an httpOnly `ms_oauth_state` cookie and redirects to Microsoft.
          *     Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
          *     if the client id is blank the route 503s.
+         *     Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
          *
          */
         get: operations["startMicrosoftOAuth"];
@@ -397,9 +448,13 @@ export interface paths {
          *     settings row (making Outlook their calendar provider), sets the session
          *     cookie and redirects. Since PAC-24 the profile fetch is required, not
          *     best-effort: without it there is no user to attach the credential to, so
-         *     a failed fetch is a 502 and nothing is saved. Before PAC-24 the token was
-         *     saved on the single shared settings row and the provider flipped for
-         *     everyone.
+         *     nothing is saved. Before PAC-24 the token was saved on the single shared
+         *     settings row and the provider flipped for everyone.
+         *     Since PAC-35 (API-011, API-012) three failures after a successful code
+         *     exchange end on the app's sign-in failure state rather than on a JSON
+         *     error page on the API origin: the Graph profile could not be read (or
+         *     carried no email), the user could not be saved, or the session could
+         *     not be issued. See the `302` response.
          *
          */
         get: operations["microsoftOAuthCallback"];
@@ -423,6 +478,17 @@ export interface paths {
          * @description Looks up the SSO provider row for `{domain}`, builds the OIDC redirect
          *     URL as `os.Getenv("APP_URL") + "/api/auth/callback/oidc/" + domain`, sets
          *     an `sso_state` cookie of the form `<state>|<domain>`, and redirects.
+         *     This is the destination `detectAuthProvider` names in `redirect_url`;
+         *     the web app reaches it by resolving that path against the API origin and
+         *     appending `?login_hint=<typed email>` (PAC-35, API-010).
+         *     Since PAC-35 (API-064) a `login_hint` that passes the LoginHint rule AND
+         *     whose domain is exactly `{domain}` (case-insensitive, no subdomains, the
+         *     same test as the callback's PAC-45 check) is forwarded to the IdP. A hint
+         *     at another domain is dropped, so this route never sends one
+         *     organisation's IdP an address outside that organisation's domain.
+         *     Unchanged by PAC-35 (spec D-5): the 404, 500 and 501 answers below.
+         *     API-060 (SAML and incomplete OIDC rows accepted at create time) stays
+         *     with PAC-22.
          *
          */
         get: operations["startSsoLogin"];
@@ -581,7 +647,7 @@ export interface paths {
         };
         /**
          * Raw Google free/busy lookup for a comma-separated attendee list
-         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. NOTE: the response is `map[string][]calendar.TimeSlot` and calendar.TimeSlot (backend/calendar/freebusy.go:10) has NO json struct tags, so the window keys serialize as Go field names — `Start` / `End`, capitalized. This is NOT the same shape as POST /api/freebusy. No frontend code calls this endpoint.
+         * @description Thin passthrough over calendar.CalendarClient.GetFreeBusy. The response is `map[string][]calendar.TimeSlot`. calendar.TimeSlot (backend/calendar/freebusy.go) carries explicit json tags since PAC-26 (API-029), so each window is `{"start","end"}`, the same window shape as POST /api/freebusy. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. The map wrapper is unchanged and is still NOT the POST /api/freebusy envelope. No frontend code calls this endpoint, but it is NOT dead: the MCP server's `clockwise_find_free_slots` tool (mcp/tools.go) calls it and relays the body to the model as text without parsing it, so the key casing change reaches the MCP client unchanged and breaks no code. U-03 stays resolved as "keep" (assumed by the factory for PAC-21, pending owner confirmation); PAC-26 changes only the window key casing, not the envelope.
          */
         get: operations["getCalendarFreeBusy"];
         put?: never;
@@ -667,14 +733,14 @@ export interface paths {
         post?: never;
         /**
          * Delete a Google Calendar event
-         * @description Deletes the event from the user's primary calendar. The handler reads no query parameters — in particular the `send_updates` parameter the frontend sends is ignored.
+         * @description Deletes the event from the user's primary calendar. Since PAC-29 the `send_updates` query parameter is passed to Google's delete call (API-042), and a Google 404 or 410 is a 404 like PATCH (API-045). PAC-29: until PAC-29's implementation lands the server reads no query parameter (so guests are never notified and an invalid `send_updates` is not rejected) and every delete failure, including a missing event, is a 500. This operation describes the server after that PR, not before it. Error precedence (PAC-29): an invalid `send_updates` is a 400 before the stored credential is read (401 / 500) and before any Google call.
          */
         delete: operations["deleteEvent"];
         options?: never;
         head?: never;
         /**
          * Partially update a Google Calendar event
-         * @description Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained.
+         * @description Fetches the event, applies the non-null fields of the body, and writes it back with calendar.CalendarClient.UpdateEvent. An ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". The field-by-field semantics are on EventPatchRequest. In short, since PAC-29: `send_updates` is passed to Google (absent means `none`, which is what every PATCH did before PAC-29); a bare `YYYY-MM-DD` `start` / `end` keeps the event all-day (API-043); `attendees` replaces the non-room guests but keeps each existing guest's Google entry (name, RSVP) and every room resource attendee (API-044); `room_resource_email` adds that room (API-018); `attendee_details` is declared, accepted and ignored (API-018). The 200 body is the event UpdateEvent returned, flattened by the same toCalendarEventDTO as GET /api/calendar/events: the CalendarEvent DTO (`title`, `start`, `end`, `attendees: string[]`, ...), never Google's own keys (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`) (API-017, U-04). Like the list, the DTO drops room resource attendees (`*@resource.calendar.google.com`) from `attendees` and `attendee_details`, so a room on the event is not visible in this body even though PATCH keeps it. Only a Google 404 or 410 from the initial GetEvent, or a GetEvent answer whose `status` is `cancelled` (Google returns recently deleted events that way), is a 404; any other GetEvent failure is a 500 (API-045). Error precedence (PAC-29): checks that need only the request come first (`invalid body`, `invalid send_updates`, `invalid room_resource_email`: 400), then the stored credential (401 / 500), then GetEvent (404 / 500), then the start/end kind check against the stored event (400); Google is written only after all of them pass. PAC-29: until PAC-29's implementation lands the server still encodes the raw google.golang.org/api/calendar/v3.Event, ignores `send_updates`, `room_resource_email` and `attendee_details`, decodes `start` / `end` as date-times only (a bare date is a 400 `invalid body`) and writes them as UTC `dateTime` (converting an all-day event to a timed one), replaces the whole attendee list with email-only entries (dropping names, RSVPs and the room), maps every GetEvent failure to 404, and writes to a cancelled event like any other. This operation describes the server after that PR, not before it.
          */
         patch: operations["patchEvent"];
         trace?: never;
@@ -715,7 +781,7 @@ export interface paths {
         };
         /**
          * List persisted focus blocks for a week
-         * @description Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. NOTE: `storage.FocusBlock` carries no json struct tags, so the encoder emits Go field names (`ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`) - not snake_case and not camelCase.
+         * @description Returns the caller's rows from the `focus_blocks` table (`user_id` = the authenticated user) where `date >= week AND date < week+7days`, ordered by start_time. Other users' blocks are never listed. Keys are snake_case (`id`, `google_event_id`, `start_time`, `end_time`, `date`, `created_at`) from explicit json tags on `storage.FocusBlock` (PAC-26, API-014). Before PAC-26 the struct had no tags and the encoder emitted the Go field names (`ID`, `GoogleEventID`, `StartTime`, ...), which the web app's FocusBlock type could not read.
          *
          */
         get: operations["listFocusBlocks"];
@@ -743,7 +809,7 @@ export interface paths {
         put?: never;
         /**
          * Run the focus-time engine for a week
-         * @description Creates focus blocks for the target week. The request body is decoded best-effort: if the body is absent or is malformed JSON the handler silently falls back to `week = ""` (i.e. the current week) and returns 200 - it does NOT return 400 for malformed JSON. A 400 is only produced when `week` decodes to a non-empty string that fails `time.Parse("2006-01-02", ...)`.
+         * @description Creates focus blocks for the target week. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. the current week. Any other body that does not decode into FocusRunRequest is a 400 `invalid JSON`: a syntax error, a non-object top-level value (array, string, number, boolean), or a member of the wrong type such as `{"week":5}`. Before PAC-36 such a body was silently treated as `{}` and answered 200 for the current week (API-035). Only the first JSON value is read; bytes after it are not inspected, as on every sibling endpoint. A non-empty `week` that fails `time.Parse("2006-01-02", ...)` is a 400 `invalid week format, use YYYY-MM-DD`.
          *
          */
         post: operations["runFocus"];
@@ -1185,7 +1251,7 @@ export interface paths {
          *     This is a security property of the contract, not a convenience, and the invariant is: **a credential the caller did not supply is never sent to a destination the caller did supply — because the caller cannot supply a destination at all.** An earlier draft of this contract let a body override each endpoint property individually with per-property fallback to the stored values. That let `{"llmProvider":"openai","llmBaseUrl":"https://attacker.example"}` pair a caller-chosen host with the stored key: `nlp.NewLLMClientFromSettings` builds `OpenAIClient{APIKey: s.LLMAPIKey, BaseURL: s.LLMBaseURL}` (`backend/nlp/llm_factory.go:29`) and `OpenAIClient.Complete` POSTs to `base + "/v1/chat/completions"` with `Authorization: Bearer <key>` (`backend/nlp/parser.go:31,43`), so the stored key would leave the deployment and the 200/502 would confirm delivery. An all-or-nothing body (supply the endpoint AND the key together) does not close it either: on the `azure_openai`, `bedrock` and `vertex` branches the credential is AMBIENT and cannot be submitted — `AzureOpenAIClient.Complete` mints a token with `azidentity.NewDefaultAzureCredential` and sends it as `Authorization: Bearer <token>` to `c.Endpoint` (`backend/nlp/llm_azure_openai.go:28-50`) — so any submitted endpoint is necessarily paired with a credential the caller did not supply. Refusing submitted destinations outright is the only shape that holds for all six providers.
          *     What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsUpdate.llmApiKey`), and naming which provider the result is about (spec AC-15). The body is REQUIRED (revision 3): `{}` probes the caller's stored configuration entirely - the pre-PAC-24 behaviour - and an absent body is a 400, as the generated server wrapper already makes it (contract challenge r2, finding 3). In the body, `""` is a value like any other: `llmApiKey: ""` probes with no key and `llmProvider: ""` probes with no provider, which reports `LLM not configured`.
          *     Before PAC-24 the handler never read r.Body at all and always probed the SINGLETON settings row, so this operation reported on the deployment's saved configuration rather than on the caller's (API-002, API-037).
-         *     No response on any status carries the submitted or the stored `llmApiKey` (PAC-24 spec AC-14). Since PAC-21 the 502 body is the fixed `upstream provider error` and no longer echoes the provider's own text (`backend/api/server_errors.go`); the detail goes to the server log only.
+         *     No response on any status carries the submitted or the stored `llmApiKey`. The provider's own error text is still echoed on 502 — that is API-054 / T8 and is NOT resolved here; the narrower guarantee PAC-24 adds is that the key itself never appears (spec AC-14).
          *     **PAC-66: the deployment's cloud identity goes only to hosts the OPERATOR approved.** PAC-24 left one indirect channel open: a caller could write `azureEndpoint` or `gcpLocation` into their OWN settings with `PATCH /api/settings` and then probe, and on the three ambient-credential providers (`azure_openai`, `vertex`, `bedrock`) the server sent the DEPLOYMENT'S cloud credential (an Entra ID token, a Google ADC token, an AWS SigV4 signature) to the host those values built (`backend/nlp/llm_azure_openai.go:28-50`, `llm_vertex.go:29-53`; a Vertex location such as `attacker.example/x` changes the URL's authority). PAC-66 closes it for those three providers:
          *     * The operator names the approved inference hosts per provider in
          *       deployment configuration (`PACEDAY_LLM_APPROVED_HOSTS_AZURE_OPENAI`,
@@ -1221,55 +1287,7 @@ export interface paths {
          *     * The check is made on every send, not only on write, so a value stored
          *       before PAC-66 is refused here too (spec AC-9).
          *
-         *     For the three ambient providers an approved host is still approved whatever path, project, deployment or model the stored values put in the URL; that sibling problem is recorded in `contracts/features/PAC-66.md` §7 and is not solved by PAC-66 or PAC-66-B.
-         *     **PAC-66-B: a user-set base URL goes only to a destination approved for the provider in use.** On the user-key and keyless providers (`openai`, `anthropic`, `ollama`) the destination is built from the caller's stored `llmBaseUrl` / `ollamaBaseUrl`. Before PAC-66-B any scheme, host, port, path or query was used verbatim, so a caller could make the server POST to any address it can reach and read the outcome as an oracle, and the server followed redirects, re-sending an Anthropic `x-api-key` to any host (spec §B1, §B2.4). PAC-66-B closes it (spec PAC-66 Part B; rationale in `contracts/features/NEW-pac66b-llm-base-url.md`):
-         *     * **Approved destinations, per provider, never transferred** (spec
-         *       D-B1, D-B2, D-B3, D-B5). `openai`: `https://api.openai.com`, built in,
-         *       plus the hosts the operator lists in
-         *       `PACEDAY_LLM_APPROVED_HOSTS_OPENAI`. `anthropic`:
-         *       `https://api.anthropic.com`, built in, plus
-         *       `PACEDAY_LLM_APPROVED_HOSTS_ANTHROPIC`. Both only over `https` on the
-         *       default port. `ollama`: only the origins (scheme, host and port) the
-         *       operator lists in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA`, where `http`
-         *       and a non-default port are allowed because Ollama carries no key;
-         *       nothing listed means Ollama is not enabled on this deployment (fail
-         *       closed). A destination approved for one provider is never a
-         *       destination for another, so a user's key never goes to an Ollama
-         *       origin (spec AC-B11). No request property and no stored setting can
-         *       add to any of these sets.
-         *
-         *     * **Effective destination** (spec §B4). `openai` / `anthropic`: the
-         *       stored `llmBaseUrl`, or the vendor's public host when it is `""`. A
-         *       non-empty value with no usable host (e.g. `http:/`) is refused, never
-         *       replaced by the public host. `ollama`: `ollamaBaseUrl`; when that is
-         *       `""`, `llmBaseUrl`; when both are `""`, `http://localhost:11434`. The
-         *       fallback order is unchanged (spec D-B9); an account's starting state
-         *       stores `ollamaBaseUrl` as `http://localhost:11434`, so the shared
-         *       `llmBaseUrl` is not Ollama's destination until `ollamaBaseUrl` is
-         *       cleared.
-         *
-         *     * **A base URL names a destination, not an operation** (spec D-B8). It
-         *       is usable only when it is exactly `<scheme>://<host>[:<port>]` with
-         *       at most one trailing `/`. Any other path, a `?` or `#` (even empty),
-         *       userinfo, or surrounding whitespace makes it not approved. The
-         *       request is sent to exactly the provider's chat operation on that
-         *       origin (`/v1/chat/completions`, `/v1/messages`, `/api/chat`) with no
-         *       query.
-         *
-         *     * **The check is made on every send, against the provider the probe
-         *       USES** (the body's `llmProvider` when present, otherwise the stored
-         *       one), before anything else about the request. A refusal is the 422
-         *       below and sends nothing, whether or not a key is on file or
-         *       submitted: an `openai` or `anthropic` probe with a refused destination
-         *       and no key is the 422, not the 500 `LLM not configured` (spec
-         *       "Refusal does not depend on the key"). A value stored before PAC-66-B
-         *       is refused here too and is never rewritten (spec AC-B14, D-B4).
-         *
-         *     * **A redirect is never followed** on these three providers, whatever
-         *       the status, target, method or query, including a redirect to another
-         *       approved destination. The request that drew it counts as failed (the
-         *       502 below), and the user's key appears only in that first request
-         *       (spec AC-B7, D-B6).
+         *     The user-key and keyless providers (`openai`, `anthropic`, `ollama`) are unchanged by PAC-66: `llmBaseUrl` and `ollamaBaseUrl` still address any host, carrying the caller's own key or none. That request-forgery channel is PAC-66-B (spec §0, D-4). An approved host is approved whatever path, project, deployment or model the stored values put in the URL; that sibling problem is recorded in `contracts/features/PAC-66.md` §7, not solved here.
          *
          */
         post: operations["testLLMConnection"];
@@ -1288,7 +1306,7 @@ export interface paths {
         };
         /**
          * Twelve weeks of per-member focus/meeting/free minutes.
-         * @description Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy).
+         * @description Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy). PAC-34 (API-022): each member also carries is_paceday_user (same derivation as the roster's) and a member-level data_available that is true iff at least one of its 12 buckets has data_available=true. A client must render a bucket with data_available=false, and a member with data_available=false, as "no data", never as zero minutes. Neither field widens visibility: is_paceday_user is already on the roster for the same caller and members, and data_available is derived only from the buckets this response already returns.
          *
          */
         get: operations["getManagerAnalytics"];
@@ -1560,7 +1578,7 @@ export interface paths {
         put?: never;
         /**
          * Create the meeting for a chosen parsed slot
-         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned.
+         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the created event is returned as the CalendarEvent DTO (toCalendarEventDTO, the same shape as GET /api/calendar/events), never Google's own keys. PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
          *
          */
         post: operations["confirmNaturalLanguage"];
@@ -1697,7 +1715,7 @@ export interface paths {
         put?: never;
         /**
          * Run a personal-calendar sync now
-         * @description Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body.
+         * @description Runs engine.PersonalBlocker.Sync, stamps `last_synced_at = NOW()`, then re-reads and returns the calendar. Takes no request body. The sync writes busy blocks into the user's work calendar, so it is calendar-dependent: a user with no stored Google credential gets the 401 CalendarNotConnected (PAC-21; before, a 500).
          */
         post: operations["syncPersonalCalendar"];
         delete?: never;
@@ -1737,7 +1755,7 @@ export interface paths {
         put?: never;
         /**
          * Preview meeting-compression proposals
-         * @description Body decode errors are swallowed (`_ = json.NewDecoder(...).Decode(&body)`), so malformed JSON behaves like an empty body and yields 200 for today. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and iterates Mon..Fri, appending one CompressionResult per day and SILENTLY SKIPPING days whose engine call errors - so week mode never returns 500, and returns `[]` if all five days error. If `week` is empty, `date` (or today) produces a single-element array and an engine error becomes a 500.
+         * @description Read-only: computes proposals, moves nothing. The body is optional: an absent or empty body (zero bytes or only whitespace) and the JSON literal `null` are treated as `{}`, i.e. today. Any other body that does not decode into CompressionRequest is a 400 `invalid JSON` (a syntax error, a non-object top-level value, or a member of the wrong type). Before PAC-36 the decode error was discarded and such a body answered 200 for today (API-035). Only the first JSON value is read. If `week` is set it wins over `date`: the handler snaps the parsed date to Monday (startOfWeek) and computes Mon..Fri in order. A 200 in week mode carries exactly five CompressionResult entries, one per day, Monday first; a non-working day is an entry with no proposals, not a missing entry. If ANY day's computation fails, the whole request fails exactly as single-day mode fails (401 CalendarNotConnected or 500 `internal error`) and no per-day results are returned. Before PAC-36 week mode skipped every failing day and answered 200 with the survivors, `[]` if all five failed, which a client cannot tell apart from "nothing to compress" (API-034). If `week` is empty, `date` (or today) produces a single-element array and an engine error is the 500. A caller with no stored Google credential gets the 401 `calendar not connected` in BOTH modes, before any day is computed (PAC-21, API-054).
          *
          */
         post: operations["previewCompression"];
@@ -1779,7 +1797,7 @@ export interface paths {
         put?: never;
         /**
          * Create a meeting at an explicit time
-         * @description `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the raw Google Calendar API `calendar/v3.Event` struct as returned by the calendar client - it is NOT normalised into the app's own event shape.
+         * @description `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the created event flattened by toCalendarEventDTO: the CalendarEvent DTO, the same shape as one element of GET /api/calendar/events, never Google's own keys (`summary`, `start.dateTime`, `hangoutLink`). PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR.
          *
          */
         post: operations["createScheduledMeeting"];
@@ -1800,7 +1818,7 @@ export interface paths {
         put?: never;
         /**
          * Suggest meeting slots
-         * @description `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)).
+         * @description `range_start` and `range_end` are both mandatory and must parse as RFC3339; either one failing yields a single 400. `duration_minutes`, `attendees` and `title` are optional as far as the handler is concerned (no validation) - `duration_minutes: 0` produces zero-length candidate slots rather than an error. The engine walks candidate starts in 30-minute steps (engine/smart_schedule.go: `t = t.Add(30 * time.Minute)`) and returns at most 3 slots, each at least 1h apart (pickTopUnique(candidates, 3, time.Hour)). There is no 15-minute increment rule on this route: every step in engine/smart_schedule.go (lines 113, 121 and 135) is 30 minutes, so every suggested start is the start of a free interval (`range_start` or the end of a busy interval) plus a multiple of 30 minutes. The 15-minute stepping in engine/booking.go, engine/habits.go and engine/team_availability.go backs other domains. U-07 resolved by PAC-21 from the engine, to be pinned by TestSmartScheduler_Suggest_StepsThirtyMinutes (AC-6, written in the backend PR before the code); assumed by the factory, pending owner confirmation that no 15-minute rule was intended.
          *
          */
         post: operations["suggestMeetingSlots"];
@@ -1862,7 +1880,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation.
-         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE affecting zero rows is NOT an error: a caller with no invite for that link still gets 200.
+         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5); "no link has that id" in the 404 means no row at all, not an inactive one.
          */
         post: operations["acceptSchedulingLinkHostInvite"];
         delete?: never;
@@ -1882,7 +1900,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation.
-         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id.
+         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["declineSchedulingLinkHostInvite"];
         delete?: never;
@@ -1953,7 +1971,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation, addressed by link id.
-         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form.
+         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["acceptSchedulingLinkInviteByLink"];
         delete?: never;
@@ -1993,7 +2011,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation, addressed by link id.
-         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key).
+         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A deactivated link (`active=false`, see `deleteSchedulingLink`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5).
          */
         post: operations["declineSchedulingLinkInviteByLink"];
         delete?: never;
@@ -2033,7 +2051,7 @@ export interface paths {
         put?: never;
         /**
          * Remove the caller from a link's host list.
-         * @description Deletes the caller's `scheduling_link_hosts` row. Deleting zero rows is not an error, so a non-host caller also gets 204. The owner is rejected with 400.
+         * @description Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id -> 404; caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
          */
         post: operations["leaveSchedulingLink"];
         delete?: never;
@@ -2083,7 +2101,6 @@ export interface paths {
          *
          *     The response is a fresh read of the caller's row, so it reflects normalisation (e.g. `workingHours` defaulting) rather than the submitted body, and it does not contain `llmApiKey`.
          *     **PAC-66 destination rules.** When a write CHANGES `azureEndpoint`, `gcpLocation` or `awsRegion` to a non-empty value, that value is checked whichever provider is selected (spec AC-5, AC-7): `azureEndpoint` must be an `https` URL whose host is approved for `azure_openai`; `gcpLocation` must build a Vertex host approved for `vertex`; `awsRegion` must be a valid AWS region name (one host label; the Bedrock host itself is checked when a request is sent). A refused value is a 400 naming the property, and nothing in the body is stored. Three things are deliberately NOT refused here: `""` for any of the three (a user can always clear a bad value, spec AC-15, D-3); a value equal to the one already stored (the changed-only rule above, PAC-24 AC-17, spec AC-9); and a write that changes only `llmProvider`, even onto a stored unapproved endpoint (spec AC-17). Each of those is refused when a request would be sent instead (see `testLLMConnection`). The server never rewrites or clears a stored value (spec D-3).
-         *     **PAC-66-B destination rules.** When a write CHANGES `llmBaseUrl` or `ollamaBaseUrl` to a non-empty value, that value is checked whichever provider is selected (spec AC-B3, AC-B4, AC-B18, AC-B19): it must be exactly `<scheme>://<host>[:<port>]` with at most one trailing `/`. `ollamaBaseUrl` must then be an origin approved for `ollama`. `llmBaseUrl` is read by all three of `openai`, `anthropic` and `ollama`, so it must be approved for AT LEAST ONE of them (the vendors' public hosts count; spec D-B5); being approved for one provider does not make it a destination for another, which is checked when a request would be sent. A refused value is a 400 naming the property, and nothing in the body is stored. As for PAC-66, `""` is always accepted (a user can always clear a bad value; clearing means the provider's fallback, spec §B4), an unchanged value is not re-checked, and a write that changes only `llmProvider` is not refused (spec AC-B14, D-B4).
          *     Before PAC-24 there was no PATCH; the only write was a full-replace PUT that persisted every omitted field as its Go zero value (API-004).
          *
          */
@@ -2198,7 +2215,7 @@ export interface paths {
         };
         /**
          * Preview a pending team invite by token.
-         * @description Despite the "(public)" comment on the handler, this route is registered inside the requireAuth group and therefore requires a valid JWT. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. The response deliberately omits team_id, token and expires_at.
+         * @description Registered inside the requireAuth group and therefore requires a valid JWT. The handler comment says "(public)", which is wrong (API-089); PAC-34 corrects the comment, not the routing. Calls ExpireOldInvites first, so an invite past expires_at is reported as 410 "invite is expired" rather than 200. PAC-34 (API-021): the 200 also carries team_id, expires_at and inviter_email, so the invite page can show who invited the caller and when the link expires. The audience is unchanged: any authenticated caller holding the token, as before (the invitee email is checked on accept, not on preview). The token is still not echoed; the caller already has it in the path.
          *
          */
         get: operations["getTeamInvite"];
@@ -2605,9 +2622,9 @@ export interface components {
              *      */
             email: string;
         };
-        /** @description Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The two exceptions in this domain are the requireAuth 401 and the Zoom OAuth callback, both of which use http.Error and therefore send text/plain. */
+        /** @description Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21). */
         BookingError: {
-            /** @description Human-readable message. Several 500s concatenate the underlying Go error text. */
+            /** @description Human-readable, server-chosen message. Never the text of a Go, driver or provider error (PAC-21): those go to the server log and Sentry only. */
             error: string;
         };
         /**
@@ -2636,7 +2653,22 @@ export interface components {
         CadenceGapList: {
             gaps: components["schemas"]["CadenceGap"][];
         };
-        /** @description api.calendarEventDTO — the flattened event shape returned by GET /api/calendar/events. */
+        /** @description Body of `disconnectCalendar`'s 409 (PAC-35, spec D-8): the caller's
+         *     calendar is not Google, disconnect for that kind of calendar is not
+         *     implemented, and nothing was deleted. `error` keeps the shared
+         *     `{error}` member so a client that only shows `data.error` still shows a
+         *     true sentence.
+         *      */
+        CalendarDisconnectUnsupported: {
+            /** @constant */
+            error: "disconnecting this kind of calendar is not available yet";
+            /**
+             * @description The caller's calendar provider, as `getAuthStatus` reports it.
+             * @enum {string}
+             */
+            provider: "outlook" | "webcal";
+        };
+        /** @description api.calendarEventDTO, built by toCalendarEventDTO — the flattened event shape returned by GET /api/calendar/events (one per array element) and, since PAC-29, as the whole 200 body of PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm. One converter, so the four operations cannot disagree about the same event. */
         CalendarEvent: {
             /** @description Google Calendar event id. Always present as a key; may be "". */
             id: string;
@@ -2655,7 +2687,7 @@ export interface components {
             attendees?: string[];
             /** @description Parallel to `attendees`, same ordering and same filtering. Omitted when empty. */
             attendee_details?: components["schemas"]["CalendarEventAttendee"][];
-            /** @description Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from responses from this endpoint. */
+            /** @description Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from every response that carries this schema (the events list and, since PAC-29, PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm). */
             is_personal_block?: boolean;
             /** @description Omitted when empty. */
             description?: string;
@@ -2685,6 +2717,11 @@ export interface components {
             url: string;
             /** @description "Google Meet" for hangout links, otherwise the provider string uppercased (e.g. "ZOOM", "CUSTOM"). Omitted when empty. */
             label?: string;
+        };
+        /** @description The JSON error envelope for "this user has no calendar connected". The message is a single fixed value so a client can branch on it. */
+        CalendarNotConnectedError: {
+            /** @enum {string} */
+            error: "calendar not connected";
         };
         /** @description calendar.Room — only two fields exist server-side. */
         CalendarRoom: {
@@ -2720,7 +2757,7 @@ export interface components {
              *      */
             failed: string[];
         };
-        /** @description Both fields optional; `week` takes precedence over `date` when non-empty.
+        /** @description Both fields optional; `week` takes precedence over `date` when non-empty. The whole body is optional too: absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; the decode error was discarded before).
          *      */
         CompressionRequest: {
             /**
@@ -2857,14 +2894,34 @@ export interface components {
             /** Format: email */
             email: string;
             name: string;
-            /** @description May be the empty string (Microsoft and SSO logins always upsert "").
-             *     Not omitempty, so the key is always present.
+            /** @description The user's picture URL. In the current-user read (`getCurrentUser`)
+             *     this is the only name for it; clients read it as `avatarUrl`, not
+             *     `avatar` (PAC-35, API-065: the web app read it as `avatar`, or not at
+             *     all). Scheduling-link and booking hosts carry the same stored value
+             *     as `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by
+             *     PAC-35. May be the empty string. Every sign-in overwrites it: Google
+             *     writes the Google picture, Microsoft and SSO always write "" (so a
+             *     Microsoft or SSO sign-in clears a picture an earlier Google sign-in
+             *     stored). Not omitempty, so the key is always present.
              *      */
             avatarUrl: string;
-            /** @description Login provider recorded at upsert time.
-             *     x-uncertain applies — see property-level note.
-             *      */
-            provider: string;
+            /**
+             * @description The provider of the user's FIRST sign-in: set when the row is
+             *     inserted and never updated (UpsertUser's ON CONFLICT does not touch
+             *     `provider`), so a user who first signed in with Google and later
+             *     with Microsoft still reads "google".
+             *     Closed by PAC-35 (U-13): `users.provider` has no CHECK constraint
+             *     (migration 006, `TEXT NOT NULL DEFAULT 'google'`), but its only
+             *     writer is storage.UpsertUser, and every call site in the history
+             *     of the repository passes one of these three literals
+             *     (handlers_auth.go "google", handlers_microsoft_auth.go "microsoft",
+             *     handlers_sso.go "sso"; tests and the e2e seed write "google").
+             *     A CHECK constraint is not added (spec PAC-35 section 7: no
+             *     migration).
+             *
+             * @enum {string}
+             */
+            provider: "google" | "microsoft" | "sso";
             /** @description Present only when the user has an org_id AND the org row loads
              *     (json tag "org,omitempty"). org_id itself is `json:"-"` and never
              *     serialized.
@@ -2934,6 +2991,8 @@ export interface components {
         };
         /** @description The shared JSON error envelope, written by writeError()
          *     (backend/api/handlers_settings.go:206). Content-Type: application/json.
+         *     `error` is a server-chosen message, never the text of a Go, driver or
+         *     provider error; every 5xx in this document uses this envelope (PAC-21).
          *      */
         ErrorResponse: {
             error: string;
@@ -2947,59 +3006,64 @@ export interface components {
             /** @description Omitted when empty. "Custom link" for custom, "Google Meet" for google_meet, the uppercased provider name (e.g. "ZOOM", "TEAMS") for factory providers, and the bare stored provider string on the echo branch. */
             label?: string;
         };
-        /** @description Body of PATCH /api/events/{id}. Every field is optional; only non-null fields are applied. Unknown keys are silently ignored by encoding/json. */
+        /** @description Body of PATCH /api/events/{id}. Every field is optional; null or absent leaves the corresponding part of the event unchanged. Since PAC-29 the schema declares every key the web client sends (`send_updates`, `room_resource_email`, `attendee_details`, API-018). The server's decoder still ignores undeclared keys; the contract forbids them so a generated client cannot send a key that would be a silent no-op. */
         EventPatchRequest: {
             /** @description Maps to Google `summary`. Null or absent leaves it unchanged. */
             title?: string | null;
             description?: string | null;
             location?: string | null;
-            /**
-             * Format: date-time
-             * @description Decoded as Go time.Time (RFC3339) and re-emitted as UTC RFC3339 in `start.dateTime`. Setting this on an all-day event converts it to a timed event.
-             */
+            /** @description Either an RFC3339 date-time, written as Google `start.dateTime` in UTC (the event becomes or stays timed), or a bare `YYYY-MM-DD` date, written as Google `start.date` (the event becomes or stays all-day). The same dual format as CalendarEvent.start, so a client can write back what it read. PAC-29, API-043: before PAC-29 only a date-time was accepted and an all-day event was always converted to a timed one. After applying the patch, start and end must be of the same kind or the request is a 400. */
             start?: string | null;
-            /**
-             * Format: date-time
-             * @description Same handling as `start`.
-             */
+            /** @description Same handling as `start`. For a bare date this is Google's exclusive end date, as in CalendarEvent.end. */
             end?: string | null;
-            /** @description FULL REPLACEMENT of the attendee list with email-only entries. Sending `[]` clears all attendees, including room resources. */
+            /** @description Replaces the event's NON-ROOM attendees with this list (emails compared case-insensitively, duplicates collapsed). An email already on the event keeps its existing Google attendee entry (display name, RSVP, organizer, optional); a new email is added as an email-only entry. Room resource attendees already on the event (`resource: true` or `*@resource.calendar.google.com`) are always kept, so writing back the list GET /api/calendar/events returned (which omits rooms) does not drop the room. `[]` removes every non-room attendee. The two room rules differ on purpose: the DTO hides only the `*@resource.calendar.google.com` suffix, so a `resource: true` attendee without that suffix is shown as an ordinary guest, yet PATCH still keeps it if the client leaves it out. The difference can only keep an attendee, never drop one. PAC-29, API-044: before PAC-29 this replaced the whole list with email-only entries, dropping names, RSVPs and the room. */
             attendees?: string[] | null;
+            /**
+             * @description Passed to Google's update call as `sendUpdates`: `all` emails the guests about the change, `none` does not. Null or absent means `none`, which is what every PATCH did before PAC-29. Any other value is a 400 and nothing is written. PAC-29, API-018.
+             * @enum {string|null}
+             */
+            send_updates?: "all" | "none" | null;
+            /** @description A Google room resource calendar address (as returned by GET /api/rooms). When non-empty and not already an attendee, the room is added as a resource attendee. Rooms already on the event are kept: this endpoint never removes a room (PAC-29 decision D-6). Null, absent or `""` leaves the rooms unchanged. A non-empty value that is not a `*@resource.calendar.google.com` address is a 400. PAC-29, API-018. */
+            room_resource_email?: string | null;
+            /** @description Accepted and ignored by the server. Declared because the web client sends it alongside `attendees` on every edit (API-018). Who attends comes from `attendees`; existing attendees keep their names and RSVPs from Google (see `attendees`); a client never sets another person's RSVP. PAC-29 decision D-7. */
+            attendee_details?: {
+                [key: string]: unknown;
+            }[] | null;
         };
-        /** @description storage.FocusBlock (backend/storage/models.go). No json tags either, so the wire field names are the Go field names.
+        /** @description storage.FocusBlock (backend/storage/models.go), with explicit snake_case json tags (PAC-26, API-014). The keys match the `focus_blocks` columns and the web app's FocusBlock type. Before PAC-26 the struct had no tags and the keys were `ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`.
          *      */
         FocusBlockRecord: {
             /** Format: int64 */
-            ID: number;
-            GoogleEventID: string;
+            id: number;
+            google_event_id: string;
             /** Format: date-time */
-            StartTime: string;
+            start_time: string;
             /** Format: date-time */
-            EndTime: string;
+            end_time: string;
             /** Format: date */
-            Date: string;
+            date: string;
             /** Format: date-time */
-            CreatedAt: string;
+            created_at: string;
         };
         /** @description Literal `map[string]int{"deleted": n}`. */
         FocusClearResult: {
             deleted: number;
         };
-        /** @description engine.FocusBlock. This struct has NO json tags, so the encoder emits exported Go field names verbatim. It is a DIFFERENT shape from FocusBlockRecord (storage.FocusBlock) returned by GET /api/focus/blocks.
+        /** @description engine.FocusBlock, with explicit snake_case json tags (PAC-26, API-014). The keys it shares with FocusBlockRecord (storage.FocusBlock, returned by GET /api/focus/blocks) are spelled the same: the Go fields `Start`/`End` are tagged `start_time`/`end_time` so that one block shape can be read from both operations. It has no `id` and no `created_at`: the engine reports what it created before any row id is known to the response. Before PAC-26 the struct had no tags and the keys were `GoogleEventID`, `Start`, `End`, `Date`.
          *      */
         FocusRunBlock: {
-            GoogleEventID: string;
+            google_event_id: string;
             /** Format: date-time */
-            Start: string;
+            start_time: string;
             /** Format: date-time */
-            End: string;
+            end_time: string;
             /**
              * Format: date
              * @description `YYYY-MM-DD`.
              */
-            Date: string;
+            date: string;
         };
-        /** @description Optional. A malformed body is silently treated as `{}`.
+        /** @description Optional. Absent, empty or `null` is treated as `{}`. Any other body that does not decode into this object is a 400 `invalid JSON` (PAC-36, API-035; it was silently treated as `{}` before).
          *      */
         FocusRunRequest: {
             /**
@@ -3012,7 +3076,8 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** @description engine.FocusRunResult (backend/engine/focus_time.go). camelCase. */
+        /** @description engine.FocusRunResult (backend/engine/focus_time.go). camelCase wrapper; the blocks inside `createdBlocks` are snake_case (FocusRunBlock, PAC-26). The wrapper casing is unchanged by PAC-26: the web app's snake_case FocusRunResult type is aligned to it by PAC-32 (API-015), which needs no contract change.
+         *      */
         FocusRunResult: {
             /**
              * Format: date-time
@@ -3021,7 +3086,7 @@ export interface components {
             weekStart: string;
             /** @description `[]` when the engine created nothing. */
             createdBlocks: components["schemas"]["FocusRunBlock"][];
-            /** @description x-uncertain at field level - the format of each entry is not pinned by a struct tag; it is whatever the engine appends.
+            /** @description `YYYY-MM-DD` of each weekday the engine skipped (daily target already met, or the day is disabled in the working window). Both append sites in engine/focus_time.go append the same `day.Format("2006-01-02")` string (U-23, resolved by reading the code for PAC-26).
              *      */
             skippedDays: string[];
             totalMinutes: number;
@@ -3065,7 +3130,7 @@ export interface components {
              */
             end_time: string;
         };
-        /** @description The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy, and with different key casing). All three are always present. */
+        /** @description The same free/busy data is returned three ways for compatibility: `participants` (canonical), `busy` (map form) and `results` (legacy). All three are always present. Since PAC-26 (API-028) every busy window in all three uses the same `{"start","end"}` keys; before it, `results[].busy[]` alone was `{"Start","End"}`. */
         FreeBusyQueryResponse: {
             /**
              * Format: date-time
@@ -3080,7 +3145,7 @@ export interface components {
             busy: {
                 [key: string]: components["schemas"]["FreeBusyWindow"][];
             };
-            /** @description Legacy view. Uses `coverage` instead of `status`, and its busy windows are engine/calendar.TimeSlot values with CAPITALIZED `Start`/`End` keys. */
+            /** @description Legacy view. Uses `coverage` instead of `status`. Its busy windows are calendar.TimeSlot values, `{"start","end"}` since PAC-26 (API-028). */
             results: components["schemas"]["FreeBusyLegacyResult"][];
         };
         /** @description api.freeBusyWindowDTO — the lowercase-keyed busy window. */
@@ -3089,64 +3154,6 @@ export interface components {
             start: string;
             /** Format: date-time */
             end: string;
-        };
-        /** @description The raw `google.golang.org/api/calendar/v3.Event` returned by the calendar client and re-encoded as-is. Only the members this repo sets or reads are listed; the real payload carries the full Google Calendar event resource and omits empty fields (the generated struct uses `omitempty` almost everywhere).
-         *      */
-        GoogleCalendarEvent: {
-            id?: string;
-            summary?: string;
-            description?: string;
-            location?: string;
-            status?: string;
-            htmlLink?: string;
-            hangoutLink?: string;
-            start?: components["schemas"]["GoogleEventDateTime"];
-            end?: components["schemas"]["GoogleEventDateTime"];
-            attendees?: components["schemas"]["GoogleEventAttendee"][];
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description The raw google.golang.org/api/calendar/v3.Event returned unmodified by PATCH /api/events/{id}. Its keys are Google's own camelCase API names (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`, `attendees[].responseStatus`, …), not the CalendarEvent shape. Only the most load-bearing fields are listed; the object carries the full Google event payload. */
-        GoogleCalendarEventRaw: {
-            id?: string;
-            summary?: string;
-            description?: string;
-            location?: string;
-            htmlLink?: string;
-            hangoutLink?: string;
-            /** @description Google EventDateTime — has `dateTime`, `date` and/or `timeZone`. */
-            start?: {
-                [key: string]: unknown;
-            };
-            end?: {
-                [key: string]: unknown;
-            };
-            attendees?: {
-                [key: string]: unknown;
-            }[];
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description calendar/v3.EventAttendee. This repo only ever sets `email`. */
-        GoogleEventAttendee: {
-            /** Format: email */
-            email?: string;
-            displayName?: string;
-            organizer?: boolean;
-            responseStatus?: string;
-            optional?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description calendar/v3.EventDateTime. This repo only ever sets `dateTime`. */
-        GoogleEventDateTime: {
-            /** Format: date-time */
-            dateTime?: string;
-            /** Format: date */
-            date?: string;
-            timeZone?: string;
-        } & {
-            [key: string]: unknown;
         };
         /** @description storage.Habit. Every field is emitted — no `omitempty` anywhere on this struct. */
         Habit: {
@@ -3336,23 +3343,23 @@ export interface components {
              */
             email: string;
         };
-        /** @description PAC-66 and PAC-66-B. Body of the 422 from POST /api/llm/test: the probe would have sent the deployment's cloud credential, the caller's own key, or a keyless Ollama request to a destination not approved for that provider, so no inference request was sent. A superset of `SchedulingErrorResponse` (`error` is the same member, so a client that reads only `error`, as the web settings page does, renders it unchanged). Never carries a token, a key or any part of the deployment credential (spec AC-11).
+        /** @description PAC-66. Body of the 422 from POST /api/llm/test: the probe would have sent the deployment's cloud credential to a destination the operator has not approved, so no inference request was sent. A superset of `SchedulingErrorResponse` (`error` is the same member, so a client that reads only `error`, as the web settings page does, renders it unchanged). Never carries a token, a key or any part of the deployment credential (spec AC-11).
          *      */
         LLMDestinationRefusal: {
             /** @description A human-readable sentence saying what was refused and why. */
             error: string;
             /**
-             * @description `provider_not_enabled`: the operator approved no host for this provider (spec AC-4, AC-18 b). It wins over the other two: when nothing is approved for the provider, this is the reason whatever is stored. PAC-66-B: `ollama` with no origin in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (spec AC-B8). Never given for `openai` or `anthropic`, whose public hosts are always approved. `destination_not_approved`: the effective host, over `https` on the default port, is not approved for this provider. This includes an `http` endpoint, an explicit non-443 port, a host approved only for a DIFFERENT provider, and an empty Vertex location or Bedrock region whose built-in default region's host is not approved (spec AC-1, AC-2, AC-7, AC-16, AC-18 a/c, AC-19). PAC-66-B: the effective destination of `openai`, `anthropic` or `ollama` is not approved for that provider. This includes a base URL carrying a path, a query, a fragment, userinfo or whitespace; an `http` scheme or a non-default port on `openai` / `anthropic`; a scheme, host or port differing from an approved Ollama origin; a destination approved only for a different provider; and Ollama's built-in default `http://localhost:11434` when it is not approved (spec AC-B1, AC-B2, AC-B6, AC-B9, AC-B10, AC-B11, AC-B18, AC-B19). `destination_not_set`: the destination cannot be built because the stored value is empty and the provider has no default; today only an empty `azureEndpoint` (spec AC-20).
+             * @description `provider_not_enabled`: the operator approved no host for this provider (spec AC-4, AC-18 b). It wins over the other two: when nothing is approved for the provider, this is the reason whatever is stored. `destination_not_approved`: the effective host, over `https` on the default port, is not approved for this provider. This includes an `http` endpoint, an explicit non-443 port, a host approved only for a DIFFERENT provider, and an empty Vertex location or Bedrock region whose built-in default region's host is not approved (spec AC-1, AC-2, AC-7, AC-16, AC-18 a/c, AC-19). `destination_not_set`: the destination cannot be built because the stored value is empty and the provider has no default; today only an empty `azureEndpoint` (spec AC-20).
              *
              * @enum {string}
              */
             reason: "provider_not_enabled" | "destination_not_approved" | "destination_not_set";
             /**
-             * @description The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `awsProfile` only when the Bedrock host came from that profile's endpoint configuration rather than from the region. PAC-66-B: `llmBaseUrl` on `openai` and `anthropic`, and on `ollama` when the effective destination came from it (`ollamaBaseUrl` empty); `ollamaBaseUrl` on `ollama` otherwise, including when both are empty and the built-in `http://localhost:11434` was refused, since that is the setting the user would save an approved origin in.
+             * @description The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `awsProfile` only when the Bedrock host came from that profile's endpoint configuration rather than from the region.
              *
              * @enum {string}
              */
-            property?: "azureEndpoint" | "gcpLocation" | "awsRegion" | "awsProfile" | "llmBaseUrl" | "ollamaBaseUrl";
+            property?: "azureEndpoint" | "gcpLocation" | "awsRegion" | "awsProfile";
         };
         /** @description Optional body for POST /api/llm/test. Added by PAC-24 to close API-037.
          *     **This schema is a closed list of three properties and that is the whole point of it.** Not one of them can contribute to the URL the server requests, so no submitted value can direct a stored or ambient credential anywhere. The endpoint properties a probe might plausibly want to override - `llmBaseUrl`, `ollamaBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `awsProfile`, `bedrockModel`, `gcpProject`, `gcpLocation`, `vertexModel` - are DELIBERATELY ABSENT and are a 400 via `additionalProperties: false`. The operation description carries the full argument, including why an all-or-nothing body (endpoint plus credential together) does not close the channel on the three ambient-credential providers.
@@ -3362,7 +3369,7 @@ export interface components {
          *      */
         LLMTestRequest: {
             /**
-             * @description Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on `ollama` it is the stored `ollamaBaseUrl`, then `llmBaseUrl`, then `http://localhost:11434`; on the other three it is built entirely from the caller's stored endpoint properties. Spec AC-15. PAC-66: on `azure_openai`, `vertex` and `bedrock` the operator's approved-host check follows THIS value when present, not the stored provider, so naming an ambient provider here for one probe is checked exactly as if it were saved (spec AC-18; a 422 when refused). PAC-66-B: the same holds on `openai`, `anthropic` and `ollama`, so naming `openai` for one probe while the stored `llmBaseUrl` is approved only for Ollama is a 422 and sends no key (spec AC-B11). Nothing submitted here is stored.
+             * @description Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on the other four it is built entirely from the caller's stored endpoint properties. Spec AC-15. PAC-66: on `azure_openai`, `vertex` and `bedrock` the operator's approved-host check follows THIS value when present, not the stored provider, so naming an ambient provider here for one probe is checked exactly as if it were saved (spec AC-18; a 422 when refused). Nothing submitted here is stored.
              *
              * @enum {string}
              */
@@ -3370,7 +3377,7 @@ export interface components {
             /** @description Consulted only by the `openai` and `anthropic` branches (`backend/nlp/llm_factory.go:25,34`), where it is a field of the JSON request body. It never appears in a URL. `bedrockModel`, `azureDeployment` and `vertexModel` - which DO appear in URLs - are not accepted here.
              *      */
             llmModel?: string;
-            /** @description An unsaved key to probe. Used only as the `Authorization` header value (`openai`) or the `x-api-key` header value (`anthropic`) (`backend/nlp/parser.go:45,80`), sent only to a destination approved for that provider (PAC-66-B). Ignored by the four branches that take no key. Never persisted and never echoed (spec AC-14).
+            /** @description An unsaved key to probe. Used only as the `Authorization` header value sent to the caller's stored endpoint (`backend/nlp/parser.go:43`). Ignored by the four branches that take no key. Never persisted and never echoed (spec AC-14).
              *      */
             llmApiKey?: string;
         };
@@ -3400,6 +3407,12 @@ export interface components {
             /** Format: email */
             email: string;
             display_name: string;
+            /** @description True iff the member's member_user_id resolved to a Paceday user row; the same value ManagerRosterMember.is_paceday_user carries for this member (PAC-34).
+             *      */
+            is_paceday_user: boolean;
+            /** @description True iff at least one entry of `weeks` has data_available=true (PAC-34). Derived from the buckets of this response, never read or cached separately, so it cannot disagree with them. False means no bucket is measured (degraded FreeBusy, no analytics_weeks rows, consent withheld, or the PAC-60 visibility gate): the member's minutes must be shown as "no data", not as zeroes. True does NOT mean every bucket is measured; each bucket's own data_available still decides how that bucket is drawn.
+             *      */
+            data_available: boolean;
             /** @description Exactly 12 buckets, newest first. */
             weeks: components["schemas"]["ManagerAnalyticsWeek"][];
         };
@@ -3468,40 +3481,40 @@ export interface components {
              *      */
             focus_trend_pct: number;
         };
-        /** @description storage.ManagerTeamMember marshalled with no json tags — Go field names verbatim. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200).
+        /** @description storage.ManagerTeamMember with explicit snake_case json tags (PAC-26, API-030); the keys match the manager_team_members columns. Returned by addManagerTeamMember (201) and patchManagerTeamMember (200), both read back from storage after the write. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`ID`, `ManagerUserID`, `MemberEmail`, ...). Note the key is `member_email` here but `email` on ManagerRosterMember: this is the stored row, the roster is a view.
          *      */
         ManagerTeamMemberGoStruct: {
             /**
              * Format: uuid
-             * @description On the 201 add response this is the zero UUID "00000000-0000-0000-0000-000000000000" because the struct is echoed back without re-reading the row.
+             * @description The stored row id. Since PAC-26 (API-031) never the zero UUID on the 201 add response.
              *
              */
-            ID: string;
+            id: string;
             /** Format: uuid */
-            ManagerUserID: string;
+            manager_user_id: string;
             /** Format: email */
-            MemberEmail: string;
+            member_email: string;
             /**
              * Format: uuid
              * @description Set when the email matches a Paceday user; null for external members.
              */
-            MemberUserID: string | null;
-            DisplayName: string;
-            Source: components["schemas"]["ManagerMemberSource"];
-            Cadence: components["schemas"]["Cadence"];
-            CadenceCustomDays: number | null;
+            member_user_id: string | null;
+            display_name: string;
+            source: components["schemas"]["ManagerMemberSource"];
+            cadence: components["schemas"]["Cadence"];
+            cadence_custom_days: number | null;
             /** Format: date-time */
-            LastOneOnOneAt: string | null;
+            last_one_on_one_at: string | null;
             /**
              * Format: date-time
-             * @description Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+             * @description Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
              */
-            CreatedAt: string;
+            created_at: string;
             /**
              * Format: date-time
-             * @description Zero value "0001-01-01T00:00:00Z" on the 201 add response.
+             * @description Stored value; since PAC-26 (API-031) never "0001-01-01T00:00:00Z".
              */
-            UpdatedAt: string;
+            updated_at: string;
         };
         /** @description api.briefResponse. Note this is NOT the `storage.MeetingBrief` struct (which has
          *     no json tags at all and is never serialised) — id, user_id and calendar_event_id
@@ -3587,7 +3600,7 @@ export interface components {
         };
         NLPConfirmRequest: {
             parse_result: components["schemas"]["NLPParseResult"];
-            /** @description Index into `parse_result.suggested_slots`. Only the upper bound is checked; see the operation's x-uncertain note about negatives.
+            /** @description Index into `parse_result.suggested_slots`. A negative value or one >= the slot count is a 400 `invalid selected_slot_index`.
              *      */
             selected_slot_index: number;
         } & {
@@ -3759,14 +3772,14 @@ export interface components {
             url?: string | null;
             enabled?: boolean | null;
         };
-        /** @description calendar.GenericEvent serialized WITHOUT json tags — capitalized Go field names. All four keys are always present. */
+        /** @description calendar.GenericEvent, with explicit json tags since PAC-26 (API-029). All four keys are always present (no omitempty). Before PAC-26 the struct had no tags and the keys were `ID`, `Title`, `Start`, `End`. */
         PersonalCalendarPreviewEvent: {
-            ID: string;
-            Title: string;
+            id: string;
+            title: string;
             /** Format: date-time */
-            Start: string;
+            start: string;
             /** Format: date-time */
-            End: string;
+            end: string;
         };
         /** @description Several handlers (and requireAuth) use Go's http.Error instead of
          *     writeError. http.Error forces `Content-Type: text/plain; charset=utf-8`
@@ -3849,12 +3862,12 @@ export interface components {
             /** @description Populated only when `date` was omitted; YYYY-MM-DD strings for days within the next 60 that have at least one bookable slot. Otherwise the empty array. */
             available_dates: string[];
         };
-        /** @description calendar.TimeSlot serialized WITHOUT json tags, hence capitalized Go field names. A Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. */
+        /** @description calendar.TimeSlot, with explicit json tags `start` / `end` since PAC-26 (API-028, API-029). Same keys as FreeBusyWindow; kept as its own schema because it is a different Go type with a different failure mode: a Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. */
         RawGoogleBusyWindow: {
             /** Format: date-time */
-            Start: string;
+            start: string;
             /** Format: date-time */
-            End: string;
+            end: string;
         };
         /** @description Response of GET /api/calendar/freebusy: `map[string][]calendar.TimeSlot` keyed by the calendar id Google echoed back (normally the attendee email). */
         RawGoogleFreeBusyMap: {
@@ -3961,7 +3974,7 @@ export interface components {
             /** @description At most 3 entries; `[]` when no candidate survived. */
             slots: components["schemas"]["SuggestedSlot"][];
         };
-        /** @description The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Handlers that use the Go stdlib `http.Error` instead return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
+        /** @description The JSON error shape produced by api.writeError (handlers_settings.go:206). Emitted with `Content-Type: application/json`. Every 5xx in this domain uses it, with a fixed server-chosen message (PAC-21). Handlers that use the Go stdlib `http.Error` for a 4xx return text/plain and do NOT use this shape; each response above says which applies. The 401 from requireAuth is a hybrid: the body text is `{"error":"unauthorized"}` but it is written through http.Error, which overwrites the Content-Type to `text/plain; charset=utf-8`.
          *      */
         SchedulingErrorResponse: {
             error: string;
@@ -4095,7 +4108,7 @@ export interface components {
              */
             responded_at?: string;
         };
-        /** @description Echo of the status that was written. The only body accept/decline ever returns. */
+        /** @description Echo of the status that was written. The only 200 body accept/decline returns. */
         SchedulingLinkInviteResponse: {
             /** @enum {string} */
             status: "accepted" | "declined";
@@ -4173,8 +4186,7 @@ export interface components {
              *     `readOnly`, so a client that submits back a document it just read may include it; it is accepted and ignored (spec AC-10). It is NOT the way to clear a key - send `llmApiKey: ""` for that.
              *      */
             readonly llmApiKeySet: boolean;
-            /** @description Base URL of the `openai` or `anthropic` destination; `""` means the vendor's public host (`https://api.openai.com`, `https://api.anthropic.com`). Also Ollama's fallback when `ollamaBaseUrl` is `""`. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and approved for at least one of `openai`, `anthropic`, `ollama` (400 otherwise); a request is sent to it only for a provider it is approved for (see `testLLMConnection`). The web app writes this property from its Ollama field. No `pattern`, for the reason given on `awsRegion`.
-             *      */
+            /** @description Also the legacy fallback for the ollama base URL. */
             llmBaseUrl: string;
             /** @description Bedrock region. Empty means the built-in `us-east-1`, applied as an explicit region that overrides the deployment's AWS region configuration (spec D-7). PAC-66: a write changing it to a non-empty value must be a valid region name (one host label); the Bedrock host the SDK resolves is sent to only if approved in `PACEDAY_LLM_APPROVED_HOSTS_BEDROCK`. Deliberately no `pattern`: this map is shared with `Settings`, and rows stored before PAC-66 are kept as they are (spec D-3), so a pattern would make the response schema false for them.
              *      */
@@ -4193,8 +4205,7 @@ export interface components {
              *      */
             gcpLocation: string;
             vertexModel: string;
-            /** @description Falls back to llmBaseUrl, then `http://localhost:11434`. Stored as `http://localhost:11434` on a new account (migration 002), so it is Ollama's destination until cleared. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and an origin approved in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (400 otherwise); the same check is made whenever an Ollama request would be sent. No `pattern`, for the reason given on `awsRegion`.
-             *      */
+            /** @description Falls back to llmBaseUrl, then `http://localhost:11434`. */
             ollamaBaseUrl: string;
             /** @description Falls back to llmModel, then `llama3.2`. */
             ollamaModel: string;
@@ -4240,7 +4251,7 @@ export interface components {
             /** @description DB default true. */
             recapIncludeHabits: boolean;
             /**
-             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
              *
              * @enum {string}
              */
@@ -4323,8 +4334,7 @@ export interface components {
              *     `readOnly`, so a client that submits back a document it just read may include it; it is accepted and ignored (spec AC-10). It is NOT the way to clear a key - send `llmApiKey: ""` for that.
              *      */
             readonly llmApiKeySet?: boolean;
-            /** @description Base URL of the `openai` or `anthropic` destination; `""` means the vendor's public host (`https://api.openai.com`, `https://api.anthropic.com`). Also Ollama's fallback when `ollamaBaseUrl` is `""`. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and approved for at least one of `openai`, `anthropic`, `ollama` (400 otherwise); a request is sent to it only for a provider it is approved for (see `testLLMConnection`). The web app writes this property from its Ollama field. No `pattern`, for the reason given on `awsRegion`.
-             *      */
+            /** @description Also the legacy fallback for the ollama base URL. */
             llmBaseUrl?: string;
             /** @description Bedrock region. Empty means the built-in `us-east-1`, applied as an explicit region that overrides the deployment's AWS region configuration (spec D-7). PAC-66: a write changing it to a non-empty value must be a valid region name (one host label); the Bedrock host the SDK resolves is sent to only if approved in `PACEDAY_LLM_APPROVED_HOSTS_BEDROCK`. Deliberately no `pattern`: this map is shared with `Settings`, and rows stored before PAC-66 are kept as they are (spec D-3), so a pattern would make the response schema false for them.
              *      */
@@ -4343,8 +4353,7 @@ export interface components {
              *      */
             gcpLocation?: string;
             vertexModel?: string;
-            /** @description Falls back to llmBaseUrl, then `http://localhost:11434`. Stored as `http://localhost:11434` on a new account (migration 002), so it is Ollama's destination until cleared. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and an origin approved in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (400 otherwise); the same check is made whenever an Ollama request would be sent. No `pattern`, for the reason given on `awsRegion`.
-             *      */
+            /** @description Falls back to llmBaseUrl, then `http://localhost:11434`. */
             ollamaBaseUrl?: string;
             /** @description Falls back to llmModel, then `llama3.2`. */
             ollamaModel?: string;
@@ -4390,7 +4399,7 @@ export interface components {
             /** @description DB default true. */
             recapIncludeHabits?: boolean;
             /**
-             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: <err>` naming `timeFormat`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
+             * @description How the signed-in web app shows times of day to this user (PAC-55): `12h` ("2:30 PM", the default, exactly as before PAC-55) or `24h` ("14:30", two-digit hour, no AM/PM). DB default `12h`; a user who never chose reads `12h`. There is no "unset": `""` and any other STRING are a 400 `timeFormat must be 12h or 24h`; a non-string (`24`, `true`, `["24h"]`) fails decoding first and is a 400 `invalid JSON: timeFormat has the wrong type`; `null` is a 400 like every property of this body. Display only: the server formats nothing with it, and the public booking page ignores it (always 12-hour, PAC-55 §5).
              *
              * @enum {string}
              */
@@ -4446,7 +4455,14 @@ export interface components {
             type: "google" | "microsoft" | "sso" | "generic";
             /** @description Display name of the SSO provider. Omitted unless type == "sso". */
             provider_name?: string;
-            /** @description Relative path `/api/auth/sso/<domain>`. Omitted unless type == "sso".
+            /** @description Relative path `/api/auth/sso/<domain>` (the email's domain,
+             *     lowercased and trimmed, not URL-escaped). Omitted unless
+             *     type == "sso". It is a path on the API's origin, not the web app's:
+             *     a client resolves it against its API base URL, which may be a
+             *     different origin (PAC-35 AC-7). The client appends
+             *     `?login_hint=<email>` itself (see `startSsoLogin`); the detection
+             *     answer does not carry the email. This is the only field a client
+             *     needs to reach SSO; there is no `domain` field (API-010).
              *      */
             redirect_url?: string;
         };
@@ -4554,7 +4570,7 @@ export interface components {
              */
             expiresAt: string;
         };
-        /** @description A deliberately narrow projection — NOT a TeamInvite. Built as a map[string]string, so every value is a plain string and a missing team or inviter yields "" rather than null.
+        /** @description A narrow projection of a pending invite, NOT a TeamInvite (no id, token, status, invitedBy or createdAt). The three original keys are camelCase and stay so for existing readers; the three keys added by PAC-34 are snake_case, the spelling the PAC-34 acceptance criteria name and the web normalizer reads (see contracts/features/PAC-34.md section 3 for the rejected alternatives). team_id and expires_at come from the invite row itself, so they are always present. The team and inviter rows are read separately and a failed read is not an error: teamName and inviterName become "" and inviter_email becomes null.
          *      */
         TeamInvitePreview: {
             /** @description Empty string when the team row could not be read. */
@@ -4567,6 +4583,23 @@ export interface components {
              * @description The invitee email the invite was issued to.
              */
             email: string;
+            /**
+             * Format: uuid
+             * @description team_invites.team_id of this invite (PAC-34). Never empty.
+             */
+            team_id: string;
+            /**
+             * Format: date-time
+             * @description team_invites.expires_at, RFC 3339 (PAC-34): createdAt + 7 days, computed in Go when the invite was created. A 200 is returned only while the invite is pending and ExpireOldInvites runs first, so a client normally sees a future instant; a client must still treat a past value as expired rather than assume otherwise.
+             *
+             */
+            expires_at: string;
+            /**
+             * Format: email
+             * @description The inviter's account email, users.email of team_invites.invited_by (PAC-34). null, never "", when the inviter's user row could not be read. invited_by is NOT NULL with ON DELETE CASCADE, so a deleted inviter removes the invite (404), and null only arises from a failed read.
+             *
+             */
+            inviter_email: string | null;
         };
         /** @description storage.TeamMember, as returned inside TeamDetail. */
         TeamMember: {
@@ -4634,21 +4667,21 @@ export interface components {
             /** @description When present, the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Unknown emails are skipped silently. */
             co_host_emails?: string[];
         };
-        /** @description storage.UserProfile marshalled with no json tags — Go field names verbatim. Do not rename these keys in the spec; they are literally what the server sends.
+        /** @description storage.UserProfile with explicit snake_case json tags (PAC-26, API-030); the keys match the user_profiles columns. The schema name is kept from before PAC-26, when the struct had no tags and the keys were the Go field names (`UserID`, `IsManager`, `DetectedAt`, `AnalyticsSharedWithManager`, `UpdatedAt`).
          *      */
         UserProfileGoStruct: {
             /** Format: uuid */
-            UserID: string;
-            IsManager: boolean;
+            user_id: string;
+            is_manager: boolean;
             /** Format: date-time */
-            DetectedAt: string | null;
+            detected_at: string | null;
             /** @description Member-side consent flag, defaulting to true. No endpoint in this domain sets it. */
-            AnalyticsSharedWithManager: boolean;
+            analytics_shared_with_manager: boolean;
             /**
              * Format: date-time
              * @description The value read BEFORE the upsert, not the newly written now().
              */
-            UpdatedAt: string;
+            updated_at: string;
         };
         /** @description storage.WorkingHoursSchedule. Replaced WHOLE by a PATCH that mentions it; there is no deep merge (spec AC-9).
          *     **Normalised on read** by `Settings.normalizeSchedules` (`backend/storage/settings.go:92-106`), which `loadScheduleFields` calls on every read path (`:495`): an empty `mode` becomes `{mode: all_days, default: {enabled: true, start: workStart or 09:00, end: workEnd or 18:00}, days: {}}`; an `all_days` document whose `default` is entirely empty (`enabled:false, start:"", end:""`) has that default replaced the same way (`:95-99`); and a nil `days` map becomes `{}`.
@@ -4682,6 +4715,16 @@ export interface components {
             };
             content: {
                 "text/plain": "{\"error\":\"unauthorized\"}\n";
+            };
+        };
+        /** @description Either the requireAuth middleware rejected the request (text/plain, MiddlewareUnauthorized), or the session is valid but the caller has no stored Google Calendar credential, so an operation that must read or write their calendar cannot run. The second case is application/json with the exact body `{"error":"calendar not connected"}`: no provider, Go or storage error text and no user id (PAC-21, API-054). A failure to READ the credential store is not this response; it is the operation's 500. The two cases are told apart by Content-Type, or by the body. The web app's Dashboard decides "not connected" from GET /api/auth/status, not from this 401; no web code signs the user out on this 401 (only a 401 on GET /api/auth/me does). */
+        CalendarNotConnected: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["CalendarNotConnectedError"];
+                "text/plain": components["schemas"]["MiddlewareUnauthorized"];
             };
         };
         /** @description The habit exists but belongs to another user. Body is `{"error":"forbidden"}`. */
@@ -4740,16 +4783,6 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description text/plain; charset=utf-8. Written by http.Error, NOT by writeError, so there is no JSON envelope. Typical bodies: "db error", or a raw wrapped storage/engine error string on the /api/teams routes.
-         *      */
-        PlainTextServerError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "text/plain": string;
-            };
-        };
         /** @description Validation failure from validateSchedulingLink / parseClock. Messages: "title is required"; "at least one duration is required"; "durations must be positive integers"; "at least one day is required"; "days_of_week must contain values between 0 and 6"; "window times must use HH:MM"; "window_start must be before window_end"; "buffers must be zero or positive"; "min_notice_minutes must be zero or positive"; "usage_type must be reusable, recurring, or single_use"; "max_uses must be set to a positive integer for recurring links"; "slug cannot be empty" (PATCH only). */
         SchedulingLinkValidationError: {
             headers: {
@@ -4759,14 +4792,23 @@ export interface components {
                 "application/json": components["schemas"]["BookingError"];
             };
         };
+        /** @description A server-side failure. JSON error envelope (application/json) with a fixed, server-chosen message: "internal error" on the /api/teams routes, "internal error" or "db error" on the /api/manager routes. Never the storage or engine error text, which is written to the server log and Sentry only (PAC-21). Replaces PlainTextServerError, the text/plain response these routes documented before PAC-21 was finished.
+         *      */
+        ServerError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Malformed JSON, or a value the server refuses. JSON error shape (writeError). A body property set to `null` is refused here: no property of SettingsUpdate is nullable (spec AC-8).
-         *     Messages that already exist: `invalid JSON: <err>`; `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid: <err>`; `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
+         *     Messages that already exist: `invalid JSON` (the body cannot be read; fixed text, PAC-21: before, the read error was appended); `invalid JSON: the body must be an object` (the body is not a JSON object, or is `null`; an existing fixed literal, unchanged); `invalid JSON: <property> has the wrong type` (a value of the wrong JSON type; `<property>` is the dotted path of JSON property names from the request, e.g. `timeFormat` or `workingHours.days.monday.start`, never a Go type or struct name; before PAC-21 was finished this was the decoder's own error text, which named Go types); `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid` (fixed text; before PAC-21 was finished the cron parser's error was appended); `llmProvider must be one of: openai, anthropic, ollama, bedrock, azure_openai, vertex`; `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
          *     Messages PAC-24 adds, closing API-081 and API-082 - each of these is a value the server accepted before and then failed on, silently or as a 500 (spec AC-17): `workEnd must be after workStart`; `lunchEnd must be after lunchStart`; `focusMinBlockMinutes must not exceed focusMaxBlockMinutes`; `bufferMinMeetingMinutes must be zero or positive`; `timezone is not a known IANA location`; `recapSendTo must be dm or channel` (previously reached the DB CHECK and surfaced as a 500 - API-081); `recapSendTime must be in HH:MM format` (previously reached the Postgres TIME cast and surfaced as a 500); `calendarProvider must be one of: google, outlook, webcal` (resolves U-18); `conferencingProvider must be one of: meet, zoom, teams`.
-         *     Message PAC-55 adds: `timeFormat must be 12h or 24h`, for `""` and any other string (a non-string is `invalid JSON: <err>`).
+         *     Message PAC-55 adds: `timeFormat must be 12h or 24h`, for `""` and any other string (a non-string is `invalid JSON: timeFormat has the wrong type`).
          *     Messages revision 2 of this contract adds, each with its reason: `recapSendTime must be in HH:MM format` now also covers `""`. The write path previously substituted `08:00` for an empty value (`recapSendTimeOrDefault`, `backend/storage/settings.go:356-361`); under the merge rule a present property must be stored exactly as given, so a silent substitution is a contract violation and the empty value is refused instead. See `Settings.recapSendTime`; this is the one clock property for which `""` is NOT a value, and it needs a narrow amendment to spec AC-7. `workingHours.days must contain at least one weekday when mode is by_day` - a `by_day` document with an empty `days` map is the only remaining stored state that makes the consumer delete the working-hours section with no error (`smart-calendar-flow/src/api/client.ts:505-517,543`); the `all_days` equivalent is already normalised away on read (`backend/storage/settings.go:95-99`). Serves spec AC-20.
          *     `workingHours.days.<day> is not a valid weekday` and `lunchBreaks.<day> is not a valid weekday` are how a weekday key that is not exactly one of the seven lowercase names is refused: generators drop `propertyNames`, so the handler is the only enforcement point (revision 3/4).
          *     Messages PAC-66 adds, each produced only when the write CHANGES the property to a non-empty value (`""` is always accepted for all three, spec AC-15): `azureEndpoint must be an https URL whose host is approved for azure_openai on this deployment` (an unapproved host, a scheme other than `https`, a port other than 443, userinfo, or a value that does not parse as an absolute URL); `azureEndpoint cannot be set: azure_openai is not enabled on this deployment` (the operator approved no Azure host); `gcpLocation must be a region whose Vertex host is approved on this deployment` (including any value that changes the URL's authority, e.g. `attacker.example/x`); `gcpLocation cannot be set: vertex is not enabled on this deployment`; `awsRegion must be a valid AWS region name`. Each names the property first, so a client can attach it to the field.
-         *     Messages PAC-66-B adds, under the same changed-and-non-empty rule (`""` is always accepted for both, spec AC-B14): `llmBaseUrl must be the scheme, host and port of an OpenAI, Anthropic or Ollama destination approved on this deployment` (a value approved for none of the three providers, or one carrying a path, query, fragment, userinfo or whitespace; spec AC-B3, AC-B6, AC-B18, AC-B19); `ollamaBaseUrl must be the scheme, host and port of an Ollama server approved on this deployment` (spec AC-B4, AC-B18); `ollamaBaseUrl cannot be set: ollama is not enabled on this deployment` (the operator approved no Ollama origin).
          *     `""` is NOT in this catalogue for `workStart`, `workEnd`, `lunchStart` or `lunchEnd`. It is a valid value for all four, on read and on write (spec AC-7); the handler already skips the format check for it (`backend/api/handlers_settings.go:75`).
          *      */
         SettingsValidationError: {
@@ -4803,6 +4845,37 @@ export interface components {
         /** @description Opaque invite token — a UUID string generated by CreateTeamInvite. Not validated as a UUID by the handler; any string is looked up verbatim.
          *      */
         InviteTokenPath: string;
+        /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+         *     `login_hint` so it can preselect or prefill that account (PAC-35,
+         *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+         *     links a Paceday account; the account signed in is the one the provider
+         *     authenticates, checked exactly as before.
+         *     The LoginHint rule: the value is forwarded only when it is a bare email
+         *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+         *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+         *     name and an `Address` equal to the whole value (so no `<...>`, display
+         *     name, comment, whitespace or other extra text); (4) the local part
+         *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+         *     names such as `o'brien`); (5) the domain (after
+         *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+         *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+         *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+         *     no single-label host (`localhost`). Anything else, including an empty
+         *     value, is dropped silently and sign-in starts without a hint. Examples
+         *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+         *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+         *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+         *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+         *     `o'brien@acme.com`.
+         *     When `login_hint` is repeated, only the first value is considered
+         *     (`url.Values.Get`); the others are ignored.
+         *     It is never a 400: the schema is a plain string on purpose, because a
+         *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+         *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+         *     to the provider request, and no other query parameter of the start
+         *     request is forwarded.
+         *      */
+        LoginHint: string;
         /** @description The roster member's email address, percent-encoded in the path (the `@` MUST be sent as %40 — chi splits on `/` only, but the frontend and the Go tests both use encodeURIComponent/%40 form). The handler applies url.PathUnescape to the raw chi param and falls back to the raw value if unescaping fails. Storage lowercases and trims before matching, so lookup is case-insensitive even though this path segment is not normalized by the handler itself.
          *      */
         MemberEmailPath: string;
@@ -4859,7 +4932,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Query failed — body is the raw err.Error() in the JSON error envelope. */
+            /** @description Query failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4919,7 +4992,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "save failed: <err>". */
+            /** @description Save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4966,7 +5039,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Delete failed — raw err.Error() in the JSON error envelope. */
+            /** @description Delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4998,12 +5071,8 @@ export interface operations {
                     "application/json": components["schemas"]["AnalyticsMeeting"][];
                 };
             };
-            401: components["responses"]["Unauthorized"];
-            /** @description `error` is the literal prefix "internal error: " plus the underlying error.
-             *     NOTE this is also what a user with no connected Google account receives —
-             *     `calOpsForUser` returns "no token for user <uuid>" and the handler maps it
-             *     to 500 rather than a 4xx.
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description The calendar read failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Before PAC-21 was finished a user with no credential got this 500 (API-054). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5099,7 +5168,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `error` is the literal prefix "compute failed: " plus the underlying error. */
+            /** @description Compute failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5131,16 +5200,8 @@ export interface operations {
                     "application/json": components["schemas"]["AttendeeSuggestion"][];
                 };
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Google Calendar API error. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5206,7 +5267,7 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description `audit: <err>` as JSON via writeError. */
+            /** @description Query failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5229,15 +5290,26 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Success — JWT cookie issued, redirect to the SPA. */
+            /** @description One of exactly two destinations (PAC-35, API-011):
+             *     - Success: the `auth_token` cookie is set and Location is
+             *       `<FRONTEND_URL>/auth/callback` (no query string, unlike the
+             *       Microsoft/SSO callbacks).
+             *     - Session not issued (signing secret empty, or token generation
+             *       failed) after the user and token were saved: NO `auth_token`
+             *       cookie is set or expired, and Location is the sign-in failure
+             *       state `<FRONTEND_URL>/?error=auth_failed`. Never `/auth/callback`.
+             *     The user row and stored Google token written before that point are
+             *     kept; nothing is deleted on the failure path. The cause is written
+             *     to the server log and Sentry only; the Location carries no cause.
+             *      */
             302: {
                 headers: {
-                    /** @description <FRONTEND_URL>/auth/callback (no query string, unlike the Microsoft/SSO callbacks) */
+                    /** @description `<FRONTEND_URL>/auth/callback` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
+                     *      */
                     Location?: string;
-                    /** @description auth_token=<HS256 JWT>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
-                     *     NOTE: if jwtSecret is empty, authHandlers.issueJWT returns silently
-                     *     and NO cookie is set — the 302 still happens and the user lands
-                     *     logged-out.
+                    /** @description On success: auth_token=<HS256 JWT>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
+                     *     On the failure redirect: no `auth_token` cookie at all.
                      *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -5253,15 +5325,13 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, userinfo fetch, user upsert or token save failed.
-             *     Body is the bare message + ": " + err.Error().
-             *      */
+            /** @description Token exchange, userinfo fetch, user upsert or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5280,11 +5350,25 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=sso`. */
+            /** @description One of exactly two destinations (PAC-35, API-011):
+             *     - Success: the `auth_token` cookie is set and Location is
+             *       `<FRONTEND_URL>/auth/callback?provider=sso`.
+             *     - Session not issued (signing secret empty, or token generation
+             *       failed) after the user was saved: NO `auth_token` cookie is set
+             *       or expired, and Location is the sign-in failure state
+             *       `<FRONTEND_URL>/?error=auth_failed`. The saved user row is kept.
+             *     Every other failure stays a non-302 response below (spec PAC-35
+             *     D-1).
+             *      */
             302: {
                 headers: {
+                    /** @description `<FRONTEND_URL>/auth/callback?provider=sso` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
+                     *      */
                     Location?: string;
-                    /** @description auth_token JWT cookie (skipped silently when jwtSecret is empty). */
+                    /** @description On success: auth_token JWT cookie. On the failure redirect: no
+                     *     `auth_token` cookie at all.
+                     *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -5292,6 +5376,20 @@ export interface operations {
             };
             /** @description "missing state cookie", "invalid state", or "no email in OIDC token claims". */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description "email domain does not match SSO provider domain": the IdP asserted
+             *     an email whose domain is not exactly `{domain}` (PAC-45). No user is
+             *     upserted and no session is issued. text/plain (http.Error).
+             *     Documented by PAC-35: the response has existed since PAC-45 (#172)
+             *     but was missing from this contract.
+             *      */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5308,13 +5406,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "OIDC setup: <err>", "OIDC exchange: <err>" or "upsert user: <err>". */
+            /** @description OIDC setup, code exchange or user upsert failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5350,7 +5448,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "rate limit exceeded" — more than 20 detects/minute from this IP. */
+            /** @description "rate limit exceeded" — more than 20 detects in the current one-minute window from this client IP (socket peer, or X-Real-IP from a trusted proxy). */
             429: {
                 headers: {
                     [name: string]: unknown;
@@ -5359,7 +5457,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "detection failed: <err>" — the SSO provider lookup errored. */
+            /** @description The SSO provider lookup failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5379,11 +5477,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Disconnected. No body. */
+            /** @description The caller's calendar is Google and its stored token row is gone
+             *     (or there was none). No body. No Set-Cookie.
+             *      */
             204: {
                 headers: {
-                    /** @description auth_token=; Path=/; Max-Age=-1; HttpOnly; SameSite=Lax */
-                    "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -5397,13 +5495,28 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token delete failed — body is the raw err.Error() string. */
+            /** @description The caller's calendar provider is `outlook` or `webcal`. Nothing was
+             *     deleted and the session is kept. This is the only 409 this
+             *     operation returns, so a client can tell "disconnect is not available
+             *     for this kind of calendar" from every other failure by status
+             *     alone; `provider` says which kind. A client must treat it as a
+             *     failure, never as a success (spec PAC-35 D-8).
+             *      */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalendarDisconnectUnsupported"];
+                };
+            };
+            /** @description The caller's settings could not be read, or the token delete failed. Nothing else is changed and the session is kept. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -5411,11 +5524,37 @@ export interface operations {
     startGoogleOAuth: {
         parameters: {
             query?: {
-                /** @description Sent by the frontend (src/components/auth/AuthDialog.tsx) but the Go
-                 *     handler (authHandlers.startOAuth) reads no query parameters at all,
-                 *     so it is silently discarded and NOT forwarded to Google.
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
                  *      */
-                login_hint?: string;
+                login_hint?: components["parameters"]["LoginHint"];
             };
             header?: never;
             path?: never;
@@ -5423,10 +5562,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to Google's authorization endpoint. */
+            /** @description Redirect to Google's authorization endpoint. Always a 302, whatever
+             *     `login_hint` holds: an invalid hint is dropped, never a 400.
+             *      */
             302: {
                 headers: {
-                    /** @description auth.GetAuthURL(oauthConfig, state) */
+                    /** @description auth.GetAuthURL(oauthConfig, state), plus `login_hint=<hint>`
+                     *     (URL-encoded) when the request's `login_hint` passed the
+                     *     LoginHint rule. No other query parameter of this request is
+                     *     copied into it.
+                     *      */
                     Location?: string;
                     /** @description oauth_state=<32 hex chars>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5445,10 +5590,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Logged out. Empty body and NO Content-Type header (w.WriteHeader(200)
-             *     with nothing written) — a 204 would be the honest status.
+            /** @description Logged out. No body (PAC-35, API-063; before PAC-35 this was a 200
+             *     with an empty body and no Content-Type, which the strict web client
+             *     would classify as "server unreachable").
              *      */
-            200: {
+            204: {
                 headers: {
                     /** @description auth_token=; Path=/; Max-Age=-1; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5513,8 +5659,37 @@ export interface operations {
     startMicrosoftOAuth: {
         parameters: {
             query?: {
-                /** @description Sent by the frontend; ignored by the handler (same as /api/auth/google). */
-                login_hint?: string;
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
+                 *      */
+                login_hint?: components["parameters"]["LoginHint"];
             };
             header?: never;
             path?: never;
@@ -5522,9 +5697,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to Microsoft's authorization endpoint. */
+            /** @description Redirect to Microsoft's authorization endpoint. An invalid
+             *     `login_hint` is dropped, never a 400.
+             *      */
             302: {
                 headers: {
+                    /** @description auth.GetMicrosoftAuthURL(cfg, state), plus `login_hint=<hint>`
+                     *     (URL-encoded) when the request's `login_hint` passed the
+                     *     LoginHint rule. No other query parameter of this request is
+                     *     copied into it.
+                     *      */
                     Location?: string;
                     /** @description ms_oauth_state=<32 hex chars>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5555,13 +5737,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to `<FRONTEND_URL>/auth/callback?provider=outlook`, with the
-             *     `auth_token` cookie set. Every failure is a non-302 response below.
+            /** @description One of exactly two destinations (PAC-35):
+             *     - Success: Location `<FRONTEND_URL>/auth/callback?provider=outlook`,
+             *       with the `auth_token` cookie set.
+             *     - Sign-in failure state, Location `<FRONTEND_URL>/?error=auth_failed`,
+             *       with NO `auth_token` cookie set or expired, when any of these
+             *       happens after the code exchange succeeded:
+             *       (a) the Graph profile could not be read, or carried no email
+             *           (nothing is saved; API-012, was a 502);
+             *       (b) the user upsert failed (nothing is saved; API-012, was a 500
+             *           with `{"error":"save user failed"}`);
+             *       (c) the session could not be issued (signing secret empty, or
+             *           token generation failed) after the user and the Microsoft
+             *           token were saved; they are kept (API-011).
+             *     The cause is written to the server log and Sentry only; the
+             *     Location carries no cause, provider name or detail.
+             *     State mismatch, token exchange failure, token save failure and an
+             *     unconfigured client are NOT redirects; they are the 400, 500 and
+             *     503 below (spec PAC-35 D-1).
              *      */
             302: {
                 headers: {
+                    /** @description `<FRONTEND_URL>/auth/callback?provider=outlook` on success;
+                     *     `<FRONTEND_URL>/?error=auth_failed` on the failures (a)-(c).
+                     *      */
                     Location?: string;
-                    /** @description auth_token JWT for the upserted user. */
+                    /** @description On success: auth_token JWT for the upserted user. On the failure
+                     *     redirect: no `auth_token` cookie at all.
+                     *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -5576,27 +5779,16 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, user upsert (`save user failed`) or token save (`save token failed: <err>`) failed (text/plain).
-             *      */
+            /** @description Token exchange or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A failed user upsert is no longer a 500, and an unreadable Graph profile is no longer a 502: since PAC-35 both are the failure redirect under `302`. */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The Graph profile could not be read, or carried no email (`could not read the Microsoft account`, text/plain). Added by PAC-24.
-             *      */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
-                };
-            };
-            /** @description `MICROSOFT_CLIENT_ID` unset — JSON error, unlike the other failures here. */
+            /** @description `MICROSOFT_CLIENT_ID` is unset. Body: `{"error":"Microsoft OAuth not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -5609,7 +5801,39 @@ export interface operations {
     };
     startSsoLogin: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The email the user typed, forwarded to the provider as the OAuth/OIDC
+                 *     `login_hint` so it can preselect or prefill that account (PAC-35,
+                 *     API-064). Advisory only (spec PAC-35 D-4): it never selects, creates or
+                 *     links a Paceday account; the account signed in is the one the provider
+                 *     authenticates, checked exactly as before.
+                 *     The LoginHint rule: the value is forwarded only when it is a bare email
+                 *     address, meaning all of: (1) at most 254 characters; (2) exactly one
+                 *     `@`; (3) Go's `net/mail.ParseAddress` accepts it with an empty display
+                 *     name and an `Address` equal to the whole value (so no `<...>`, display
+                 *     name, comment, whitespace or other extra text); (4) the local part
+                 *     (before `@`) uses only `A-Z a-z 0-9 . _ + - '` (the apostrophe allows
+                 *     names such as `o'brien`); (5) the domain (after
+                 *     `@`) is a DNS hostname: two or more dot-separated labels, each matching
+                 *     `[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?`, the last one containing at
+                 *     least one letter, so no IP literal (`[127.0.0.1]` or `127.0.0.1`) and
+                 *     no single-label host (`localhost`). Anything else, including an empty
+                 *     value, is dropped silently and sign-in starts without a hint. Examples
+                 *     dropped (spec AC-10, "a hint carrying extra URL parameters"):
+                 *     `alice@acme.com&prompt=none`, `alice&prompt=none@acme.com`,
+                 *     `alice@acme.com?x=y`, `alice@acme.com#frag`, `alice@[127.0.0.1]`,
+                 *     `alice@localhost`, `alice@acme`. Examples forwarded: `alice@acme.com`,
+                 *     `o'brien@acme.com`.
+                 *     When `login_hint` is repeated, only the first value is considered
+                 *     (`url.Values.Get`); the others are ignored.
+                 *     It is never a 400: the schema is a plain string on purpose, because a
+                 *     malformed hint must not stop a sign-in (spec AC-10). The forwarded
+                 *     value is URL-encoded by the OAuth library, so it cannot add a parameter
+                 *     to the provider request, and no other query parameter of the start
+                 *     request is forwarded.
+                 *      */
+                login_hint?: components["parameters"]["LoginHint"];
+            };
             header?: never;
             path: {
                 /** @description Email domain, e.g. "acme.com". */
@@ -5619,9 +5843,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to the identity provider. */
+            /** @description Redirect to the identity provider. Always a 302 for a usable OIDC
+             *     row, whatever `login_hint` holds: an invalid or other-domain hint is
+             *     dropped, never a 400.
+             *      */
             302: {
                 headers: {
+                    /** @description The IdP authorization URL (OIDCClient.AuthURL(state)), plus
+                     *     `login_hint=<hint>` (URL-encoded) when the hint passed the
+                     *     LoginHint rule and belongs to `{domain}`. No other query
+                     *     parameter of this request is copied into it.
+                     *      */
                     Location?: string;
                     /** @description sso_state=<32 hex chars>|<domain>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax */
                     "Set-Cookie"?: string;
@@ -5638,7 +5870,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description "OIDC setup: <err>" — issuer discovery failed. */
+            /** @description Issuer discovery failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5757,13 +5989,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Token exchange or token persistence failed. */
+            /** @description Token exchange or token persistence failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["BookingError"];
                 };
             };
         };
@@ -5888,7 +6120,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Storage or engine failure. Messages: "internal error"; "booking conflict check failed"; "booking failed: <engine error>". */
+            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -5994,22 +6226,14 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Either the requireAuth middleware rejected the request (MiddlewareUnauthorized), or the handler could not build a calendar client because no OAuth token is stored for this user — in that case the body is the plain-text string `not connected: <err>`. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
-                };
-            };
-            /** @description Google Calendar API error, verbatim error text via http.Error. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6051,22 +6275,14 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description `not connected: <err>` (plain text), or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
-                };
-            };
-            /** @description Google Calendar API error (plain text). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google Calendar API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6093,7 +6309,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConferenceMeetingDetails"];
                 };
             };
-            /** @description "invalid body"; "teams: not connected - visit /api/auth/microsoft to authenticate"; or a provider-construction error such as "zoom: not connected - visit /api/auth/zoom to authenticate". */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended). The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it today; the new stored-credential sentence uses the same character on purpose, so the three read alike: "invalid body"; "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails, not only when there is none: the server does not separate the two on this path; see the PAC-21 contract's doesNotResolve); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom" (the stored Zoom token does not decode; before PAC-21 was finished this was "zoom: invalid token: " plus the JSON decoder's error). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6103,7 +6319,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description "settings: <err>" or "create meeting: <err>" */
+            /** @description Settings load or meeting creation failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6133,7 +6349,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"settings: <err>"} */
+            /** @description Settings load failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6161,7 +6377,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"disconnect zoom: <err>"} */
+            /** @description Clearing the tokens failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6174,7 +6390,10 @@ export interface operations {
     };
     deleteEvent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whether Google emails the guests about the cancellation. Absent means `none`, which is what every DELETE did before PAC-29. Any other value is a 400 and nothing is deleted. */
+                send_updates?: "all" | "none";
+            };
             header?: never;
             path: {
                 /** @description Google Calendar event id, taken verbatim from the URL. Not validated or decoded by the handler. */
@@ -6191,8 +6410,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
+            /** @description `{"error":"invalid send_updates"}`: the query parameter is present and is neither `all` nor `none`. Nothing is deleted (PAC-29). */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6200,7 +6419,17 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `delete failed: <err>`. Deleting an already-deleted or non-existent event surfaces here as 500, never as 404. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description `{"error":"event not found"}`: Google answered the delete with 404 or 410 (the event does not exist or is already deleted). PAC-29, API-045. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The Google delete call failed with anything other than 404 / 410, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6227,16 +6456,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The updated event, serialized by the Google API client library. */
+            /** @description The updated event as the CalendarEvent DTO, the same shape as one element of GET /api/calendar/events (PAC-29). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEventRaw"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
-            /** @description `invalid body` — the request body is not valid JSON. */
+            /** @description Nothing is written to Google. One of these fixed bodies: `{"error":"invalid body"}` (the body is not valid JSON, or `start` / `end` is neither an RFC3339 date-time nor a `YYYY-MM-DD` date); `{"error":"invalid send_updates"}` (a value other than `all` / `none`); `{"error":"invalid room_resource_email"}` (non-empty and not a `*@resource.calendar.google.com` address); `{"error":"start and end must both be dates or both be date-times"}` (after applying the patch to the stored event, one of start / end is a bare date and the other a date-time, e.g. a date-time `start` alone on an all-day event). The last three are PAC-29. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6245,16 +6474,8 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `not authenticated` (no stored OAuth token), or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description `event not found: <err>`. Any GetEvent failure maps to 404, including transport and permission errors, not only a genuine 404 from Google. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Since PAC-29 (API-045) only when GetEvent fails with a Google 404 or 410, or returns the event with `status: cancelled` (a deleted event; it is not written, so PATCH never restores it); any other GetEvent failure (transport, permission, quota) is a 500. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6263,7 +6484,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description `update failed: <err>`. */
+            /** @description The Google update call failed, GetEvent failed with anything other than a Google 404 / 410 (PAC-29, API-045), or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6299,7 +6520,7 @@ export interface operations {
                     "application/json": components["schemas"]["EventConferenceLink"];
                 };
             };
-            /** @description "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time"; or an unsupported-provider message from the factory such as 'unsupported conference provider "whereby"'. */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended): The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it. "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time" (the existing literal, kept: the event has no start or end, or, new in PAC-21, Google's value does not parse; before PAC-21 was finished a parse failure returned Go's time.Parse error text); 'unsupported conference provider "<provider>"' (echoes the request's own `provider`); "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom". */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6308,16 +6529,8 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description The calendar client could not be built (no Google token). Unlike the middleware 401 this one IS the shared JSON envelope with the underlying error text. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BookingError"];
-                };
-            };
-            /** @description Body: {"error":"event not found: <err>"} */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6335,7 +6548,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "create Google Meet: <err>", "settings: <err>", or "update failed: <err>" */
+            /** @description Google Meet creation, settings load, or the event update failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6344,7 +6557,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Upstream provider problem: "Google Meet creation is still pending", "create meeting: <err>", or "conference provider returned no join URL". */
+            /** @description Upstream provider problem. `error` is one of "Google Meet creation is still pending", "upstream provider error" (the provider's create-meeting call failed) or "conference provider returned no join URL". The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -6374,16 +6587,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Calendar client could not be built. JSON envelope with the underlying error text. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["BookingError"];
-                };
-            };
-            /** @description Body: {"error":"event not found: <err>"} */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6392,7 +6597,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "remove Google Meet: <err>" or "remove conference: <err>" */
+            /** @description Removing the Google Meet or the conference properties failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6435,13 +6640,13 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description DB failure, raw Go error as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6477,13 +6682,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine failure, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6510,7 +6716,7 @@ export interface operations {
                     "application/json": components["schemas"]["FocusRunResult"];
                 };
             };
-            /** @description `invalid week format, use YYYY-MM-DD` - JSON error shape (writeError).
+            /** @description `invalid JSON` (the body is present, is not `null`, and does not decode into FocusRunRequest; PAC-36, API-035) or `invalid week format, use YYYY-MM-DD`. Fixed messages, JSON error shape (writeError).
              *      */
             400: {
                 headers: {
@@ -6520,14 +6726,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine failure. Written with http.Error, so the body is the raw Go error string as text/plain, NOT the JSON error shape.
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -6554,7 +6760,7 @@ export interface operations {
                     "application/json": components["schemas"]["FreeBusyQueryResponse"];
                 };
             };
-            /** @description JSON error (writeError). One of: `invalid JSON: <err>`, `emails is required` (empty or missing array), `max 20 emails per request`, `start_time must be RFC3339`, `end_time must be RFC3339`. */
+            /** @description JSON error (writeError). One of: `invalid JSON` (fixed text: the decoder's error is not appended, PAC-21), `emails is required` (empty or missing array), `max 20 emails per request`, `start_time must be RFC3339`, `end_time must be RFC3339`. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6572,13 +6778,13 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description engine.FreeBusyService.Query failure — in practice only a settings-read failure. Emitted with http.Error, so PLAIN TEXT, unlike every other error path in this handler. */
+            /** @description engine.FreeBusyService.Query failed - in practice only a settings-read failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["PlainTextError"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -6640,7 +6846,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description Insert failed. `error` is the literal prefix "create failed: " plus the driver error. */
+            /** @description Insert failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6724,7 +6930,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Lookup failed ("internal error") or the UPDATE failed ("deactivate failed: " + driver error). */
+            /** @description Lookup or UPDATE failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6772,7 +6978,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description Lookup failed ("internal error") or the UPDATE failed ("update failed: " + driver error). */
+            /** @description Lookup or UPDATE failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6970,22 +7176,22 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "db error" — the upsert failed. */
+            /** @description The upsert failed. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description PLAIN TEXT "token exchange failed: " plus the error (transport error, unparseable JSON, or a non-empty `error` field from Notion). */
+            /** @description The token exchange failed (transport error, unparseable JSON, or a non-empty `error` field from Notion). Body: `{"error":"upstream provider error"}`. Notion's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7011,13 +7217,13 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `NOTION_CLIENT_ID` is unset. PLAIN TEXT body "Notion not configured". */
+            /** @description `NOTION_CLIENT_ID` is unset. Body: `{"error":"Notion not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7097,22 +7303,22 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "db error" — the upsert failed. */
+            /** @description The upsert failed. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description PLAIN TEXT "token exchange failed: " plus the error (transport error, unparseable JSON, or Slack's `error` string when `ok:false`). */
+            /** @description The token exchange failed (transport error, unparseable JSON, or Slack's `error` string when `ok:false`). Body: `{"error":"upstream provider error"}`. Slack's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7138,13 +7344,13 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
-            /** @description `SLACK_CLIENT_ID` is unset. PLAIN TEXT body "Slack not configured". */
+            /** @description `SLACK_CLIENT_ID` is unset. Body: `{"error":"Slack not configured"}`. */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7202,7 +7408,7 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description PAC-66 and PAC-66-B. The probe would send a request to a destination not approved for the provider it uses (as named in the body or stored): the deployment's cloud credential (`azure_openai`, `vertex`, `bedrock`; PAC-66), the caller's own key (`openai`, `anthropic`; PAC-66-B) or a keyless request (`ollama`; PAC-66-B). Nothing was sent. `reason` says which of three cases applies; `property` names the stored setting to correct. The body never carries a token, a key or any part of the deployment credential, and `error` is a non-empty sentence (PAC-66 spec AC-11, AC-B16). Distinct from the 400 (the request body itself is malformed) and from the 502 (the provider call failed: credential acquisition, provider configuration, transport, or an unusable or redirecting answer; a 502 does not imply a request was sent). A 422 always means nothing was sent; the converse does not hold.
+            /** @description PAC-66. The probe would send the deployment's cloud credential (provider `azure_openai`, `vertex` or `bedrock`, as named in the body or stored) to a destination the operator has not approved for that provider, so nothing was sent. `reason` says which of three cases applies; `property` names the stored setting to correct. The body never carries a token, a key or any part of the deployment credential, and `error` is a non-empty sentence (spec AC-11). Distinct from the 400 (the request body itself is malformed) and from the 502 (the provider call failed: credential acquisition, provider configuration, transport, or an unusable or redirecting answer; a 502 does not imply a request was sent). A 422 always means nothing was sent; the converse does not hold.
              *      */
             422: {
                 headers: {
@@ -7212,19 +7418,16 @@ export interface operations {
                     "application/json": components["schemas"]["LLMDestinationRefusal"];
                 };
             };
-            /** @description Two different encodings share this code. Settings load failure -> text/plain (http.Error). Client construction failure (e.g. `LLM not configured - set API key in Settings`) -> JSON error shape (writeError); since PAC-21 the body is the fixed `internal error` and the detail is logged only. A PAC-66 or PAC-66-B destination refusal is NEVER a 500; it is the 422, including on `openai` and `anthropic` when no key is on file or submitted.
-             *      */
+            /** @description Settings load failure (`{"error":"internal error"}`), or the LLM client could not be constructed (a fixed configuration sentence such as `LLM not configured - set API key in Settings`). One encoding, the JSON error envelope, for both (before PAC-21 was finished the settings-load failure was text/plain). A PAC-66 destination refusal is NEVER a 500; it is the 422. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
-                    "text/plain": string;
                 };
             };
-            /** @description The provider call failed. JSON error shape (writeError) with the fixed message `upstream provider error` (PAC-21; the upstream detail is logged only). A 502 does NOT imply an inference request was sent: the handler maps every provider-call error to 502, including failures before any request leaves the server - Azure or Vertex credential acquisition (`azure: credential: …`, `azure: get token: …`, `vertex: find credentials: …`, `vertex: get token: …`) and Bedrock configuration loading (`bedrock: load config: …`, e.g. a stored `awsProfile` absent from the deployment's shared config). PAC-66: this includes an approved ambient-provider host answering with a redirect, which is not followed with the deployment credential to any other host or to `http` (spec AC-8). PAC-66-B: this also includes an approved `openai`, `anthropic` or `ollama` destination answering with a redirect of any status to any target; it is not followed, and the caller's key is in no request but the first (spec AC-B7). The body never carries the deployment credential or a key. It is never used for a destination refusal; see 422.
-             *      */
+            /** @description The provider call failed. Body: `{"error":"upstream provider error"}`. The upstream error string is NOT returned: it is redacted of both keys and written to the server log and Sentry only (PAC-21). A 502 does NOT imply an inference request was sent: the handler maps every provider-call error to 502, including failures before any request leaves the server - Azure or Vertex credential acquisition and Bedrock configuration loading (e.g. a stored `awsProfile` absent from the deployment's shared config). PAC-66: this includes an approved ambient-provider host answering with a redirect, which is not followed with the deployment credential to any other host or to `http` (spec AC-8). The body never carries the deployment credential. It is never used for a destination refusal; see 422. */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -7269,7 +7472,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     previewManagerDetection: {
@@ -7309,15 +7512,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["CalendarNotConnected"];
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain. Either "detection error: <wrapped engine error>" (calendar/OAuth failure) or "db error" from the per-candidate assignment lookup.
-             *      */
+            /** @description Detection failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the per-candidate assignment lookup failed: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7369,7 +7572,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getManagerCadenceGaps: {
@@ -7404,13 +7607,13 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain — "gap detection error: <err>" or "db error". */
+            /** @description Gap detection or a database read failed. `error` is "internal error" or "db error". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7433,7 +7636,7 @@ export interface operations {
                     "application/json": components["schemas"]["ManagerProfileSummary"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     setManagerProfile: {
@@ -7449,7 +7652,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The persisted storage.UserProfile Go struct. That struct carries NO json tags, so encoding/json emits Go field names in PascalCase. This is inconsistent with the snake_case GET response on the same path.
+            /** @description The storage.UserProfile Go struct, with explicit snake_case json tags since PAC-26 (API-030). Before PAC-26 the struct had no tags and the keys were PascalCase. The shape still differs from the GET response on the same path (GET is a summary with team_member_count; POST is the profile row).
              *      */
             200: {
                 headers: {
@@ -7460,7 +7663,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["JsonError"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getManagerRoster: {
@@ -7499,7 +7702,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     addManagerTeamMember: {
@@ -7519,7 +7722,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The in-memory storage.ManagerTeamMember Go struct. It has NO json tags, so the body is PascalCase and its `ID`/`CreatedAt`/`UpdatedAt` are the Go zero values (all-zero UUID, "0001-01-01T00:00:00Z") because the upsert does not read the row back. Clients must re-fetch the roster instead of using this body.
+            /** @description The member row as stored, read back after the upsert commits (PAC-26, API-031), as storage.ManagerTeamMember with explicit snake_case json tags (API-030). Without `team_id` it is the global manager_team_members row; with `team_id` it is that row seen through this team's assignment (display name override, assignment cadence and cadence_custom_days), exactly as patchManagerTeamMember returns it. `id`, `created_at` and `updated_at` are the stored values. Before PAC-26 the body was the pre-insert struct in PascalCase with the zero UUID and "0001-01-01T00:00:00Z" timestamps. If the read-back fails the response is the 500 below, although the upsert has committed; the upsert is idempotent, so a retry is safe.
              *      */
             201: {
                 headers: {
@@ -7549,7 +7752,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     removeManagerTeamMember: {
@@ -7618,14 +7821,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The re-read storage.ManagerTeamMember, PascalCase (no json tags). The read error is discarded, so this body can legitimately be the JSON literal `null` when the re-read fails.
+            /** @description The re-read storage.ManagerTeamMember, with explicit snake_case json tags since PAC-26 (API-030). Never `null`: since PAC-26 (API-032) a failed re-read is the 500 below instead of a 200 whose body is the JSON literal `null`. The patch has committed when that 500 is sent.
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ManagerTeamMemberGoStruct"] | null;
+                    "application/json": components["schemas"]["ManagerTeamMemberGoStruct"];
                 };
             };
             /** @description JSON error — "team_id must be a valid UUID" or "invalid JSON". */
@@ -7656,7 +7859,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     scheduleManagerOneOnOne: {
@@ -7717,7 +7920,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getMeetingBrief: {
@@ -7756,13 +7959,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description "db error" as PLAIN TEXT via `http.Error` — not the JSON error shape. */
+            /** @description Database error. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7801,13 +8004,13 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description PLAIN TEXT "generation error: " plus the underlying error. */
+            /** @description Brief generation returned an error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7825,16 +8028,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created Google Calendar event. */
+            /** @description The created event as the CalendarEvent DTO (PAC-29). Room resource attendees are dropped from `attendees` / `attendee_details`, as in the list; `attendees` is omitted when there are none. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEvent"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
-            /** @description `invalid JSON`, or `invalid selected_slot_index` (empty slot list, or index >= len). JSON error shape (writeError).
+            /** @description `invalid JSON`, or `invalid selected_slot_index` (empty slot list, index < 0, or index >= len). JSON error shape (writeError).
              *      */
             400: {
                 headers: {
@@ -7844,14 +8047,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description CreateMeeting error as text/plain (http.Error), or an empty-body panic-derived 500 for a negative index (see x-uncertain).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description CreateMeeting failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}`. A negative `selected_slot_index` is a 400, never a 500 (resolves U-06 / API-024). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -7887,13 +8090,13 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Parser error, raw Go error as text/plain (http.Error). */
+            /** @description Parse() returned an error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -7925,13 +8128,13 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description Body is the JSON literal `{"error":"internal"}` served as text/plain; charset=utf-8 (http.Error). */
+            /** @description Database error. Body: `{"error":"internal"}`, served as application/json (until PAC-21 was finished it was this same JSON literal with a text/plain Content-Type). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": components["schemas"]["MiddlewareUnauthorized"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7963,7 +8166,7 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description Database error, message passed through verbatim. */
+            /** @description Database error. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8156,7 +8359,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Preview events. WARNING: the element type is calendar.GenericEvent (backend/calendar/provider.go:13), which has NO json struct tags, so keys are the Go field names `ID`, `Title`, `Start`, `End` — capitalized and inconsistent with every other response in this domain. */
+            /** @description Preview events. The element type is calendar.GenericEvent (backend/calendar/provider.go), with explicit json tags since PAC-26 (API-029): keys `id`, `title`, `start`, `end`. Before PAC-26 the struct had no tags and the keys were `ID`, `Title`, `Start`, `End`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -8232,15 +8435,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": components["schemas"]["MiddlewareUnauthorized"];
-                };
-            };
+            401: components["responses"]["CalendarNotConnected"];
             /** @description `personal calendar not found` (before or after the sync). */
             404: {
                 headers: {
@@ -8250,7 +8445,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The blocker's Sync returned an error, or the last_synced_at update failed. Verified by TestPersonalCalendarSyncPropagatesBlockerError. */
+            /** @description The blocker's Sync returned an error other than "no stored Google credential" (for example the personal feed could not be read, or reading the credential store failed), or the last_synced_at update failed. Body `{"error":"internal error"}`. Verified by TestPersonalCalendarSyncPropagatesBlockerError. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8282,16 +8477,8 @@ export interface operations {
                     "application/json": components["schemas"]["CalendarRoom"][];
                 };
             };
-            /** @description `not authenticated`, or MiddlewareUnauthorized. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Google CalendarList API error, message passed through verbatim. */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Google CalendarList API error, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8315,7 +8502,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Array of per-day results. `[]` when the slice stayed empty (week mode with every day failing).
+            /** @description Array of per-day results: exactly one entry in single-day mode, exactly five (Mon..Fri, in that order) in week mode. Never `[]` (PAC-36: a week in which a day failed is an error response, not a shorter array).
              *      */
             200: {
                 headers: {
@@ -8325,7 +8512,7 @@ export interface operations {
                     "application/json": components["schemas"]["CompressionResult"][];
                 };
             };
-            /** @description `invalid week format` or `invalid date format` - JSON error shape (writeError).
+            /** @description `invalid JSON` (the body is present, is not `null`, and does not decode into CompressionRequest; PAC-36, API-035), `invalid week format` or `invalid date format`. Fixed messages, JSON error shape (writeError).
              *      */
             400: {
                 headers: {
@@ -8335,14 +8522,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Single-day mode only. Raw Go error as text/plain (http.Error).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Both modes: an engine failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`), on the single day or on any one of the five week days (PAC-36, API-034: week mode no longer skips it); or reading the credential store failed (checked before any day is computed). Body: `{"error":"internal error"}`, with no per-day results and no indication of which day failed. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8378,13 +8565,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine Apply() error, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine Apply() failure for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8402,13 +8590,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created Google Calendar event. */
+            /** @description The created event as the CalendarEvent DTO (PAC-29). Room resource attendees are dropped from `attendees` / `attendee_details`, as in the list; `attendees` is omitted when there are none. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEvent"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
             /** @description `invalid JSON`, or `invalid start or end (use RFC3339)` - JSON error shape (writeError).
@@ -8421,13 +8609,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Calendar/engine error, raw Go error as text/plain (http.Error). */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Calendar or engine error for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8464,14 +8653,14 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description Engine error (freebusy failure, settings load, or the out-of-hours allowance counter). Raw Go error as text/plain (http.Error).
-             *      */
+            401: components["responses"]["CalendarNotConnected"];
+            /** @description Engine error (freebusy failure or settings load) for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`): `{"error":"internal error"}`; or the weekly out-of-hours allowance is spent: `{"error":"out-of-hours meeting allowance reached"}` (still a 500, not a 4xx: changing that status is not part of this change). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -8548,7 +8737,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description Messages: "user not found"; "slug generation failed"; "slug check failed"; "create failed: <err>"; "owner host failed: <err>". */
+            /** @description `error` is one of "user not found", "slug generation failed", "slug check failed" or "internal error" (insert or owner-host insert failed). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8620,7 +8809,16 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8662,7 +8860,16 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8801,7 +9008,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "delete failed: <err>" */
+            /** @description Lookup or delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8875,7 +9082,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description "internal error", "slug check failed", or "update failed: <err>" */
+            /** @description `error` is "internal error" (lookup or update failed) or "slug check failed". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8917,7 +9124,16 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9019,7 +9235,16 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"update failed: <err>"} */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BookingError"];
+                };
+            };
+            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9092,7 +9317,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "invite failed: <err>" */
+            /** @description Lookup or invite failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9115,7 +9340,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Caller removed (or was never a host). Empty body. */
+            /** @description The caller's host row was deleted. Empty body. */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -9132,7 +9357,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Body: {"error":"not found"} */
+            /** @description No link with that id, or the caller (not the owner) has no host row on it. Both are `{"error":"not found"}`; in the second case nothing is deleted (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9141,7 +9366,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "internal error" or "leave failed: <err>" */
+            /** @description Lookup or leave failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9170,13 +9395,13 @@ export interface operations {
                     "application/json": components["schemas"]["Settings"];
                 };
             };
-            /** @description DB failure, raw Go error as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9204,13 +9429,13 @@ export interface operations {
                 };
             };
             400: components["responses"]["SettingsValidationError"];
-            /** @description Save or re-read failure, text/plain (http.Error). */
+            /** @description Load, save or re-read failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9233,13 +9458,13 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapSettings"];
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9274,13 +9499,13 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9303,13 +9528,13 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapPreview"];
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9342,22 +9567,22 @@ export interface operations {
                     "text/plain": string;
                 };
             };
-            /** @description `db error` as text/plain (http.Error). */
+            /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
-            /** @description `send error: <err>` as text/plain (http.Error). */
+            /** @description Sending the test message failed. Body: `{"error":"upstream provider error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/plain": string;
+                    "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
         };
@@ -9381,7 +9606,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["JsonUnauthorized"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     createTeam: {
@@ -9417,7 +9642,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["JsonUnauthorized"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeamInvite: {
@@ -9461,7 +9686,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     acceptTeamInvite: {
@@ -9512,7 +9737,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeam: {
@@ -9556,7 +9781,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     deleteTeam: {
@@ -9588,7 +9813,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     renameTeam: {
@@ -9607,14 +9832,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The re-read team. GetTeam's error is discarded, so the body can be the JSON literal `null` on a read failure even though the rename committed.
+            /** @description The re-read team. Never `null`: since PAC-26 (API-032) a failed re-read is the 500 `internal error` below instead of a 200 whose body is the JSON literal `null`. The rename has committed when that 500 is sent.
              *      */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Team"] | null;
+                    "application/json": components["schemas"]["Team"];
                 };
             };
             /** @description JSON error "invalid team id" or "name is required". */
@@ -9627,7 +9852,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getFormalTeamAnalytics: {
@@ -9665,7 +9890,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     getTeamAvailability: {
@@ -9705,7 +9930,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     inviteTeamMember: {
@@ -9753,7 +9978,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     removeTeamMember: {
@@ -9787,7 +10012,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     listNoMeetingZones: {
@@ -9821,7 +10046,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     createNoMeetingZone: {
@@ -9869,7 +10094,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     deleteNoMeetingZone: {
@@ -9902,7 +10127,7 @@ export interface operations {
                 };
             };
             403: components["responses"]["JsonForbidden"];
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
     updateNoMeetingZone: {
@@ -9959,7 +10184,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            500: components["responses"]["PlainTextServerError"];
+            500: components["responses"]["ServerError"];
         };
     };
 }

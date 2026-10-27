@@ -53,7 +53,8 @@ type BackendSchedulingLink = {
   }>;
 };
 
-type BackendUser = { id: string; email: string; name?: string };
+/** The current-user read (CurrentUserResponse); the picture is `avatarUrl` there (PAC-35). */
+type BackendUser = { id: string; email: string; name?: string; avatarUrl?: string };
 type BackendPublicLink = {
   slug: string; title: string; durations?: number[]; duration_options?: number[];
   hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
@@ -77,7 +78,7 @@ const WEEKDAY_BY_NUMBER: Record<number, Weekday> = { 0: "sun", 1: "mon", 2: "tue
 const WEEKDAY_TO_NUMBER: Record<Weekday, number> = { mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0 };
 
 function ownerHost(user: BackendUser): SchedulingHost {
-  return { user_id: user.id, email: user.email, name: user.name, is_owner: true, status: "accepted" };
+  return { user_id: user.id, email: user.email, name: user.name, avatar_url: user.avatarUrl || undefined, is_owner: true, status: "accepted" };
 }
 
 function normalizeSchedulingLink(raw: BackendSchedulingLink, user?: BackendUser): SchedulingLink {
@@ -87,7 +88,9 @@ function normalizeSchedulingLink(raw: BackendSchedulingLink, user?: BackendUser)
     user_id: host.user_id,
     email: host.email,
     name: host.name,
-    avatar_url: host.avatar_url,
+    // The signed-in user's own entry falls back to their picture from the
+    // current-user read (PAC-35 AC-14).
+    avatar_url: host.avatar_url || (user && host.user_id === user.id ? user.avatarUrl || undefined : undefined),
     is_owner: host.is_owner ?? host.user_id === ownerID,
     status: host.status === "accepted" ? "accepted" : host.status === "declined" ? "declined" : "pending",
   }));
