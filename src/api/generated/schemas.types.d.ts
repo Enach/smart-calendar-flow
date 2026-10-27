@@ -4787,7 +4787,7 @@ export type get_ListSchedulingLinkInvitesAlias = {
       
     }
 /**
- * No ownership or membership check: any authenticated user who knows the UUID receives the full link including every host's email, name and avatar. `is_owner` is computed against the caller and `my_status` is only emitted when the caller is one of the hosts.
+ * Readable only by the link's owner and by co-hosts whose host row on the link is `accepted` (PAC-25, API-006). That is the same set of callers who receive the link from `GET /api/scheduling-links`, so this read discloses nothing the list does not. Every other authenticated caller (no host row, a `pending` or `declined` invitation, a co-host who left or was removed) receives the same `404 {"error":"not found"}` as for an id that matches no link, with no part of the link in the body, so the answer does not reveal whether a link exists. A refused read is never `403` (PAC-25 D-1; contrast the owner-only siblings PATCH, DELETE, `/bookings` and `/hosts`, which still answer `403` and are out of scope). Check order: `400` malformed id; then the link lookup; then the caller's own host-status lookup on that link; then `404` for no link or a caller who may not read it; then `200`. A storage error on either lookup answers `500` `{"error":"internal error"}`, never `404` (an outage is not reported as "not found") and never `200` (the reader check does not fail open). An allowed reader receives the full record including every host row (accepted, pending and declined) with each host's email, name and avatar; `is_owner` is computed against the caller and `my_status` is the caller's own host status. Building that record reads the roster (the link's host rows and each host's user record); a storage error on that read also answers `500` `{"error":"internal error"}`, never `200` with `hosts: []` or with a host's email missing (PAC-25 C-2). An accepted co-host therefore still sees pending and declined invitees' emails, as through the list (PAC-25 D-2).
  */
 export type get_GetSchedulingLink = {
       method: "GET",
@@ -5316,7 +5316,7 @@ export type post_InviteTeamMember = {
       
     }
 /**
- * Self-removal skips the ownership check entirely, so a team owner can remove themselves and leave the team ownerless. There is no last-owner guard here — the owner-protection rule lives only on DELETE /api/manager/team/members/{email}.
+ * An owner of the team may remove anyone; any caller may remove themselves. A removal that would leave the team with zero owners is refused with 422 and changes nothing (PAC-25, API-023). Check order, fixed so that a non-owner cannot learn who the owner is from the answer: 400 malformed ids; then, when the caller is not the target, 403 unless the caller is an owner; then 422 if the target is an owner and no other owner of the team would remain; then the removal, 204. The guard counts owners ("would leave zero owners", PAC-25 D-4), it does not refuse every owner: in a team with two owners either may leave, and the second to try is refused. No interleaving of concurrent removals may leave the team with zero owners (PAC-25 D-6). A sole owner who is also the only member is refused too; deleting the team (DELETE /api/teams/{id}) stays the way to be rid of it (PAC-25 D-5). The manager-domain DELETE /api/manager/team/members/{email} keeps its own, role-based rule (it refuses removing any owner) with the same 422 wording (PAC-25 D-3).
  */
 export type delete_RemoveTeamMember = {
       method: "DELETE",
@@ -5333,6 +5333,7 @@ export type delete_RemoveTeamMember = {
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
+422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
