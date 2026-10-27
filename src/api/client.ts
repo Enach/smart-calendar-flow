@@ -1,4 +1,4 @@
-import type { ApiPort, CompressionApplyResponse } from "./contract";
+import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
 import { CalendarDisconnectUnsupported, SettingsUpdate } from "./generated/schemas";
 
 import type {
@@ -521,6 +521,30 @@ export function normalizeAuditEntries(raw: unknown): AuditEntry[] {
  * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
  * rethrown so the UI can surface an actionable error instead of fake success.
  */
+/**
+ * The preview (mock) answer of the three event mutations, in the shape the
+ * server sends (the generated CalendarEvent DTO, PAC-29): only the declared
+ * keys, and colour only when it is one of the server's palette.
+ */
+const DTO_COLORS: ReadonlyArray<string> = ["#7986CB", "#33B679", "#8E24AA", "#E67C73", "#F6BF26", "#F4511E", "#039BE5", "#3F51B5", "#0B8043", "#D50000", "#616161"];
+function mockEventDTO(ev: CalendarEvent): CalendarEventDTO {
+  const dto: CalendarEventDTO = { id: ev.id, title: ev.title, start: ev.start, end: ev.end };
+  if (ev.color && DTO_COLORS.includes(ev.color)) dto.color = ev.color as CalendarEventDTO["color"];
+  if (ev.attendees?.length) dto.attendees = [...ev.attendees];
+  if (ev.attendee_details?.length) {
+    dto.attendee_details = ev.attendee_details.map(({ email, name, rsvp, organizer }) => ({
+      email,
+      ...(name ? { name } : {}),
+      ...(rsvp ? { rsvp } : {}),
+      ...(organizer ? { organizer } : {}),
+    }));
+  }
+  if (ev.description) dto.description = ev.description;
+  if (ev.location) dto.location = ev.location;
+  if (ev.conference) dto.conference = { ...ev.conference };
+  return dto;
+}
+
 export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
   if (usingMocks) return mock();
   try {
@@ -1152,7 +1176,7 @@ export const api = {
     description?: string;
   }) =>
     withFallback(
-      () => requestApi<CalendarEvent>("POST", "/schedule/create", body),
+      () => requestApi<CalendarEventDTO>("POST", "/schedule/create", body),
       () => {
         const ev: CalendarEvent = {
           id: String(mockState.nextEventId++),
@@ -1165,7 +1189,7 @@ export const api = {
         };
         mockState.events.push(ev);
         logAudit("schedule.create", `Created "${body.title}" (mock)`);
-        return ev;
+        return mockEventDTO(ev);
       },
     ),
   compressionPreview: (body: { date?: string; week?: string }) =>
@@ -1226,7 +1250,7 @@ export const api = {
     ),
   nlpConfirm: (parse_result: ParseResult, selected_slot_index: number) =>
     withFallback(
-      () => requestApi<CalendarEvent>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
+      () => requestApi<CalendarEventDTO>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
       () => {
         const slot = parse_result.suggested_slots?.[selected_slot_index];
         if (!slot) throw new Error("No slot selected");
@@ -1241,7 +1265,7 @@ export const api = {
         };
         mockState.events.push(ev);
         logAudit("nlp.confirm", `Scheduled "${ev.title}" (mock)`);
-        return ev;
+        return mockEventDTO(ev);
       },
     ),
 
@@ -1364,7 +1388,7 @@ export const api = {
   ) =>
     withFallback(
       () =>
-        requestApi<CalendarEvent>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
+        requestApi<CalendarEventDTO>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
       () => {
         const ev = mockState.events.find((e) => e.id === id);
         if (!ev) throw new Error("Not found");
@@ -1374,7 +1398,7 @@ export const api = {
           ev.attendees = patch.attendee_details.map((a) => a.email);
         }
         logAudit("event.update", `Edited "${ev.title}" (mock)`);
-        return { ...ev };
+        return mockEventDTO(ev);
       },
     ),
 

@@ -21,9 +21,30 @@ import type { Attendee, CalendarEvent, ConferenceLink } from "@/api/types";
 const inputCls =
   "h-9 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/** An all-day event: the DTO's start is a bare YYYY-MM-DD date (PAC-29, D-8). */
+function isAllDay(ev: CalendarEvent) {
+  return BARE_DATE.test(ev.start);
+}
 function isoDateOnly(iso: string) {
+  // A bare date is already the calendar date; new Date() would read it as UTC
+  // midnight and show the previous day west of UTC.
+  if (BARE_DATE.test(iso)) return iso;
   const d = new Date(iso);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+/** Default times shown for an all-day event, which has none. */
+const ALL_DAY_START = "09:00";
+const ALL_DAY_END = "10:00";
+function initialTimes(ev: CalendarEvent): [string, string] {
+  return isAllDay(ev) ? [ALL_DAY_START, ALL_DAY_END] : [isoTimeOnly(ev.start), isoTimeOnly(ev.end)];
+}
+/** Whole days from one bare date to another (UTC arithmetic, no DST). */
+function daysBetween(from: string, to: string) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+function addDays(date: string, days: number) {
+  return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 }
 function isoTimeOnly(iso: string) {
   const d = new Date(iso);
@@ -53,8 +74,8 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
 
   const [title, setTitle] = useState(event.title);
   const [date, setDate] = useState(isoDateOnly(event.start));
-  const [startTime, setStartTime] = useState(isoTimeOnly(event.start));
-  const [endTime, setEndTime] = useState(isoTimeOnly(event.end));
+  const [startTime, setStartTime] = useState(initialTimes(event)[0]);
+  const [endTime, setEndTime] = useState(initialTimes(event)[1]);
   const [description, setDescription] = useState(event.description ?? "");
   const [location, setLocation] = useState(event.location ?? "");
   const [roomEmail, setRoomEmail] = useState<string | undefined>(event.room_resource_email);
@@ -68,8 +89,9 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
   useEffect(() => {
     setTitle(event.title);
     setDate(isoDateOnly(event.start));
-    setStartTime(isoTimeOnly(event.start));
-    setEndTime(isoTimeOnly(event.end));
+    const [s, e] = initialTimes(event);
+    setStartTime(s);
+    setEndTime(e);
     setDescription(event.description ?? "");
     setLocation(event.location ?? "");
     setRoomEmail(event.room_resource_email);
@@ -81,12 +103,27 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
   const start = combineDateTime(date, startTime);
   const end = combineDateTime(date, endTime);
 
+  /**
+   * start/end to send (PAC-29, D-8). A timed event always sends date-times.
+   * An all-day event sends date-times only when a time changed (an explicit
+   * conversion to timed); bare dates, keeping its span in days, when only the
+   * date changed; and nothing when neither did.
+   */
+  const timesToSend = (): { start?: string; end?: string } => {
+    if (!isAllDay(event)) return { start, end };
+    const [s, e] = initialTimes(event);
+    if (startTime !== s || endTime !== e) return { start, end };
+    if (date !== event.start) return { start: date, end: addDays(date, daysBetween(event.start, event.end)) };
+    return {};
+  };
+
   const save = async () => {
     if (!title.trim()) {
       toast.error("Title is required");
       return;
     }
-    if (new Date(end) <= new Date(start)) {
+    const times = timesToSend();
+    if (times.start && times.end && times.start.includes("T") && new Date(times.end) <= new Date(times.start)) {
       toast.error("End time must be after start time");
       return;
     }
@@ -96,8 +133,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
         event.id,
         {
           title: title.trim(),
-          start,
-          end,
+          ...times,
           description,
           location,
           room_resource_email: roomEmail,
