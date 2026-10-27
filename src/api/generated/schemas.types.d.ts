@@ -91,7 +91,7 @@ export type AnalyticsWeekRow = {
   meeting_count: number;
   focus_block_count: number;
   /**
-   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058; was a 0..1 fraction): `completed / (scheduled + completed) * 100`, 0 when there are none, not rounded. Equal to the single-week value for the same stored week. Rows stored before PAC-42 are reported on this scale too: storage keeps the 0..1 fraction for every week and the scale is applied on read (spec D-3).
+   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058; reported unscaled before PAC-42): `completed / (scheduled + completed) * 100`, 0 when there are none, not rounded. Equal to the single-week value for the same stored week. Rows stored before PAC-42 are reported on this scale too: storage keeps the unscaled ratio for every week and the multiplication by 100 is applied on read (spec D-3).
    */
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
@@ -139,7 +139,7 @@ export type AnalyticsWeekWithBreakdown = {
   meeting_count: number;
   focus_block_count: number;
   /**
-   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058: the same scale as `focus_score` and `breakdown[].percentage` in this response): `completed / (scheduled + completed) * 100` over the week's occurrences. 0 when there are none. Not rounded. Storage keeps the 0..1 fraction; the scale is applied when the response is built (spec D-3).
+   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058: the same scale as `focus_score` and `breakdown[].percentage` in this response): `completed / (scheduled + completed) * 100` over the week's occurrences. 0 when there are none. Not rounded. Storage keeps the unscaled ratio; the multiplication by 100 is applied when the response is built (spec D-3).
    */
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
