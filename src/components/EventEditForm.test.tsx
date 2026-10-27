@@ -104,6 +104,14 @@ describe("EventEditForm saving an all-day event (PAC-29, AC-9)", () => {
     expect(patch.end).toBe("2026-05-09");
   });
 
+  it("(ii) an all-day event with no end moves as a one-day event", async () => {
+    const { container } = renderForm({ ...ALL_DAY, end: "" });
+    fireEvent.change(dateInput(container), { target: { value: "2026-05-06" } });
+    const patch = await save();
+    expect(patch.start).toBe("2026-05-06");
+    expect(patch.end).toBe("2026-05-07");
+  });
+
   it("(iii) a time change sends two RFC3339 date-times", async () => {
     const { container } = renderForm(ALL_DAY);
     const [startInput, endInput] = timeInputs(container);

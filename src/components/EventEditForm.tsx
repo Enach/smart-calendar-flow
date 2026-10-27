@@ -41,7 +41,9 @@ function initialTimes(ev: CalendarEvent): [string, string] {
 }
 /** Whole days from one bare date to another (UTC arithmetic, no DST). */
 function daysBetween(from: string, to: string) {
-  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  const days = Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  // No usable end (the DTO's end may be ""): treat it as a one-day event.
+  return Number.isFinite(days) && days >= 1 ? days : 1;
 }
 function addDays(date: string, days: number) {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
