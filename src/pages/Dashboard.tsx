@@ -253,18 +253,31 @@ export default function Dashboard() {
   const handleEventChange = useCallback(
     async (
       info: {
-        event: { id: string; title: string; start: Date | null; end: Date | null };
+        event: { id: string; title: string; start: Date | null; end: Date | null; allDay?: boolean };
         revert: () => void;
       },
       kind: "drop" | "resize",
     ) => {
       const { event, revert } = info;
-      if (!event.start || !event.end) {
+      if (!event.start || (!event.end && !event.allDay)) {
         revert();
         return;
       }
-      const start = event.start.toISOString();
-      const end = event.end.toISOString();
+      // An all-day event is written back as bare local calendar dates with an
+      // exclusive end, so it stays all-day (PAC-29, D-8, API-043). FullCalendar
+      // gives local midnights; toISOString() would shift them a day east of UTC.
+      const localDate = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      let start: string;
+      let end: string;
+      if (event.allDay) {
+        const endDate = event.end ?? new Date(event.start.getFullYear(), event.start.getMonth(), event.start.getDate() + 1);
+        start = localDate(event.start);
+        end = localDate(endDate);
+      } else {
+        start = event.start.toISOString();
+        end = (event.end as Date).toISOString();
+      }
       try {
         await api.updateEvent(event.id, { start, end }, "none");
         qc.invalidateQueries({ queryKey: ["events"] });

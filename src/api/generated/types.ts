@@ -733,14 +733,14 @@ export interface paths {
         post?: never;
         /**
          * Delete a Google Calendar event
-         * @description Deletes the event from the user's primary calendar. The handler reads no query parameters — in particular the `send_updates` parameter the frontend sends is ignored.
+         * @description Deletes the event from the user's primary calendar. Since PAC-29 the `send_updates` query parameter is passed to Google's delete call (API-042), and a Google 404 or 410 is a 404 like PATCH (API-045). PAC-29: until PAC-29's implementation lands the server reads no query parameter (so guests are never notified and an invalid `send_updates` is not rejected) and every delete failure, including a missing event, is a 500. This operation describes the server after that PR, not before it. Error precedence (PAC-29): an invalid `send_updates` is a 400 before the stored credential is read (401 / 500) and before any Google call.
          */
         delete: operations["deleteEvent"];
         options?: never;
         head?: never;
         /**
          * Partially update a Google Calendar event
-         * @description Fetches the event, applies only the non-null fields from the body, and writes it back with calendar.CalendarClient.UpdateEvent. Every field is a Go pointer, so an ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". `start` / `end` are decoded as time.Time and re-emitted as UTC RFC3339 `dateTime` — patching either one CONVERTS AN ALL-DAY EVENT INTO A TIMED EVENT. Supplying `attendees` REPLACES the whole attendee list with email-only entries, discarding display names and RSVP status, and also discards any room resource attendee that the previous list contained. The 200 body is the raw google.golang.org/api/calendar/v3.Event that UpdateEvent returned, re-encoded as-is (`json.NewEncoder(w).Encode(updated)` in handlers_events.go), NOT the flattened CalendarEvent DTO used by GET /api/calendar/events. U-04 resolved by PAC-21 from the handler, to be pinned by TestPatchEvent_SuccessBodyIsRawGoogleEvent (AC-6, written in the backend PR before the code). Whether the endpoint should return CalendarEvent instead (the web app types it that way) is a separate product question (API-017), not part of this contract.
+         * @description Fetches the event, applies the non-null fields of the body, and writes it back with calendar.CalendarClient.UpdateEvent. An ABSENT key and an explicit `null` are indistinguishable and both mean "leave unchanged". The field-by-field semantics are on EventPatchRequest. In short, since PAC-29: `send_updates` is passed to Google (absent means `none`, which is what every PATCH did before PAC-29); a bare `YYYY-MM-DD` `start` / `end` keeps the event all-day (API-043); `attendees` replaces the non-room guests but keeps each existing guest's Google entry (name, RSVP) and every room resource attendee (API-044); `room_resource_email` adds that room (API-018); `attendee_details` is declared, accepted and ignored (API-018). The 200 body is the event UpdateEvent returned, flattened by the same toCalendarEventDTO as GET /api/calendar/events: the CalendarEvent DTO (`title`, `start`, `end`, `attendees: string[]`, ...), never Google's own keys (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`) (API-017, U-04). Like the list, the DTO drops room resource attendees (`*@resource.calendar.google.com`) from `attendees` and `attendee_details`, so a room on the event is not visible in this body even though PATCH keeps it. Only a Google 404 or 410 from the initial GetEvent, or a GetEvent answer whose `status` is `cancelled` (Google returns recently deleted events that way), is a 404; any other GetEvent failure is a 500 (API-045). Error precedence (PAC-29): checks that need only the request come first (`invalid body`, `invalid send_updates`, `invalid room_resource_email`: 400), then the stored credential (401 / 500), then GetEvent (404 / 500), then the start/end kind check against the stored event (400); Google is written only after all of them pass. PAC-29: until PAC-29's implementation lands the server still encodes the raw google.golang.org/api/calendar/v3.Event, ignores `send_updates`, `room_resource_email` and `attendee_details`, decodes `start` / `end` as date-times only (a bare date is a 400 `invalid body`) and writes them as UTC `dateTime` (converting an all-day event to a timed one), replaces the whole attendee list with email-only entries (dropping names, RSVPs and the room), maps every GetEvent failure to 404, and writes to a cancelled event like any other. This operation describes the server after that PR, not before it.
          */
         patch: operations["patchEvent"];
         trace?: never;
@@ -1578,7 +1578,7 @@ export interface paths {
         put?: never;
         /**
          * Create the meeting for a chosen parsed slot
-         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the raw Google Calendar event is returned. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
+         * @description The whole ParseResult from /api/nlp/parse is echoed back. Only `title`, `attendees`, `constraints` (mapped to the event Description) and `suggested_slots[selected_slot_index]` are used; `duration_minutes`, `range_start`, `range_end`, `preferred_times` and `avoid_times` are ignored here. On success an audit row `nlp_confirmed` is written and the created event is returned as the CalendarEvent DTO (toCalendarEventDTO, the same shape as GET /api/calendar/events), never Google's own keys. PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR. A NEGATIVE `selected_slot_index` is a 400 `invalid selected_slot_index`, like an index past the end. Before PAC-21 was finished it passed the bounds check, indexed the slice out of range and panicked; the panic was re-raised by sentryMiddleware, so net/http aborted the response with no status and no body at all. That was U-06 / API-024, resolved here: a crash is not a contract to preserve, and the 400 is the response the handler already gives every other out-of-range index.
          *
          */
         post: operations["confirmNaturalLanguage"];
@@ -1797,7 +1797,7 @@ export interface paths {
         put?: never;
         /**
          * Create a meeting at an explicit time
-         * @description `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the raw Google Calendar API `calendar/v3.Event` struct as returned by the calendar client - it is NOT normalised into the app's own event shape.
+         * @description `start` and `end` must both parse as RFC3339. The handler builds an `engine.ScheduleRequest` WITHOUT `duration_minutes` (the slot carries the times) and calls SmartScheduler.CreateMeeting, which refuses out-of-hours creation once the weekly allowance is spent - that refusal surfaces as a 500 with the text `out-of-hours meeting allowance reached`, not a 4xx. On success an audit row `meeting_created` is written. The response body is the created event flattened by toCalendarEventDTO: the CalendarEvent DTO, the same shape as one element of GET /api/calendar/events, never Google's own keys (`summary`, `start.dateTime`, `hangoutLink`). PAC-29 (API-017, U-14): until PAC-29's implementation lands the server still encodes the raw `calendar/v3.Event` here, so this response describes the server after that PR.
          *
          */
         post: operations["createScheduledMeeting"];
@@ -2668,7 +2668,7 @@ export interface components {
              */
             provider: "outlook" | "webcal";
         };
-        /** @description api.calendarEventDTO — the flattened event shape returned by GET /api/calendar/events. */
+        /** @description api.calendarEventDTO, built by toCalendarEventDTO — the flattened event shape returned by GET /api/calendar/events (one per array element) and, since PAC-29, as the whole 200 body of PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm. One converter, so the four operations cannot disagree about the same event. */
         CalendarEvent: {
             /** @description Google Calendar event id. Always present as a key; may be "". */
             id: string;
@@ -2687,7 +2687,7 @@ export interface components {
             attendees?: string[];
             /** @description Parallel to `attendees`, same ordering and same filtering. Omitted when empty. */
             attendee_details?: components["schemas"]["CalendarEventAttendee"][];
-            /** @description Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from responses from this endpoint. */
+            /** @description Declared on the DTO with `omitempty` but NEVER SET by toCalendarEventDTO, so it is always omitted from every response that carries this schema (the events list and, since PAC-29, PATCH /api/events/{id}, POST /api/schedule/create and POST /api/nlp/confirm). */
             is_personal_block?: boolean;
             /** @description Omitted when empty. */
             description?: string;
@@ -3006,24 +3006,29 @@ export interface components {
             /** @description Omitted when empty. "Custom link" for custom, "Google Meet" for google_meet, the uppercased provider name (e.g. "ZOOM", "TEAMS") for factory providers, and the bare stored provider string on the echo branch. */
             label?: string;
         };
-        /** @description Body of PATCH /api/events/{id}. Every field is optional; only non-null fields are applied. Unknown keys are silently ignored by encoding/json. */
+        /** @description Body of PATCH /api/events/{id}. Every field is optional; null or absent leaves the corresponding part of the event unchanged. Since PAC-29 the schema declares every key the web client sends (`send_updates`, `room_resource_email`, `attendee_details`, API-018). The server's decoder still ignores undeclared keys; the contract forbids them so a generated client cannot send a key that would be a silent no-op. */
         EventPatchRequest: {
             /** @description Maps to Google `summary`. Null or absent leaves it unchanged. */
             title?: string | null;
             description?: string | null;
             location?: string | null;
-            /**
-             * Format: date-time
-             * @description Decoded as Go time.Time (RFC3339) and re-emitted as UTC RFC3339 in `start.dateTime`. Setting this on an all-day event converts it to a timed event.
-             */
+            /** @description Either an RFC3339 date-time, written as Google `start.dateTime` in UTC (the event becomes or stays timed), or a bare `YYYY-MM-DD` date, written as Google `start.date` (the event becomes or stays all-day). The same dual format as CalendarEvent.start, so a client can write back what it read. PAC-29, API-043: before PAC-29 only a date-time was accepted and an all-day event was always converted to a timed one. After applying the patch, start and end must be of the same kind or the request is a 400. */
             start?: string | null;
-            /**
-             * Format: date-time
-             * @description Same handling as `start`.
-             */
+            /** @description Same handling as `start`. For a bare date this is Google's exclusive end date, as in CalendarEvent.end. */
             end?: string | null;
-            /** @description FULL REPLACEMENT of the attendee list with email-only entries. Sending `[]` clears all attendees, including room resources. */
+            /** @description Replaces the event's NON-ROOM attendees with this list (emails compared case-insensitively, duplicates collapsed). An email already on the event keeps its existing Google attendee entry (display name, RSVP, organizer, optional); a new email is added as an email-only entry. Room resource attendees already on the event (`resource: true` or `*@resource.calendar.google.com`) are always kept, so writing back the list GET /api/calendar/events returned (which omits rooms) does not drop the room. `[]` removes every non-room attendee. The two room rules differ on purpose: the DTO hides only the `*@resource.calendar.google.com` suffix, so a `resource: true` attendee without that suffix is shown as an ordinary guest, yet PATCH still keeps it if the client leaves it out. The difference can only keep an attendee, never drop one. PAC-29, API-044: before PAC-29 this replaced the whole list with email-only entries, dropping names, RSVPs and the room. */
             attendees?: string[] | null;
+            /**
+             * @description Passed to Google's update call as `sendUpdates`: `all` emails the guests about the change, `none` does not. Null or absent means `none`, which is what every PATCH did before PAC-29. Any other value is a 400 and nothing is written. PAC-29, API-018.
+             * @enum {string|null}
+             */
+            send_updates?: "all" | "none" | null;
+            /** @description A Google room resource calendar address (as returned by GET /api/rooms). When non-empty and not already an attendee, the room is added as a resource attendee. Rooms already on the event are kept: this endpoint never removes a room (PAC-29 decision D-6). Null, absent or `""` leaves the rooms unchanged. A non-empty value that is not a `*@resource.calendar.google.com` address is a 400. PAC-29, API-018. */
+            room_resource_email?: string | null;
+            /** @description Accepted and ignored by the server. Declared because the web client sends it alongside `attendees` on every edit (API-018). Who attends comes from `attendees`; existing attendees keep their names and RSVPs from Google (see `attendees`); a client never sets another person's RSVP. PAC-29 decision D-7. */
+            attendee_details?: {
+                [key: string]: unknown;
+            }[] | null;
         };
         /** @description storage.FocusBlock (backend/storage/models.go), with explicit snake_case json tags (PAC-26, API-014). The keys match the `focus_blocks` columns and the web app's FocusBlock type. Before PAC-26 the struct had no tags and the keys were `ID`, `GoogleEventID`, `StartTime`, `EndTime`, `Date`, `CreatedAt`.
          *      */
@@ -3149,64 +3154,6 @@ export interface components {
             start: string;
             /** Format: date-time */
             end: string;
-        };
-        /** @description The raw `google.golang.org/api/calendar/v3.Event` returned by the calendar client and re-encoded as-is. Only the members this repo sets or reads are listed; the real payload carries the full Google Calendar event resource and omits empty fields (the generated struct uses `omitempty` almost everywhere).
-         *      */
-        GoogleCalendarEvent: {
-            id?: string;
-            summary?: string;
-            description?: string;
-            location?: string;
-            status?: string;
-            htmlLink?: string;
-            hangoutLink?: string;
-            start?: components["schemas"]["GoogleEventDateTime"];
-            end?: components["schemas"]["GoogleEventDateTime"];
-            attendees?: components["schemas"]["GoogleEventAttendee"][];
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description The raw google.golang.org/api/calendar/v3.Event returned unmodified by PATCH /api/events/{id}. Its keys are Google's own camelCase API names (`summary`, `start.dateTime`, `htmlLink`, `hangoutLink`, `attendees[].responseStatus`, …), not the CalendarEvent shape. Only the most load-bearing fields are listed; the object carries the full Google event payload. */
-        GoogleCalendarEventRaw: {
-            id?: string;
-            summary?: string;
-            description?: string;
-            location?: string;
-            htmlLink?: string;
-            hangoutLink?: string;
-            /** @description Google EventDateTime — has `dateTime`, `date` and/or `timeZone`. */
-            start?: {
-                [key: string]: unknown;
-            };
-            end?: {
-                [key: string]: unknown;
-            };
-            attendees?: {
-                [key: string]: unknown;
-            }[];
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description calendar/v3.EventAttendee. This repo only ever sets `email`. */
-        GoogleEventAttendee: {
-            /** Format: email */
-            email?: string;
-            displayName?: string;
-            organizer?: boolean;
-            responseStatus?: string;
-            optional?: boolean;
-        } & {
-            [key: string]: unknown;
-        };
-        /** @description calendar/v3.EventDateTime. This repo only ever sets `dateTime`. */
-        GoogleEventDateTime: {
-            /** Format: date-time */
-            dateTime?: string;
-            /** Format: date */
-            date?: string;
-            timeZone?: string;
-        } & {
-            [key: string]: unknown;
         };
         /** @description storage.Habit. Every field is emitted — no `omitempty` anywhere on this struct. */
         Habit: {
@@ -6420,7 +6367,10 @@ export interface operations {
     };
     deleteEvent: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Whether Google emails the guests about the cancellation. Absent means `none`, which is what every DELETE did before PAC-29. Any other value is a 400 and nothing is deleted. */
+                send_updates?: "all" | "none";
+            };
             header?: never;
             path: {
                 /** @description Google Calendar event id, taken verbatim from the URL. Not validated or decoded by the handler. */
@@ -6437,8 +6387,26 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description `{"error":"invalid send_updates"}`: the query parameter is present and is neither `all` nor `none`. Nothing is deleted (PAC-29). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             401: components["responses"]["CalendarNotConnected"];
-            /** @description The Google delete call failed, or the stored credential could not be read. Deleting an already-deleted or non-existent event surfaces here as 500, never as 404. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description `{"error":"event not found"}`: Google answered the delete with 404 or 410 (the event does not exist or is already deleted). PAC-29, API-045. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The Google delete call failed with anything other than 404 / 410, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -6465,16 +6433,16 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The updated event, serialized by the Google API client library. */
+            /** @description The updated event as the CalendarEvent DTO, the same shape as one element of GET /api/calendar/events (PAC-29). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEventRaw"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
-            /** @description `invalid body` — the request body is not valid JSON. */
+            /** @description Nothing is written to Google. One of these fixed bodies: `{"error":"invalid body"}` (the body is not valid JSON, or `start` / `end` is neither an RFC3339 date-time nor a `YYYY-MM-DD` date); `{"error":"invalid send_updates"}` (a value other than `all` / `none`); `{"error":"invalid room_resource_email"}` (non-empty and not a `*@resource.calendar.google.com` address); `{"error":"start and end must both be dates or both be date-times"}` (after applying the patch to the stored event, one of start / end is a bare date and the other a date-time, e.g. a date-time `start` alone on an all-day event). The last three are PAC-29. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -6484,7 +6452,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["CalendarNotConnected"];
-            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Any GetEvent failure maps to 404, including transport and permission errors, not only a genuine 404 from Google. */
+            /** @description Body: `{"error":"event not found"}` (fixed text; the Google error is not appended, PAC-21). Since PAC-29 (API-045) only when GetEvent fails with a Google 404 or 410, or returns the event with `status: cancelled` (a deleted event; it is not written, so PATCH never restores it); any other GetEvent failure (transport, permission, quota) is a 500. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -6493,7 +6461,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The Google update call failed, or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description The Google update call failed, GetEvent failed with anything other than a Google 404 / 410 (PAC-29, API-045), or the stored credential could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8037,13 +8005,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created Google Calendar event. */
+            /** @description The created event as the CalendarEvent DTO (PAC-29). Room resource attendees are dropped from `attendees` / `attendee_details`, as in the list; `attendees` is omitted when there are none. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEvent"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
             /** @description `invalid JSON`, or `invalid selected_slot_index` (empty slot list, index < 0, or index >= len). JSON error shape (writeError).
@@ -8599,13 +8567,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The created Google Calendar event. */
+            /** @description The created event as the CalendarEvent DTO (PAC-29). Room resource attendees are dropped from `attendees` / `attendee_details`, as in the list; `attendees` is omitted when there are none. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["GoogleCalendarEvent"];
+                    "application/json": components["schemas"]["CalendarEvent"];
                 };
             };
             /** @description `invalid JSON`, or `invalid start or end (use RFC3339)` - JSON error shape (writeError).

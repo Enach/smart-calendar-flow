@@ -21,6 +21,16 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
+import type { components } from "./generated/types";
+
+/**
+ * The event as the server sends it from POST /api/schedule/create,
+ * POST /api/nlp/confirm and PATCH /api/events/{id}: the generated CalendarEvent
+ * DTO, the same shape as one element of GET /api/calendar/events (PAC-29,
+ * API-017). The hand-written CalendarEvent in ./types carries UI-only extras
+ * the server never sends on these paths.
+ */
+export type CalendarEventDTO = components["schemas"]["CalendarEvent"];
 
 export interface ScheduleSuggestRequest {
   duration_minutes: number;
@@ -69,12 +79,12 @@ export interface ApiPort {
   clearFocusBlocks(week: string): Promise<{ deleted: number }>;
 
   scheduleSuggest(body: ScheduleSuggestRequest): Promise<{ slots: SuggestedSlot[] }>;
-  scheduleCreate(body: ScheduleCreateRequest): Promise<CalendarEvent>;
+  scheduleCreate(body: ScheduleCreateRequest): Promise<CalendarEventDTO>;
   compressionPreview(body: { date?: string; week?: string }): Promise<CompressionResult[]>;
   compressionApply(body: { proposals: MoveProposal[] }): Promise<CompressionApplyResponse>;
 
   nlpParse(text: string): Promise<ParseResult>;
-  nlpConfirm(parseResult: ParseResult, selectedSlotIndex: number): Promise<CalendarEvent>;
+  nlpConfirm(parseResult: ParseResult, selectedSlotIndex: number): Promise<CalendarEventDTO>;
 
   getAudit(limit?: number): Promise<AuditEntry[]>;
 
@@ -90,7 +100,7 @@ export interface ApiPort {
     id: string,
     patch: Partial<Pick<CalendarEvent, "title" | "start" | "end" | "description" | "location" | "room_resource_email" | "attendees" | "attendee_details">>,
     sendUpdates?: "all" | "none",
-  ): Promise<CalendarEvent>;
+  ): Promise<CalendarEventDTO>;
   deleteEvent(id: string, sendUpdates?: "all" | "none"): Promise<void>;
 
   searchRooms(q: string, start?: string, end?: string): Promise<Room[]>;

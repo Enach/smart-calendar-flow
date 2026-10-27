@@ -131,7 +131,7 @@ export type EventConferenceLink = __TypedOpenapi.Schemas.EventConferenceLink;
 export const EventConferenceLink = z.strictObject({ provider: z.string(), url: z.url(), label: z.string().optional() });
 
 export type EventPatchRequest = __TypedOpenapi.Schemas.EventPatchRequest;
-export const EventPatchRequest = z.strictObject({ title: z.string().nullable(), description: z.string().nullable(), location: z.string().nullable(), start: z.iso.datetime().nullable(), end: z.iso.datetime().nullable(), attendees: z.array(z.email()).nullable() }).partial();
+export const EventPatchRequest = z.strictObject({ title: z.string().nullable(), description: z.string().nullable(), location: z.string().nullable(), start: z.string().regex(new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))?$")).nullable(), end: z.string().regex(new RegExp("^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))?$")).nullable(), attendees: z.array(z.email()).nullable(), send_updates: z.enum(["all", "none"]).nullable(), room_resource_email: z.string().regex(new RegExp("^$|^[^@\\s]+@resource\\.calendar\\.google\\.com$")).nullable(), attendee_details: z.array(z.record(z.string(), z.unknown())).nullable() }).partial();
 
 export type FocusBlockRecord = __TypedOpenapi.Schemas.FocusBlockRecord;
 export const FocusBlockRecord = z.strictObject({ id: z.number().int(), google_event_id: z.string(), start_time: z.iso.datetime(), end_time: z.iso.datetime(), date: z.iso.date(), created_at: z.iso.datetime() });
@@ -165,18 +165,6 @@ export const FreeBusyQueryRequest = z.strictObject({ emails: z.array(z.email()).
 
 export type FreeBusyQueryResponse = __TypedOpenapi.Schemas.FreeBusyQueryResponse;
 export const FreeBusyQueryResponse = z.strictObject({ start_time: z.iso.datetime(), end_time: z.iso.datetime(), participants: z.array(FreeBusyParticipant), busy: z.record(z.string(), z.array(FreeBusyWindow)), results: z.array(FreeBusyLegacyResult) });
-
-export type GoogleEventDateTime = __TypedOpenapi.Schemas.GoogleEventDateTime;
-export const GoogleEventDateTime = z.object({ dateTime: z.iso.datetime(), date: z.iso.date(), timeZone: z.string() }).partial().catchall(z.unknown());
-
-export type GoogleEventAttendee = __TypedOpenapi.Schemas.GoogleEventAttendee;
-export const GoogleEventAttendee = z.object({ email: z.email(), displayName: z.string(), organizer: z.boolean(), responseStatus: z.string(), optional: z.boolean() }).partial().catchall(z.unknown());
-
-export type GoogleCalendarEvent = __TypedOpenapi.Schemas.GoogleCalendarEvent;
-export const GoogleCalendarEvent = z.object({ id: z.string(), summary: z.string(), description: z.string(), location: z.string(), status: z.string(), htmlLink: z.string(), hangoutLink: z.string(), start: GoogleEventDateTime, end: GoogleEventDateTime, attendees: z.array(GoogleEventAttendee) }).partial().catchall(z.unknown());
-
-export type GoogleCalendarEventRaw = __TypedOpenapi.Schemas.GoogleCalendarEventRaw;
-export const GoogleCalendarEventRaw = z.object({ id: z.string(), summary: z.string(), description: z.string(), location: z.string(), htmlLink: z.string(), hangoutLink: z.string(), start: z.record(z.string(), z.unknown()), end: z.record(z.string(), z.unknown()), attendees: z.array(z.record(z.string(), z.unknown())) }).partial().catchall(z.unknown());
 
 export type Habit = __TypedOpenapi.Schemas.Habit;
 export const Habit = z.strictObject({ id: z.uuid(), user_id: z.uuid(), title: z.string().max(200), duration_minutes: z.number().int().min(1).max(1440), days_of_week: z.array(z.number().int().min(1).max(7)).min(1).max(7).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), window_start: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), window_end: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), priority: z.number().int().min(0).max(100), color: z.string(), active: z.boolean(), created_at: z.iso.datetime() });
