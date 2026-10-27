@@ -37,6 +37,19 @@ function fmtDateLong(iso: string) {
   });
 }
 
+// NEW-booking-rate-limit: the server answers 429 when one client books or
+// looks up times too often. The booker sees a plain wait-and-retry message, not
+// the server's string. The exact wait (Retry-After) is not readable
+// cross-origin and is not needed here.
+const BOOKING_RATE_LIMITED_MESSAGE =
+  "You've made too many attempts in a short time. Please wait a few minutes, then try again — your details are kept.";
+const SLOTS_RATE_LIMITED_MESSAGE =
+  "Too many requests for available times. Please wait a minute, then retry.";
+
+function httpStatus(e: unknown): number | undefined {
+  return isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
+}
+
 function browserTimezone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -139,7 +152,9 @@ export default function PublicBooking() {
   const slotsErrorMessage = slotsQuery.error
     ? isApiUnreachableError(slotsQuery.error)
       ? "We can't reach the scheduling service right now."
-      : apiErrorMessage(slotsQuery.error)
+      : httpStatus(slotsQuery.error) === 429
+        ? SLOTS_RATE_LIMITED_MESSAGE
+        : apiErrorMessage(slotsQuery.error)
     : null;
 
   // Reset slot selection when date / duration change.
@@ -163,9 +178,12 @@ export default function PublicBooking() {
       setSubmitError(null);
     },
     onError: (e: unknown) => {
-      const status = isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
+      const status = httpStatus(e);
       const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
-      if (status === 409) {
+      if (status === 429) {
+        // Keep the chosen slot and the typed details; no refetch, no alarm.
+        setSubmitError(BOOKING_RATE_LIMITED_MESSAGE);
+      } else if (status === 409) {
         setSubmitError(detail ?? "This slot was just taken — please pick another time.");
         setSelectedSlot(null);
         slotsQuery.refetch();
