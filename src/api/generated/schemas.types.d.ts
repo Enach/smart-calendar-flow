@@ -2241,8 +2241,9 @@ export type SsoDetectRequest = ({
  */
 export type SsoDetectResponse = {
   /**
-   * "generic" for consumer/unparseable domains, "sso" when a provider row
-   * exists for the domain, "microsoft" from a live tenant probe against
+   * "generic" for consumer/unparseable domains, "sso" when an active
+   * provider row exists for the domain (a row suspended through
+   * setSsoProviderState is ignored, PAC-22), "microsoft" from a live tenant probe against
    * login.microsoftonline.com (2s timeout, 1h cache), else "google".
    */
   type: ("google" | "microsoft" | "sso" | "generic");
@@ -2263,49 +2264,133 @@ export type SsoDetectResponse = {
   redirect_url?: string;
 }
 /**
- * Anonymous struct in ssoHandlers.createSSOProvider.
+ * Whether sign-in uses this configuration (PAC-22, spec §3.3, §3.5).
+ * `active`: detection answers `sso` for the domain and startSsoLogin
+ * redirects to the provider. `suspended`: sign-in behaves as if no SSO
+ * were configured; the configuration is kept. Stored as the existing
+ * `enabled` column (true is `active`), so no migration.
  */
-export type SsoProviderCreateRequest = {
-  /**
-   * Must match the caller's org domain or the request is 403'd.
-   */
+export type SsoProviderState = ("active" | "suspended")
+/**
+ * An organisation's SSO configuration as it may leave the server (PAC-22,
+ * resolves U-22, closes the disclosure half of API-001). Returned by
+ * createSsoProvider, listSsoProviders and setSsoProviderState. It is a
+ * projection written for the wire with explicit snake_case keys, not the
+ * storage row: the client secret and the signing certificate are never
+ * part of it under any name, for any caller. In their place are two
+ * booleans that say only whether each secret is on file; each depends on
+ * its own secret and on nothing else (spec §3.1, AC-3, AC-4).
+ * 
+ * Rows stored before PAC-22 serialise with this same shape: a SAML row
+ * reports `provider_type: saml` and its non-secret SAML values, and an
+ * OIDC row with empty values reports them as `""` (spec AC-5). No row
+ * writable since PAC-22 has a SAML value, so for those the SAML
+ * properties are `""` and `has_saml_cert` is false.
+ */
+export type SsoProvider = {
+  id: string;
   domain: string;
   provider_name: string;
   /**
-   * "saml" is accepted and stored, but /api/auth/sso/{domain} rejects it
-   * with 501 — a SAML row can be created that can never be used to log in.
+   * `saml` only for rows stored before PAC-22; createSsoProvider no
+   * longer accepts it. startSsoLogin still answers 501 for such a row.
    */
   provider_type: ("oidc" | "saml");
-  oidc_issuer?: string;
-  oidc_client_id?: string;
-  oidc_client_secret?: string;
-  saml_entry_point?: string;
-  saml_issuer?: string;
-  saml_cert?: string;
+  state: SsoProviderState;
+  /**
+   * `""` only for a row stored before PAC-22.
+   */
+  oidc_issuer: string;
+  /**
+   * `""` only for a row stored before PAC-22.
+   */
+  oidc_client_id: string;
+  /**
+   * True when a non-empty client secret is on file, false otherwise.
+   * The secret itself is never returned (spec AC-3). False only for a
+   * row stored before PAC-22: every write since requires a secret.
+   */
+  has_oidc_client_secret: boolean;
+  /**
+   * Non-secret SAML sign-in address of a row stored before PAC-22; `""` otherwise.
+   */
+  saml_entry_point: string;
+  /**
+   * Non-secret SAML issuer of a row stored before PAC-22; `""` otherwise.
+   */
+  saml_issuer: string;
+  /**
+   * True when a non-empty SAML signing certificate is on file, false
+   * otherwise. The certificate itself is never returned. Only a row
+   * stored before PAC-22 can be true (spec §3.1, D-8).
+   */
+  has_saml_cert: boolean;
+  created_at: string;
+  /**
+   * Time of the last configuration write (createSsoProvider).
+   * setSsoProviderState does not change it.
+   */
+  updated_at: string;
 }
 /**
- * storage.SSOProvider (backend/storage/sso_providers.go) marshalled directly.
- * The struct has NO json tags, so encoding/json emits the exact Go field
- * names below — PascalCase, and including the client secret and SAML cert.
+ * Body of createSsoProvider. Since PAC-22 (resolves U-21, API-060) it
+ * describes a complete OIDC configuration and nothing else: every
+ * property is required and non-empty, and the SAML properties are gone
+ * (spec D-1, D-2, D-8). The server enforces each of these with the 400
+ * messages listed on createSsoProvider, in the order given there,
+ * including a named refusal of `saml_entry_point`, `saml_issuer` and
+ * `saml_cert` when present. A replace supplies every value again: there
+ * is no "keep the stored value" (spec §3.2). Whether SSO is active is
+ * not part of this body (spec §3.3); see setSsoProviderState.
  */
-export type SsoProviderResponse = {
-  ID: string;
-  Domain: string;
-  ProviderName: string;
-  ProviderType: ("oidc" | "saml");
-  Enabled: boolean;
-  OIDCIssuer: string;
-  OIDCClientID: string;
+export type SsoProviderCreateRequest = {
   /**
-   * Returned in plaintext to any org member by both POST and GET /api/admin/sso. Documented because it is what the code does, not because it is intended.
+   * Must match the caller's org domain or the request is 403'd (rule unchanged by PAC-22; PAC-50 replaces it).
    */
-  OIDCClientSecret: string;
-  SAMLEntryPoint: string;
-  SAMLIssuer: string;
-  SAMLCert: string;
-  CreatedAt: string;
-  UpdatedAt: string;
+  domain: string;
+  /**
+   * Display name, returned as `provider_name` and shown by detectAuthProvider.
+   */
+  provider_name: string;
+  provider_type: "oidc";
+  /**
+   * OIDC issuer used for discovery at sign-in. Stored as given.
+   */
+  oidc_issuer: string;
+  oidc_client_id: string;
+  /**
+   * Write-only. Required on every write, including a replace that
+   * changes nothing else (spec §3.2, D-2). No response of any
+   * operation returns it; SsoProvider reports only whether one is on
+   * file (`has_oidc_client_secret`).
+   */
+  oidc_client_secret: string;
 }
+/**
+ * listSsoProviders response (PAC-22). A named container rather than a
+ * bare array so that a property added beside `providers` later does not
+ * change the response's type for every consumer (spec §3.7). Most list
+ * responses in this contract are bare arrays; this one is deliberately
+ * not, and must not be "corrected" towards them.
+ */
+export type SsoProviderList = {
+  /**
+   * Ordered by `created_at`, oldest first. Empty when the org has none.
+   * At most one item today: a configuration is listed when its domain
+   * equals the org's domain exactly, and both `sso_providers.domain`
+   * and `organizations.domain` are unique. The array is kept so that
+   * the type does not change if an org can ever hold more than one.
+   */
+  providers: Array<SsoProvider>;
+}
+/**
+ * Body of setSsoProviderState: the state wanted, never a toggle, and
+ * nothing else (spec AC-12). Any other property, including any
+ * configuration value, is refused with 400 `unknown property: <name>`,
+ * and `state` given twice is refused with 400 `duplicate property:
+ * state`.
+ */
+export type SsoProviderStateRequest = { state: SsoProviderState }
 /**
  * storage.Team. Note the camelCase json tags — unlike the manager domain's snake_case.
  */
@@ -2493,10 +2578,70 @@ export type UserProfileGoStruct = {
   // <Endpoints>
   
   /**
- * Upsert keyed on domain. The caller must belong to an org and the supplied
- * domain must match that org's domain (domain.DomainMatchesOrg).
- * `enabled` is always forced to true — there is no way to disable a provider
- * through this API.
+ * Upsert keyed on domain: a second POST for the same domain replaces the
+ * configuration (there is no PATCH/PUT). It is a replace, not a merge
+ * (PAC-22 spec §3.2): every configuration value is taken from this
+ * request, so changing any part of a configuration means supplying all
+ * of it, the client secret included. A stored secret is never kept for a
+ * request that leaves it out; such a request is refused (400 below).
+ * 
+ * Who may call it is unchanged by PAC-22. The caller must belong to an
+ * org and the supplied domain must match that org's domain
+ * (domain.DomainMatchesOrg). PAC-50 replaces that rule; PAC-22 neither
+ * widens nor narrows it.
+ * 
+ * Order of checks. Membership (403 `org membership required`) is checked
+ * first, as today, before the body is read: a caller with no org gets
+ * that 403 whatever the body holds. Checks 1-5 below run after it and
+ * before the org lookup (403 `org not found`), the domain match (403
+ * `can only configure SSO for your own domain`) and any PAC-50 write
+ * authorization.
+ * 
+ * Since PAC-22 (API-060, resolves U-21) the request is validated before
+ * anything is stored, and every refusal is a 400 that leaves the stored
+ * configuration exactly as it was (or absent). The checks run in this
+ * order, after membership; the first that fails decides the message:
+ * 
+ * 1. The body is JSON (`invalid JSON`).
+ * 2. None of `saml_entry_point`, `saml_issuer`, `saml_cert` is present,
+ *    whatever its value (including `""` and `null`). The first present,
+ *    in that order, is named: `saml_entry_point is not supported`,
+ *    `saml_issuer is not supported`, `saml_cert is not supported`
+ *    (spec D-8, AC-18). Such a value is refused, never stored and never
+ *    silently dropped.
+ * 3. `domain`, `provider_name` and `provider_type` are non-empty
+ *    (`domain, provider_name and provider_type are required`, unchanged).
+ * 4. `provider_type` is `oidc`. `saml` is refused with
+ *    `provider_type 'saml' is not supported` (spec D-1, AC-8): the
+ *    product cannot complete a SAML sign-in, so a SAML configuration is
+ *    refused when offered instead of stored and refused at sign-in. Any
+ *    other value is refused with `provider_type must be 'oidc'`
+ *    (replaces `provider_type must be 'oidc' or 'saml'`).
+ * 5. `oidc_issuer`, `oidc_client_id` and `oidc_client_secret` are each
+ *    present and non-empty, checked in that order:
+ *    `oidc_issuer is required`, `oidc_client_id is required`,
+ *    `oidc_client_secret is required` (spec D-2, AC-7). Missing, `null`
+ *    and `""` are the same refusal. Values are stored as given (not
+ *    trimmed).
+ * 
+ * Every one of these is decided from the request alone (and the
+ * caller's membership), before any write authorization is consulted, so
+ * a refused submission costs the caller nothing beyond the refusal
+ * (spec §3.4, AC-17). Properties
+ * outside the schema other than the three SAML ones are ignored today;
+ * rejecting them is PAC-50's (`unknown property: <name>`).
+ * 
+ * Active state (spec §3.3, D-3, resolves API-066). This operation never
+ * changes whether SSO is active: a new configuration is created active,
+ * and a replaced configuration keeps the state it had (an active one
+ * stays active, a suspended one stays suspended). Only
+ * setSsoProviderState changes it. (Before PAC-22 every write forced
+ * `enabled` to true.)
+ * 
+ * Configurations stored before PAC-22 (a SAML row, an OIDC row with an
+ * empty issuer, client id or secret) are not rewritten or deleted by
+ * these checks. They stay readable through listSsoProviders and can be
+ * suspended, resumed and deleted.
  */
 export type post_CreateSsoProvider = {
       method: "POST",
@@ -2510,7 +2655,7 @@ export type post_CreateSsoProvider = {
         
         body:  Schemas.SsoProviderCreateRequest,
           }
-      responses: {201: Schemas.SsoProviderResponse,
+      responses: {201: Schemas.SsoProvider,
 400: Schemas.ErrorResponse,
 401: Schemas.PlainTextError,
 403: Schemas.ErrorResponse,
@@ -2518,13 +2663,25 @@ export type post_CreateSsoProvider = {
 },
       
     }
+/**
+ * Any member of the org may call it (unchanged by PAC-22; restricting
+ * who may read is out of PAC-22's scope, spec §5). Since PAC-22 the
+ * response is an SsoProviderList: a named container, not a bare array
+ * (spec §3.7), whose items never carry the client secret or a signing
+ * certificate under any name, whoever the caller is (API-001
+ * disclosure half, spec AC-1). Suspended configurations are listed,
+ * with `state: suspended`; so are configurations stored before PAC-22
+ * that could not be written today (a SAML row, an incomplete OIDC row).
+ * A configuration is listed when its domain equals the org's domain
+ * exactly (the join is on `organizations.domain`).
+ */
 export type get_ListSsoProviders = {
       method: "GET",
       path: "/api/admin/sso",
       requestFormat: "json",
       responseFormat: "json",
       parameters: never,
-      responses: {200: Array<Schemas.SsoProviderResponse>,
+      responses: {200: Schemas.SsoProviderList,
 401: Schemas.PlainTextError,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -2551,6 +2708,96 @@ export type delete_DeleteSsoProvider = {
       responses: {204: unknown,
 401: Schemas.PlainTextError,
 403: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
+},
+      
+    }
+/**
+ * Added by PAC-22 (spec §3.3, §3.5, §3.6; resolves API-066). The only
+ * operation that changes whether SSO is active, and it changes nothing
+ * else. The request names its target (`{domain}`, as deleteSsoProvider
+ * does) and the state it wants; it never toggles. It carries no
+ * configuration value and no secret, so suspending and resuming never
+ * need the client secret (spec AC-10, AC-12).
+ * 
+ * While a configuration is suspended, sign-in behaves as if no SSO were
+ * configured for its domain: detectAuthProvider does not answer `sso`
+ * and startSsoLogin answers 404. The configuration itself is kept and
+ * stays listed. **Suspension stops new sign-ins; it does not end
+ * sessions** already issued through the provider (spec §3.5).
+ * 
+ * **Not implementable before PAC-50 merges (spec D-5, D-6).** The
+ * caller must be permitted to change SSO configuration under exactly
+ * the rule that authorizes createSsoProvider writes, never membership
+ * alone. On `main` at the time of writing that rule is membership only,
+ * which D-6 forbids here; this operation is therefore specified against
+ * PAC-50's gate and this contract is rebased onto PAC-50 before it is
+ * implemented (see contracts/features/PAC-22.md, "Rebase onto PAC-50").
+ * 
+ * Checks run in this order; the first that fails decides the response:
+ * 
+ * 1. Membership: the caller belongs to an org, else 403
+ *    `org membership required` (or `org not found`).
+ * 2. Body: JSON (`invalid JSON`); then its properties in body order:
+ *    the first property other than `state` is refused
+ *    (`unknown property: <name>`), so no configuration value can ride
+ *    along, and a second `state` is refused (`duplicate property:
+ *    state`), so a body never asks for two states and no decoder's
+ *    "last one wins" decides a kill switch; then `state` is `active` or
+ *    `suspended` (`state must be 'active' or 'suspended'`, for a missing
+ *    or `null` state too).
+ * 3. Domain: `{domain}`, lower-cased and not trimmed, must equal the
+ *    caller's org domain exactly, case-insensitively, else 400
+ *    `provider_domain_mismatch`. A subdomain of the org domain, and
+ *    another org's domain, are both refused (spec AC-21).
+ * 4. Authorization: the write authorization of createSsoProvider
+ *    (PAC-50: a live step-up grant, consumed, or break-glass with a
+ *    fresh session), else 403 with createSsoProvider's 403 body.
+ *    Steps 1-3 are decided from the request alone and leave the
+ *    authorization unspent.
+ * 5. Lookup of the configuration for the lower-cased domain, whatever
+ *    its state: none gives 404 `sso provider not found`; nothing is
+ *    created and nothing is recorded, and the authorization is spent
+ *    (spec D-9, AC-19).
+ * 6. If the configuration is already in the requested state, nothing
+ *    changes and the answer is 200 with the configuration as stored
+ *    (spec AC-20). Otherwise only the active state is written.
+ *    `updated_at` is not changed by this operation in either case: it
+ *    records the last configuration write (createSsoProvider).
+ * 7. Recording: every transition that found its configuration,
+ *    including one that changed nothing, is recorded where PAC-50
+ *    records configuration writes, as `sso_provider_written` with the
+ *    operation `suspend` (state `suspended`) or `resume` (state
+ *    `active`), naming the organisation, the acting user and the
+ *    provider (spec D-10, AC-16). No operation exposes that record.
+ *    The state write and its record are one transaction, as PAC-50's
+ *    configuration writes are: either both happen or neither does.
+ * 
+ * This operation acts on configurations stored before PAC-22 that
+ * createSsoProvider would refuse today (a SAML row, an incomplete OIDC
+ * row) exactly as on any other (spec AC-8).
+ * 
+ * `PUT /api/admin/sso/stepup/state` (PAC-50 defines GET on
+ * `/api/admin/sso/stepup`) is this operation with `{domain}` =
+ * `stepup`, which is never an org domain: 400 `provider_domain_mismatch`.
+ */
+export type put_SetSsoProviderState = {
+      method: "PUT",
+      path: "/api/admin/sso/{domain}/state",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: {
+            
+        path:  { domain: string },
+        
+        
+        body:  Schemas.SsoProviderStateRequest,
+          }
+      responses: {200: Schemas.SsoProvider,
+400: Schemas.ErrorResponse,
+401: Schemas.PlainTextError,
+403: Schemas.ErrorResponse,
+404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
@@ -2967,8 +3214,17 @@ export type get_MicrosoftOAuthCallback = {
  * at another domain is dropped, so this route never sends one
  * organisation's IdP an address outside that organisation's domain.
  * Unchanged by PAC-35 (spec D-5): the 404, 500 and 501 answers below.
- * API-060 (SAML and incomplete OIDC rows accepted at create time) stays
- * with PAC-22.
+ * Since PAC-22 (API-060, spec D-1) createSsoProvider refuses SAML and
+ * incomplete OIDC configurations, so the 501 below is reachable only for
+ * rows stored before PAC-22; those rows are neither rewritten nor
+ * deleted, and this route keeps refusing them exactly as before. The 500
+ * (issuer discovery failed) stays reachable for any row whose discovery
+ * fails: a row stored before PAC-22 with an empty issuer, and equally a
+ * row written since whose issuer is unreachable or unusable
+ * (createSsoProvider requires only a non-empty issuer, so `" "` is
+ * accepted). Only an active row is looked up: a configuration
+ * suspended through setSsoProviderState (PAC-22) answers the 404, as if
+ * no SSO were configured.
  */
 export type get_StartSsoLogin = {
       method: "GET",
@@ -5287,6 +5543,9 @@ delete: {
 "/api/teams/{id}/members/{userId}": Endpoints.delete_RemoveTeamMember,
 "/api/teams/{id}/no-meeting-zones/{zoneId}": Endpoints.delete_DeleteNoMeetingZone
          },
+put: {
+           "/api/admin/sso/{domain}/state": Endpoints.put_SetSsoProviderState
+         },
 patch: {
            "/api/events/{id}": Endpoints.patch_PatchEvent,
 "/api/habits/{id}": Endpoints.patch_UpdateHabit,
@@ -5308,6 +5567,7 @@ patch: {
     export type PostEndpoints = EndpointByMethod["post"]
 export type GetEndpoints = EndpointByMethod["get"]
 export type DeleteEndpoints = EndpointByMethod["delete"]
+export type PutEndpoints = EndpointByMethod["put"]
 export type PatchEndpoints = EndpointByMethod["patch"]
     // </EndpointByMethod.Shorthands>
     
