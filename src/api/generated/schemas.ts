@@ -398,10 +398,25 @@ export type SsoDetectResponse = __TypedOpenapi.Schemas.SsoDetectResponse;
 export const SsoDetectResponse = z.strictObject({ type: z.enum(["google", "microsoft", "sso", "generic"]), provider_name: z.string().optional(), redirect_url: z.string().optional() });
 
 export type SsoProviderCreateRequest = __TypedOpenapi.Schemas.SsoProviderCreateRequest;
-export const SsoProviderCreateRequest = z.strictObject({ domain: z.string(), provider_name: z.string(), provider_type: z.enum(["oidc", "saml"]), oidc_issuer: z.string().optional(), oidc_client_id: z.string().optional(), oidc_client_secret: z.string().optional(), saml_entry_point: z.string().optional(), saml_issuer: z.string().optional(), saml_cert: z.string().optional() });
+export const SsoProviderCreateRequest = z.strictObject({ domain: z.string().min(1), provider_name: z.string().min(1), provider_type: z.enum(["oidc", "saml"]), oidc_issuer: z.string().optional(), oidc_client_id: z.string().optional(), oidc_client_secret: z.string().optional(), saml_entry_point: z.string().optional(), saml_issuer: z.string().optional(), saml_cert: z.string().optional() });
 
 export type SsoProviderResponse = __TypedOpenapi.Schemas.SsoProviderResponse;
 export const SsoProviderResponse = z.strictObject({ ID: z.uuid(), Domain: z.string(), ProviderName: z.string(), ProviderType: z.enum(["oidc", "saml"]), Enabled: z.boolean(), OIDCIssuer: z.string(), OIDCClientID: z.string(), OIDCClientSecret: z.string(), SAMLEntryPoint: z.string(), SAMLIssuer: z.string(), SAMLCert: z.string(), CreatedAt: z.iso.datetime(), UpdatedAt: z.iso.datetime() });
+
+export type SsoStepupProvider = __TypedOpenapi.Schemas.SsoStepupProvider;
+export const SsoStepupProvider = z.enum(["google", "microsoft"]);
+
+export type SsoWriteMembershipRequired = __TypedOpenapi.Schemas.SsoWriteMembershipRequired;
+export const SsoWriteMembershipRequired = z.strictObject({ error: z.enum(["org membership required", "org not found"]) });
+
+export type SsoWriteStepupRequired = __TypedOpenapi.Schemas.SsoWriteStepupRequired;
+export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_url: z.literal("/api/admin/sso/stepup") });
+
+export type SsoWriteFreshLoginRequired = __TypedOpenapi.Schemas.SsoWriteFreshLoginRequired;
+export const SsoWriteFreshLoginRequired = z.strictObject({ error: z.literal("sso_write_requires_fresh_login") });
+
+export type SsoWriteForbiddenResponse = __TypedOpenapi.Schemas.SsoWriteForbiddenResponse;
+export const SsoWriteForbiddenResponse = z.union([SsoWriteMembershipRequired, SsoWriteStepupRequired, SsoWriteFreshLoginRequired]).refine((data) => [SsoWriteMembershipRequired.safeParse(data).success, SsoWriteStepupRequired.safeParse(data).success, SsoWriteFreshLoginRequired.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
 
 export type Team = __TypedOpenapi.Schemas.Team;
 export const Team = z.strictObject({ id: z.uuid(), orgId: z.uuid().optional(), name: z.string(), createdBy: z.uuid(), createdAt: z.iso.datetime() });
