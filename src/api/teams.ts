@@ -10,6 +10,7 @@
 import { managerApi, type TeamMember as ManagerTeamMember } from "./manager";
 import { getFreebusy } from "./coverageCache";
 import { requestApi, withFallback } from "./client";
+import type { components } from "./generated/types";
 import { localISODate } from "@/lib/localDate";
 import { DEFAULT_TIME_FORMAT, formatMinutesOfDay, type TimeFormat } from "@/lib/timeFormat";
 
@@ -174,33 +175,26 @@ export interface TeamInvite {
   team_id: string;
   team_name: string;
   invited_email: string;
-  inviter_email?: string;
-  expires_at?: string;
+  /** The inviter's display name; null when the server could not read it. */
+  inviter_name: string | null;
+  /** The inviter's account email; null when the server could not read it. */
+  inviter_email: string | null;
+  /** RFC 3339 instant after which the invite cannot be accepted. */
+  expires_at: string | null;
 }
 
-type BackendInvite = {
-  token?: string;
-  teamId?: string;
-  team_id?: string;
-  teamName?: string;
-  team_name?: string;
-  email?: string;
-  invitedEmail?: string;
-  invited_email?: string;
-  inviterEmail?: string;
-  inviter_email?: string;
-  expiresAt?: string;
-  expires_at?: string;
-};
+/** GET /api/teams/invites/{token} (contract TeamInvitePreview, PAC-34). */
+type BackendInvite = Partial<components["schemas"]["TeamInvitePreview"]>;
 
 export function normalizeInvite(raw: BackendInvite, token: string): TeamInvite {
   return {
-    token: raw.token ?? token,
-    team_id: raw.teamId ?? raw.team_id ?? "",
-    team_name: raw.teamName ?? raw.team_name ?? "this team",
-    invited_email: (raw.invitedEmail ?? raw.invited_email ?? raw.email ?? "").toLowerCase(),
-    inviter_email: raw.inviterEmail ?? raw.inviter_email,
-    expires_at: raw.expiresAt ?? raw.expires_at,
+    token,
+    team_id: raw.team_id ?? "",
+    team_name: raw.teamName || "this team",
+    invited_email: (raw.email ?? "").toLowerCase(),
+    inviter_name: raw.inviterName || null,
+    inviter_email: raw.inviter_email || null,
+    expires_at: raw.expires_at || null,
   };
 }
 
