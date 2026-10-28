@@ -8,6 +8,7 @@ import {
   validateLunchWithinWorkingHours,
   workingHoursCapacity,
 } from "@/lib/schedulingPresets";
+import { keyIsSetFor, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
 import type { Settings } from "./types";
 
 const base = {
@@ -82,7 +83,7 @@ describe("settings adapter", () => {
     compressionEnabled: false,
     autoScheduleEnabled: false,
     autoScheduleCron: "0 8 * * *",
-    llmProvider: "ollama",
+    llmProvider: "openai",
     llmModel: "",
     calendarProvider: "google",
     recapEnabled: false,
@@ -99,7 +100,7 @@ describe("settings adapter", () => {
     expect(out.protect_lunch).toBe(true);
     expect(out.buffer_before_minutes).toBe(5);
     expect(out.auto_schedule_cron).toBe("0 8 * * *");
-    expect(out.llm_provider).toBe("ollama");
+    expect(out.llm_provider).toBe("openai");
     expect(out.calendar_provider).toBe("google");
     const bag = out as unknown as Record<string, unknown>;
     expect(bag.focusDailyTargetMinutes).toBeUndefined();
@@ -195,7 +196,7 @@ const patchPayload = {
   protectLunch: true,
   workingHours: { mode: "all_days", default: { enabled: true, start: "09:00", end: "18:00" }, days: {} },
   lunchBreaks: {},
-  llmProvider: "ollama",
+  llmProvider: "openai",
   llmModel: "",
   recapEnabled: false,
 };
@@ -239,6 +240,69 @@ describe("PATCH body", () => {
     });
     expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "sk-try" }).llmApiKey).toBe("sk-try");
   });
+
+  // Contract challenge rev. 2, non-blocking 6: "Remove saved key" then "Test
+  // connection" before saving tests the form as it stands, so it sends an
+  // empty key (the server answers "needs a key"), never the stored one.
+  it("probes a removed, unsaved key as an empty key, and an untouched field as the stored key", () => {
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "" })).toEqual({
+      llmProvider: "openai",
+      llmModel: read.llm_model,
+      llmApiKey: "",
+    });
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: undefined })).not.toHaveProperty("llmApiKey");
+    expect(llmTestBody({ ...read, llm_provider: "", llm_api_key: "" })).not.toHaveProperty("llmApiKey");
+  });
+});
+
+// Contract challenge rev. 2.1, W-1: a key is bound to the provider it was
+// typed or removed for. A provider switch must never carry it to another
+// provider, in the probe body or in the PATCH body.
+describe("provider switch and the draft key", () => {
+  const saved = {
+    ...normalizeSettings({
+      ...patchPayload,
+      llmProvider: "openai",
+      llmApiKeySet: true,
+      llmApiKeysSet: { openai: true, anthropic: true, azure_openai: false, bedrock: false, vertex: false },
+    }),
+    calendar_id: "primary",
+  } as Settings;
+  const switchTo = (d: Settings, next: string): Settings => ({ ...d, ...providerSwitch(next, saved) });
+
+  it("remove saved key, then switch: neither the probe nor the PATCH sends llmApiKey", () => {
+    const removed = removeSavedKey({ ...saved });
+    expect(llmTestBody(removed)).toHaveProperty("llmApiKey", "");
+    const draft = switchTo(removed, "anthropic");
+    expect(llmTestBody(draft)).toEqual({ llmProvider: "anthropic", llmModel: "" });
+    const patch = settingsPatchBody(draft, saved);
+    expect(patch).not.toHaveProperty("llmApiKey");
+    expect(patch).toEqual({ llmProvider: "anthropic" });
+    // The Anthropic key is shown as on file again, and so is the OpenAI one.
+    expect(keyIsSetFor(draft, "anthropic")).toBe(true);
+    expect(keyIsSetFor(draft, "openai")).toBe(true);
+  });
+
+  it("a key typed for one provider is dropped when the user switches to another", () => {
+    const typed = { ...saved, llm_api_key: "sk-openai-typed" };
+    expect(llmTestBody(typed).llmApiKey).toBe("sk-openai-typed");
+    const draft = switchTo(typed, "anthropic");
+    expect(llmTestBody(draft)).not.toHaveProperty("llmApiKey");
+    expect(settingsPatchBody(draft, saved)).not.toHaveProperty("llmApiKey");
+    // Switching back does not bring it back either.
+    const back = switchTo(draft, "openai");
+    expect(llmTestBody(back)).not.toHaveProperty("llmApiKey");
+    expect(settingsPatchBody(back, saved)).toEqual({});
+  });
+
+  it("restores the single-key flag when the server sends no per-provider map", () => {
+    const old = { ...saved, llm_api_keys_set: undefined } as Settings;
+    const removed = removeSavedKey(old);
+    expect(keyIsSetFor(removed, "openai")).toBe(false);
+    const back = { ...removed, ...providerSwitch("openai", old) };
+    expect(keyIsSetFor(back, "openai")).toBe(true);
+    expect(llmTestBody(back)).not.toHaveProperty("llmApiKey");
+  });
 });
 
 // API-039: provider values the server uses that the app did not know.
@@ -251,14 +315,67 @@ describe("provider values", () => {
     expect(settingsPatchBody({ ...read, default_conference_provider: "google_meet" }, read)).toEqual({});
   });
 
-  it("keeps vertex and the empty provider, and maps the Vertex fields", () => {
-    const read = normalizeSettings({ ...patchPayload, llmProvider: "vertex", gcpProject: "p", gcpLocation: "eu", vertexModel: "gemini" });
+  it("keeps vertex and the empty provider, and maps the Vertex and Bedrock models", () => {
+    const read = normalizeSettings({ ...patchPayload, llmProvider: "vertex", vertexModel: "gemini", bedrockModel: "anthropic.claude-sonnet-4-5-20251001-v1:0" });
     expect(read.llm_provider).toBe("vertex");
-    expect(read.gcp_project).toBe("p");
     expect(read.vertex_model).toBe("gemini");
-    expect(settingsPatchBody({ ...read, gcp_location: "us-central1", llm_provider: "" }, read)).toEqual({
-      gcpLocation: "us-central1",
+    // NEW-llm-bring-your-own D-16: the Bedrock picker reads and writes bedrockModel.
+    expect(read.bedrock_model).toBe("anthropic.claude-sonnet-4-5-20251001-v1:0");
+    expect(settingsPatchBody({ ...read, bedrock_model: "m2", llm_provider: "" }, read)).toEqual({
+      bedrockModel: "m2",
       llmProvider: "",
     });
+  });
+});
+
+// NEW-llm-bring-your-own: keys bound to providers, the read-only AI status,
+// the removed settings and the unbound legacy key.
+describe("AI settings", () => {
+  const aiPayload = {
+    ...patchPayload,
+    llmProvider: "unsupported",
+    llmApiKeySet: false,
+    llmApiKeysSet: { openai: true, anthropic: false, azure_openai: false, bedrock: false, vertex: false },
+    llmUnboundApiKeySet: true,
+    aiStatus: {
+      configured: false,
+      inOrganization: true,
+      notConfigured: { reason: "provider_removed", enablers: ["user", "organization_admin"], message: "AI features are off: Ollama is no longer supported." },
+    },
+  };
+  const read = normalizeSettings(aiPayload);
+
+  it("reads the key flags and the AI status", () => {
+    expect(read.llm_provider).toBe("unsupported");
+    expect(read.llm_api_keys_set?.openai).toBe(true);
+    expect(read.llm_unbound_api_key_set).toBe(true);
+    expect(read.ai_status?.notConfigured?.reason).toBe("provider_removed");
+    expect(read.ai_status?.inOrganization).toBe(true);
+    const bag = read as unknown as Record<string, unknown>;
+    expect(bag.aiStatus).toBeUndefined();
+    expect(bag.llmApiKeysSet).toBeUndefined();
+  });
+
+  it("writes an unsupported document back as nothing, and never sends read-only AI fields", () => {
+    expect(settingsPatchBody({ ...read }, read)).toEqual({});
+    expect(
+      settingsPatchBody(
+        { ...read, llm_api_keys_set: { ...read.llm_api_keys_set!, anthropic: true }, llm_unbound_api_key_set: false, ai_status: undefined },
+        read,
+      ),
+    ).toEqual({});
+  });
+
+  it("removes the unbound key only when asked", () => {
+    expect(settingsPatchBody({ ...read, llm_unbound_api_key: "" }, read)).toEqual({ llmUnboundApiKey: "" });
+  });
+
+  it("never sends the removed settings", () => {
+    const stale = { ...read, aws_profile: "p", gcp_project: "g", gcp_location: "l", ollama_base_url: "http://x" } as unknown as Settings;
+    expect(settingsPatchBody(stale, read)).toEqual({});
+  });
+
+  it("probes an unsupported saved choice with the value the read returned", () => {
+    expect(llmTestBody(read)).toEqual({ llmProvider: "unsupported", llmModel: "" });
   });
 });

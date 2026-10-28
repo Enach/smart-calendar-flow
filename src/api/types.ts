@@ -5,15 +5,22 @@ export type CalendarProvider = "google" | "outlook" | "webcal";
 /** PAC-67: the 200 of disconnectMicrosoft and disconnectZoom (generated). */
 export type ProviderDisconnectResult = components["schemas"]["ProviderDisconnectResult"];
 export type PersonalCalendarType = "google" | "outlook" | "webcal";
-/** The server's llmProvider values (contract Settings.llmProvider); "" means none. */
-export type LLMProvider =
-  | ""
-  | "openai"
-  | "anthropic"
-  | "ollama"
-  | "bedrock"
-  | "azure_openai"
-  | "vertex";
+/**
+ * The AI choice as the server reads it (contract Settings.llmProvider): "" is
+ * off, "organization" follows the organisation, "unsupported" is a stored
+ * provider Paceday no longer supports, and the rest are the five key-based
+ * providers (NEW-llm-bring-your-own). Taken from the generated types, never
+ * hand-written (AC-33).
+ */
+export type LLMProvider = components["schemas"]["Settings"]["llmProvider"];
+/** The five key-based providers (contract AIStatus.provider / LLMApiKeysSet). */
+export type KeyProvider = NonNullable<components["schemas"]["AIStatus"]["provider"]>;
+/** Why AI is not configured for the caller, and who can change that (generated). */
+export type AINotConfigured = components["schemas"]["AINotConfigured"];
+/** Whether AI works for the caller now (generated, read-only on the settings document). */
+export type AIStatus = components["schemas"]["AIStatus"];
+/** Per provider, whether a key bound to it is on file (generated). */
+export type LLMApiKeysSet = components["schemas"]["LLMApiKeysSet"];
 export type IntegrationProvider = "google" | "microsoft" | "zoom" | "slack" | "notion" | "webcal";
 
 export interface IntegrationAvailabilityStatus {
@@ -76,25 +83,35 @@ export interface Settings {
   auto_schedule_cron: string;
   llm_provider: LLMProvider | string;
   llm_model: string;
-  /** Write-only: never returned by the server; set only when the user types or clears a key. */
+  /**
+   * Write-only: never returned by the server; set only when the user types or
+   * clears a key. The server binds it to the provider chosen after the write.
+   */
   llm_api_key?: string;
-  /** Whether a provider key is on file (backend: llmApiKeySet). */
+  /** Whether a key bound to the saved provider is on file (backend: llmApiKeySet). */
   llm_api_key_set?: boolean;
+  /** Per provider, whether a key bound to it is on file (backend: llmApiKeysSet, read-only). */
+  llm_api_keys_set?: LLMApiKeysSet;
+  /** A key saved before keys were bound to providers; never used (backend: llmUnboundApiKeySet). */
+  llm_unbound_api_key_set?: boolean;
+  /** Write-only: "" removes the unbound key (backend: llmUnboundApiKey). */
+  llm_unbound_api_key?: "";
+  /** Whether AI works for the caller now and, if not, why (backend: aiStatus, read-only). */
+  ai_status?: AIStatus;
+  /** Optional OpenAI/Anthropic gateway base URL (backend: llmBaseUrl). */
   llm_base_url?: string;
   calendar_id?: string;
   // Work calendar provider
   calendar_provider?: CalendarProvider;
   webcal_url?: string;
-  // LLM: AWS Bedrock
+  // LLM: AWS Bedrock (Bedrock API key)
   aws_region?: string;
-  aws_profile?: string;
-  // LLM: Azure OpenAI
+  bedrock_model?: string;
+  // LLM: Azure OpenAI (API key)
   azure_endpoint?: string;
   azure_deployment?: string;
   azure_api_version?: string;
-  // LLM: Google Vertex AI
-  gcp_project?: string;
-  gcp_location?: string;
+  // LLM: Google Vertex AI (express-mode API key)
   vertex_model?: string;
   // Conferencing
   /** Backend conferencingProvider (meet|zoom|teams), mapped to the app's names. */
@@ -208,6 +225,8 @@ export interface ParseResult {
   range_end?: string;
   constraints?: string;
   error?: string;
+  /** Present only when AI is not configured for the caller (NEW-llm-bring-your-own); nothing was sent. */
+  not_configured?: AINotConfigured;
   suggested_slots?: SuggestedSlot[];
   /** Optional coverage summary applied to ALL suggested_slots (T-40). */
   coverage?: CoverageSummary;
