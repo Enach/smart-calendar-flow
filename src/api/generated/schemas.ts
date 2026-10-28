@@ -403,11 +403,20 @@ export const SsoDetectRequest = z.object({ email: z.string() }).catchall(z.unkno
 export type SsoDetectResponse = __TypedOpenapi.Schemas.SsoDetectResponse;
 export const SsoDetectResponse = z.strictObject({ type: z.enum(["google", "microsoft", "sso", "generic"]), provider_name: z.string().optional(), redirect_url: z.string().optional() });
 
-export type SsoProviderCreateRequest = __TypedOpenapi.Schemas.SsoProviderCreateRequest;
-export const SsoProviderCreateRequest = z.strictObject({ domain: z.string(), provider_name: z.string(), provider_type: z.enum(["oidc", "saml"]), oidc_issuer: z.string().optional(), oidc_client_id: z.string().optional(), oidc_client_secret: z.string().optional(), saml_entry_point: z.string().optional(), saml_issuer: z.string().optional(), saml_cert: z.string().optional() });
+export type SsoProviderState = __TypedOpenapi.Schemas.SsoProviderState;
+export const SsoProviderState = z.enum(["active", "suspended"]);
 
-export type SsoProviderResponse = __TypedOpenapi.Schemas.SsoProviderResponse;
-export const SsoProviderResponse = z.strictObject({ ID: z.uuid(), Domain: z.string(), ProviderName: z.string(), ProviderType: z.enum(["oidc", "saml"]), Enabled: z.boolean(), OIDCIssuer: z.string(), OIDCClientID: z.string(), OIDCClientSecret: z.string(), SAMLEntryPoint: z.string(), SAMLIssuer: z.string(), SAMLCert: z.string(), CreatedAt: z.iso.datetime(), UpdatedAt: z.iso.datetime() });
+export type SsoProvider = __TypedOpenapi.Schemas.SsoProvider;
+export const SsoProvider = z.strictObject({ id: z.uuid(), domain: z.string(), provider_name: z.string(), provider_type: z.enum(["oidc", "saml"]), state: SsoProviderState, oidc_issuer: z.string(), oidc_client_id: z.string(), has_oidc_client_secret: z.boolean(), saml_entry_point: z.string(), saml_issuer: z.string(), has_saml_cert: z.boolean(), created_at: z.iso.datetime(), updated_at: z.iso.datetime() });
+
+export type SsoProviderCreateRequest = __TypedOpenapi.Schemas.SsoProviderCreateRequest;
+export const SsoProviderCreateRequest = z.strictObject({ domain: z.string().min(1), provider_name: z.string().min(1), provider_type: z.literal("oidc"), oidc_issuer: z.string().min(1), oidc_client_id: z.string().min(1), oidc_client_secret: z.string().min(1).optional() });
+
+export type SsoProviderList = __TypedOpenapi.Schemas.SsoProviderList;
+export const SsoProviderList = z.strictObject({ providers: z.array(SsoProvider) });
+
+export type SsoProviderStateRequest = __TypedOpenapi.Schemas.SsoProviderStateRequest;
+export const SsoProviderStateRequest = z.strictObject({ state: SsoProviderState });
 
 export type Team = __TypedOpenapi.Schemas.Team;
 export const Team = z.strictObject({ id: z.uuid(), orgId: z.uuid().optional(), name: z.string(), createdBy: z.uuid(), createdAt: z.iso.datetime() });
