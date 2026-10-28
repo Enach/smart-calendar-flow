@@ -2964,9 +2964,9 @@ export interface components {
          *     | 3 | a provider | no key bound to it | `needs_key` (+ `provider`) | user |
          *     | 4 | `organization` | organisation complete, user confirmed (Part 2) | (configured) | - |
          *     | 5 | `organization` | organisation complete, not confirmed (Part 2) | `organization_unconfirmed` | user |
-         *     | 6 | `organization` | no organisation, or it is not complete | `nothing_configured` | user; organization_admin when in an organisation |
+         *     | 6 | `organization` | no organisation, or it is not complete | `nothing_configured` | user; from Part 2, also organization_admin when in an organisation |
          *     | 7 | `unsupported` (Ollama) | organisation complete (Part 2) | `provider_removed_organization_available` | user |
-         *     | 8 | `unsupported` (Ollama) | otherwise | `provider_removed` | user; organization_admin when in an organisation |
+         *     | 8 | `unsupported` (Ollama) | otherwise | `provider_removed` | user; from Part 2, also organization_admin when in an organisation |
          *
          *     The same caller state gives the same `reason` on parse, brief refresh,
          *     the probe naming nothing, and the settings read (spec AC-40). Before
@@ -2986,7 +2986,7 @@ export interface components {
              * @enum {string}
              */
             provider?: "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex";
-            /** @description Who can turn AI on for this caller: `user` (the caller, in Settings) is always present; `organization_admin` (an administrator of the caller's organisation) is present exactly in rows 6 and 8 when the caller belongs to an organisation. Never names a person.
+            /** @description Who can turn AI on for this caller: `user` (the caller, in Settings) is present in every answer before Part 2 of the spec. Before Part 2 it is the only value: no organisation administrator can configure AI yet, so no answer names one (spec revision 2). From Part 2, `organization_admin` (an administrator of the caller's organisation) is added in rows 6 and 8 when the caller belongs to an organisation; Part 2 may also produce answers without `user` (owner answer O-12, personal keys forbidden). Never names a person.
              *      */
             enablers: ("user" | "organization_admin")[];
             /** @description A sentence for the user saying why the configuration decided on cannot be used and who can fix it. When that configuration is the caller's saved choice (parse, brief refresh, the settings read, and a probe that names no other choice and carries no `llmApiKey`) it says that AI features are off. When a probe named a different choice or carried `llmApiKey`, it describes only the probed choice ("Anthropic needs an API key") and never says AI features are off, which may be false for the caller (see `testLLMConnection`). Wording is not contractual beyond that, and it never carries a key.
@@ -3003,7 +3003,7 @@ export interface components {
              * @enum {string}
              */
             provider?: "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex";
-            /** @description Whether the caller belongs to an organisation. Lets a client offer "use my organisation's AI" and name the organisation's admin only to a member (spec AC-21). Says nothing else about the organisation.
+            /** @description Whether the caller belongs to an organisation. Lets a client offer "use my organisation's AI" only to a member (spec AC-21; Part 2). Says nothing else about the organisation.
              *      */
             inOrganization: boolean;
             /** @description Present exactly when `configured` is false; absent exactly when it is true. Why AI does not work for the caller and who can turn it on: the same reason the caller's parse, brief refresh and probe `{}` give (spec AC-8, AC-40).
@@ -8382,7 +8382,7 @@ export interface operations {
                     "application/json": components["schemas"]["LLMDestinationRefusal"];
                 };
             };
-            /** @description Settings load failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A caller with no key, or with `llmProvider: ""`, is the 409, never a 500 (spec AC-12). A destination refusal is never a 500; it is the 422. */
+            /** @description Settings load failure, or the caller's organisation membership could not be read (NEW-llm-bring-your-own). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A caller with no key, or with `llmProvider: ""`, is the 409, never a 500 (spec AC-12). A destination refusal is never a 500; it is the 422. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8986,7 +8986,7 @@ export interface operations {
                     "application/json": components["schemas"]["LLMNotConfiguredResponse"];
                 };
             };
-            /** @description Brief generation returned an error, or (NEW-llm-bring-your-own) the caller's settings could not be loaded, so which AI configuration applies could not be decided; in that case nothing was written (no `pending` or `failed` brief, the stored brief unchanged) and nothing was fetched or sent, as for the 409 (spec AC-14). Before this change the handler ignored a settings-load error and went on to write a `pending` and then a `failed` brief (`backend/api/handlers_meeting_briefs.go:75-90`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Brief generation returned an error, or (NEW-llm-bring-your-own) the caller's settings could not be loaded or the caller's organisation membership could not be read, so which AI configuration applies could not be decided; in that case nothing was written (no `pending` or `failed` brief, the stored brief unchanged) and nothing was fetched or sent, as for the 409 (spec AC-14). Before this change the handler ignored a settings-load error and went on to write a `pending` and then a `failed` brief (`backend/api/handlers_meeting_briefs.go:75-90`). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
