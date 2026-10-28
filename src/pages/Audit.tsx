@@ -2,7 +2,7 @@ import { AlertCircle, Loader2, RefreshCw, ScrollText } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { MockBanner } from "@/components/MockBanner";
-import { apiErrorMessage, DEFAULT_AUDIT_LIMIT } from "@/api/client";
+import { apiErrorMessage, DEFAULT_AUDIT_LIMIT, describeAuditEntry } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
@@ -88,19 +88,20 @@ export default function AuditPage() {
 
           {entries.length > 0 && (
             <ul className="divide-y divide-border">
-              {entries.map((entry) => (
-                <li key={entry.id} className="flex flex-col gap-1 px-3 py-3 sm:flex-row sm:items-start sm:gap-4">
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44">
-                    {formatTimestamp(entry.created_at, tf)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground">{entry.action}</p>
-                    {entry.details && (
-                      <p className="mt-0.5 break-words text-xs text-muted-foreground">{entry.details}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
+              {entries.map((entry) => {
+                const { title, detail } = describeAuditEntry(entry.action, entry.details);
+                return (
+                  <li key={entry.id} className="flex flex-col gap-1 px-3 py-3 sm:flex-row sm:items-start sm:gap-4">
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44">
+                      {formatTimestamp(entry.created_at, tf)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">{title}</p>
+                      {detail && <p className="mt-0.5 break-words text-xs text-muted-foreground">{detail}</p>}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
-import { api, apiErrorMessage, isUsingMocks, mockZoomConnect } from "@/api/client";
+import { api, apiErrorMessage, disconnectNotice, isUsingMocks, mockZoomConnect } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
+import type { ConferenceProvider, ConferenceProviderStatus, ProviderDisconnectResult, Settings } from "@/api/types";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -59,6 +59,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   const list: ConferenceProviderStatus[] = providers ?? [];
 
   const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [outlookBusy, setOutlookBusy] = useState(false);
   const [zoomError, setZoomError] = useState<{
     message: string;
     retry: () => void;
@@ -74,6 +75,28 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   const isOutlook = settings.calendar_provider === "outlook";
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
+
+  // PAC-67: say what became of the grant at the provider; an unconfirmed
+  // revocation is never shown as a plain success (spec D-2, AC-15, AC-17).
+  const announce = (result: ProviderDisconnectResult) => {
+    const notice = disconnectNotice(result);
+    if (notice.kind === "success") toast.success(notice.message);
+    else toast.info(notice.message);
+  };
+
+  const handleOutlookDisconnect = async () => {
+    if (outlookBusy) return;
+    setOutlookBusy(true);
+    try {
+      announce(await api.microsoftDisconnect());
+      refresh();
+      qc.invalidateQueries({ queryKey: ["auth"] });
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    } finally {
+      setOutlookBusy(false);
+    }
+  };
 
   const handleZoomConnect = () => {
     if (zoomBusy !== null) return;
@@ -95,8 +118,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     setZoomError(null);
     setZoomBusy("disconnect");
     try {
-      await api.zoomDisconnect();
-      toast.success("Disconnected Zoom");
+      announce(await api.zoomDisconnect());
       refresh();
     } catch (e) {
       const message = apiErrorMessage(e);
@@ -228,6 +250,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
               type="button"
               onClick={handleZoomDisconnect}
               disabled={zoomBusy !== null}
+              aria-label="Disconnect Zoom"
               className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
             >
               {zoomBusy === "disconnect" ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
@@ -263,6 +286,17 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
                   : "Toggle on to attach Teams links to events"}
             </p>
           </div>
+          {teams?.connected && (
+            <button
+              type="button"
+              onClick={handleOutlookDisconnect}
+              disabled={outlookBusy}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              {outlookBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
+              Disconnect Outlook
+            </button>
+          )}
           <Toggle
             label="Attach Microsoft Teams links"
             checked={isOutlook ? true : !!settings.teams_enabled}
