@@ -1962,6 +1962,19 @@ export type PublicSlotsResponse = {
  * Response of GET /api/calendar/freebusy: `map[string][]calendar.TimeSlot` keyed by the calendar id Google echoed back (normally the attendee email).
  */
 export type RawGoogleFreeBusyMap = Record<string, Array<RawGoogleBusyWindow>>
+/**
+ * The PAC-21 JSON error envelope (`{"error": ...}`) with its one
+ * possible readiness message pinned. The cause is never in the body;
+ * it is in the server log. Probes read only the status code.
+ */
+export type ReadinessNotReady = { error: "not ready" }
+export type ReadinessReady = { status: "ready" }
+/**
+ * The shared JSON error envelope (`{"error": ...}`, written by
+ * writeError) with its one possible message for a request-budget
+ * expiry pinned.
+ */
+export type RequestBudgetExpiredError = { error: "request timed out" }
 export type ScanCandidate = {
   email: string;
   /**
@@ -4323,7 +4336,7 @@ export type get_GetPublicLinkInfo = {
       
     }
 /**
- * Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422 or 500), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+ * Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422, 500 or 503), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
  */
 export type post_CreatePublicBooking = {
       method: "POST",
@@ -4345,12 +4358,13 @@ export type post_CreatePublicBooking = {
 422: Schemas.BookingError,
 429: Schemas.BookingRateLimitError,
 500: Schemas.BookingError,
+503: Schemas.RequestBudgetExpiredError,
 },
       responseHeaders: {429: { "Retry-After": number },
 },
     }
 /**
- * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
+ * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is treated as free: not connected, a provider error, or (new with PAC-81) a read that fails on its own time limit, so a host whose calendar answers too slowly now looks free where before the request waited for it. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is never treated as free. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
  */
 export type get_GetPublicBookingSlots = {
       method: "GET",
@@ -4370,6 +4384,7 @@ export type get_GetPublicBookingSlots = {
 410: Schemas.BookingError,
 429: Schemas.BookingRateLimitError,
 500: Schemas.BookingError,
+503: Schemas.RequestBudgetExpiredError,
 },
       responseHeaders: {429: { "Retry-After": number },
 },
@@ -5529,6 +5544,7 @@ export type post_ParseNaturalLanguage = {
       responses: {200: Schemas.NLPParseResult,
 400: Schemas.SchedulingErrorResponse,
 500: Schemas.SchedulingErrorResponse,
+503: Schemas.RequestBudgetExpiredError,
 },
       
     }
@@ -5829,6 +5845,74 @@ export type post_SyncPersonalCalendar = {
 401: (Schemas.CalendarNotConnectedError | Schemas.MiddlewareUnauthorized),
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
+503: Schemas.RequestBudgetExpiredError,
+},
+      
+    }
+/**
+ * Added by PAC-81 (spec AC-A11, AC-A6 step 1). Says whether this
+ * backend process should receive traffic now. It is the probe for the
+ * container health check (through the backend binary's health mode on
+ * the local port, spec AC-A16, AC-C3) and for the operator's proxy
+ * (through nginx, spec AC-D1). It is not authenticated and is outside
+ * every abuse limit (it is not counted by any rate limiter).
+ * 
+ * The answer is 200 `{"status":"ready"}` when both hold:
+ * - the process has not begun shutting down; and
+ * - the database answers a ping within the readiness timeout (2 s).
+ * 
+ * Otherwise it is 503 `{"error":"not ready"}` (the PAC-21 JSON error
+ * envelope, like every 5xx in this contract), answered within the
+ * readiness timeout + 1 s: the database did not answer in time or
+ * answered with an error, or shutdown has begun. From SIGTERM or SIGINT
+ * the process answers this 503 for the whole unready notice (5 s) while
+ * it still serves every other request normally; after the notice the
+ * listener closes and connections are refused, so no later answer
+ * exists from the backend itself.
+ * 
+ * Migrations run before the listener opens, so while they run the
+ * backend is unreachable (connection refused), never 200: any answer
+ * from the backend means migrations have finished. Through nginx (the
+ * operator's proxy probe, spec AC-D1), the refused connection during
+ * migrations or after the unready notice is nginx's own 502, not an
+ * answer of this operation; a probe treats any non-200 as not ready.
+ * 
+ * **One database ping at a time (contract revision 2).** Concurrent
+ * readiness calls share one database ping: at most one ping is in
+ * flight per process, and a call that arrives while it runs waits for
+ * and gets that ping's result (single flight). Readiness therefore
+ * never holds more than one pooled connection, however many calls
+ * arrive. The 2 s readiness timeout covers the whole check, including
+ * the wait for a pooled connection: a ping that cannot get a
+ * connection within 2 s counts as "did not answer in time" (503). A
+ * call made after shutdown has begun answers 503 without pinging.
+ * 
+ * The body never names the cause. The cause (database error or timeout,
+ * shutting down) goes to the server log only, never the database
+ * error text in the response (PAC-21). No other property is ever
+ * present.
+ * 
+ * Readiness is public: its answer and its latency reveal database
+ * health and deploy timing to anyone who can reach it. That is
+ * accepted for a probe; operators may restrict `/api/ready` to their
+ * health checker at their proxy (`docs/security.md`).
+ * 
+ * How this differs from `getHealth` (/api/health), which is unchanged:
+ * `getHealth` is liveness. It never touches the database, keeps its
+ * status and body byte for byte, and answers 200 during the unready
+ * notice too. Its consumers (e2e/global-setup.ts polling through
+ * nginx before any test; the web app's `checkApiAvailability`, which
+ * decides preview mode from `res.ok`) keep calling it, so a database
+ * outage or a deploy does not switch the web app into preview mode.
+ */
+export type get_GetReadiness = {
+      method: "GET",
+      path: "/api/ready",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: never,
+      responses: {200: Schemas.ReadinessReady,
+503: Schemas.ReadinessNotReady,
 },
       
     }
@@ -6590,7 +6674,7 @@ export type get_GetFormalTeamAnalytics = {
       
     }
 /**
- * Membership required. The engine searches a fixed 09:00-18:00 UTC window on `date`, steps the cursor in 15-minute increments, treats no-meeting zones and busy calendar events as hard blocks, and scores each slot 0-100 by how few members' focus blocks it disrupts. A member whose calendar token is missing or whose calendar call fails contributes no busy intervals and is silently treated as fully free. `slots` is always an array, never null.
+ * Membership required. The engine searches a fixed 09:00-18:00 UTC window on `date`, steps the cursor in 15-minute increments, treats no-meeting zones and busy calendar events as hard blocks, and scores each slot 0-100 by how few members' focus blocks it disrupts. A member whose calendar token is missing or whose calendar call fails contributes no busy intervals and is silently treated as fully free. `slots` is always an array, never null. Members (PAC-81, spec AC-A18): each member's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). "Fails" includes, new with PAC-81, a read that fails on its own time limit: a member whose calendar answers too slowly now looks free, where before the request waited for it. A member who was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is never treated as free; a read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that member. There is no partial shape.
  */
 export type get_GetTeamAvailability = {
       method: "GET",
@@ -6608,6 +6692,7 @@ export type get_GetTeamAvailability = {
 400: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
+503: Schemas.RequestBudgetExpiredError,
 },
       
     }
@@ -6839,6 +6924,7 @@ get: {
 "/api/organization/ai": Endpoints.get_GetOrganizationAI,
 "/api/personal-calendars": Endpoints.get_ListPersonalCalendars,
 "/api/personal-calendars/{id}/preview": Endpoints.get_PreviewPersonalCalendar,
+"/api/ready": Endpoints.get_GetReadiness,
 "/api/rooms": Endpoints.get_ListRooms,
 "/api/scheduling-links": Endpoints.get_ListSchedulingLinks,
 "/api/scheduling-links/host-invites": Endpoints.get_ListSchedulingLinkHostInvites,
