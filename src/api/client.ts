@@ -2,6 +2,7 @@ import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./cont
 import {
   AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  ConnectStartResponse as ConnectStartResponseSchema,
   OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
   OrganizationAIConsentConflict as OrganizationAIConsentConflictSchema,
   OrganizationAIWriteFreshLoginRequired,
@@ -552,6 +553,19 @@ export async function confirmOrganizationAI(configurationVersion: number): Promi
   }
 }
 
+/**
+ * PAC-71: the conferencing 400s that tell the user to (re)connect Outlook
+ * for Teams, in the server's exact words (contract: createConferenceLink,
+ * addEventConference), and how the app says them. They point to Settings,
+ * where the connect is a signed-in step, never to a sign-in start.
+ */
+const TEAMS_CONNECT_TEXT: Record<string, string> = {
+  "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)":
+    "Microsoft Teams is not connected. Connect Outlook in Settings to add Teams links.",
+  "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)":
+    "The Microsoft Teams connection was lost. Reconnect Outlook in Settings to add Teams links.",
+};
+
 /** Human-readable message for an API failure, usable directly in the UI. */
 export function apiErrorMessage(e: unknown): string {
   if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
@@ -561,6 +575,7 @@ export function apiErrorMessage(e: unknown): string {
   if (isApiHttpError(e)) {
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
+    if (e.status === 400 && detail && TEAMS_CONNECT_TEXT[detail]) return TEAMS_CONNECT_TEXT[detail];
     if (detail) return detail;
     switch (e.status) {
       case 401:
@@ -578,6 +593,29 @@ export function apiErrorMessage(e: unknown): string {
     }
   }
   return e instanceof Error ? e.message : "Unexpected error.";
+}
+
+/** The two calendars a connect can attach (PAC-71): Google and Outlook (Microsoft). */
+export type ConnectProvider = Extract<CalendarProvider, "google" | "outlook">;
+
+/** PAC-71: the connect start's path for a calendar provider. */
+export function connectStartPath(provider: ConnectProvider): string {
+  return provider === "outlook" ? "/auth/microsoft/connect" : "/auth/google/connect";
+}
+
+/**
+ * PAC-71: POST the connect start and return where to send the window. The
+ * answer is parsed strictly (ConnectStartResponse); a URL that is not http(s)
+ * is refused rather than followed.
+ */
+export async function startConnect(provider: ConnectProvider): Promise<string> {
+  const raw = await requestApi<unknown>("POST", connectStartPath(provider));
+  const { authorize_url } = ConnectStartResponseSchema.parse(raw);
+  const protocol = new URL(authorize_url).protocol;
+  if (protocol !== "https:" && protocol !== "http:") {
+    throw new Error("The connect start answered an address that is not a web address.");
+  }
+  return authorize_url;
 }
 
 export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
@@ -1280,8 +1318,14 @@ export const api = {
         webcal: { available: true, reason: "built_in" },
       }),
     ),
-  authConnectUrl: (provider: CalendarProvider = "google") =>
-    `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
+  /**
+   * PAC-71: start a calendar connect for the signed-in user. POST
+   * /api/auth/google/connect or /api/auth/microsoft/connect (no body) answers
+   * 200 ConnectStartResponse; the caller sends the window to `authorize_url`.
+   * A connect is never a GET start: those are sign-in only (spec §3, AC-32).
+   * Every failure is thrown, never replaced with preview data.
+   */
+  startConnect: (provider: ConnectProvider = "google") => startConnect(provider),
   authDisconnect: () =>
     withFallback(
       () => requestApi<void>("DELETE", "/auth/disconnect"),

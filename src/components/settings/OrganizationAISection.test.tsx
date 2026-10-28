@@ -135,6 +135,15 @@ describe("OrganizationAISection (PAC-73 Part 2)", () => {
     expect(sent.find((c) => c.method === "PATCH")?.body).toEqual({ configurationVersion: 3, model: "gpt-4o" });
   });
 
+  // PAC-71 (contract ssoAdminStepupCallback, check 4b), on this purpose's landing.
+  it("a denied return for identity mismatch is stated in plain words", async () => {
+    serve(configured);
+    renderAt("/settings?stepup=denied&reason=identity_mismatch&purpose=llm_org_key_write");
+    expect(await screen.findByTestId("org-ai-stepup-outcome")).toHaveTextContent(
+      "Administrator confirmation was denied: the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
+    );
+  });
+
   it("an SSO landing is shown only by the SSO section, as under PAC-50", async () => {
     serve(configured);
     renderAt("/settings?stepup=granted");

@@ -8,14 +8,17 @@ import {
 import { Loader2, LogIn, LogOut, Link2 } from "lucide-react";
 import { toast } from "@/hooks/useToast";
 import { useState } from "react";
+import { useCalendarConnect } from "@/hooks/useCalendarConnect";
 
 export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["auth"], queryFn: () => api.authStatus() });
   const [busy, setBusy] = useState(false);
+  // PAC-71: a connect is a signed-in POST, never the sign-in start.
+  const { connect, connecting } = useCalendarConnect();
 
   const handleConnect = () => {
-    window.location.href = api.authConnectUrl();
+    void connect("google");
   };
   const handleDisconnect = async () => {
     setBusy(true);
@@ -88,9 +91,10 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
         ) : (
           <button
             onClick={handleConnect}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90"
+            disabled={connecting}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
           >
-            <LogIn className="h-3 w-3" />
+            {connecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
             Connect
           </button>
         )}
