@@ -28,6 +28,7 @@ import { OrganizationAISection } from "@/components/settings/OrganizationAISecti
 import { useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import { SsoAdminStepupSection } from "@/components/settings/SsoAdminStepupSection";
+import { AddressStandingNotice } from "@/components/settings/AddressStandingNotice";
 import {
   SCHEDULING_TEMPLATES,
   applyDefaultInterval,
@@ -253,6 +254,8 @@ export default function SettingsPage() {
             Save changes
           </button>
         </div>
+
+        <AddressStandingNotice />
 
         <ProfileSection />
 

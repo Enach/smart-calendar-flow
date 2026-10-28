@@ -146,6 +146,17 @@ describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
     ).toBeInTheDocument();
   });
 
+  // PAC-71 (contract ssoAdminStepupCallback, check 4b): same address, another identity.
+  it("states the identity mismatch in plain words", async () => {
+    serveOptions(200, options({ google: [GOOGLE_SCOPE] }));
+    renderAt("/settings?stepup=denied&reason=identity_mismatch");
+    expect(
+      await screen.findByText(
+        "Administrator confirmation was denied: the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("states an unknown reason as a denial without detail", async () => {
     serveOptions(200, options({ google: [GOOGLE_SCOPE] }));
     renderAt("/settings?stepup=denied&reason=something_new");
