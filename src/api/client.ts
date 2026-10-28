@@ -860,10 +860,20 @@ export function mockLlmTest(s: Settings): LLMTestResult {
   };
 }
 
-/** The probe body: provider, model and an unsaved key only (PAC-24). */
+/**
+ * The probe body: provider, model and an unsaved key only (PAC-24). The probe
+ * tests the form as it stands, unsaved: a key the user typed is sent, and a
+ * saved key the user removed ("Remove saved key", `llm_api_key` = "") is sent
+ * as an empty key, so the server answers "needs a key" instead of testing the
+ * stored key (contract challenge rev. 2, non-blocking 6). An untouched key
+ * field (`undefined`) sends nothing, so the stored key bound to the provider
+ * is tested.
+ */
 export function llmTestBody(s: Settings): Record<string, string> {
-  const body: Record<string, string> = { llmProvider: String(s.llm_provider ?? ""), llmModel: s.llm_model ?? "" };
+  const provider = String(s.llm_provider ?? "");
+  const body: Record<string, string> = { llmProvider: provider, llmModel: s.llm_model ?? "" };
   if (s.llm_api_key) body.llmApiKey = s.llm_api_key;
+  else if (s.llm_api_key === "" && isKeyProvider(provider)) body.llmApiKey = "";
   return body;
 }
 

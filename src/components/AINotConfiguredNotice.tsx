@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Info } from "lucide-react";
 
 import type { AINotConfigured } from "@/api/types";
-import { whoCanEnable } from "@/lib/aiProviders";
+import { WHO_CAN_ENABLE, noticeReason } from "@/lib/aiProviders";
 
 interface AINotConfiguredNoticeProps {
   notConfigured: AINotConfigured;
@@ -25,8 +25,8 @@ export function AINotConfiguredNotice({ notConfigured, showLink = true }: AINotC
       <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div className="space-y-1">
         <p className="font-medium">AI features are off</p>
-        <p className="text-muted-foreground">{notConfigured.message}</p>
-        <p className="text-muted-foreground">{whoCanEnable(notConfigured)}</p>
+        <p className="text-muted-foreground">{noticeReason(notConfigured)}</p>
+        <p className="text-muted-foreground">{WHO_CAN_ENABLE}</p>
         {showLink && (
           <Link to="/settings#ai" className="inline-block font-medium text-primary underline-offset-4 hover:underline">
             Open AI settings

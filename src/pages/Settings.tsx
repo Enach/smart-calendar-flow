@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
-import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, organisationNote, providerOptions } from "@/lib/aiProviders";
+import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch } from "@/lib/aiProviders";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
@@ -603,10 +603,10 @@ export default function SettingsPage() {
             <Field label="AI provider">
               <select
                 value={draft.llm_provider}
-                onChange={(e) => set("llm_provider", e.target.value)}
+                onChange={(e) => patchDraft(providerSwitch(e.target.value, data))}
                 className={inputCls}
               >
-                {providerOptions(draft.llm_provider, !!draft.ai_status?.inOrganization).map((p) => (
+                {providerOptions(draft.llm_provider).map((p) => (
                   <option key={p.value || "off"} value={p.value} disabled={p.disabled}>
                     {p.label}
                   </option>
@@ -734,12 +734,6 @@ export default function SettingsPage() {
                   </button>
                 )}
               </Field>
-            )}
-
-            {organisationNote(draft.llm_provider, !!draft.ai_status?.inOrganization) && (
-              <p className="text-xs text-muted-foreground sm:col-span-2">
-                {organisationNote(draft.llm_provider, !!draft.ai_status?.inOrganization)}
-              </p>
             )}
           </div>
 

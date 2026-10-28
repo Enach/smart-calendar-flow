@@ -7,10 +7,11 @@ import {
   KEY_PROVIDERS,
   LLM_CHOICES,
   PROVIDER_LABELS,
+  WHO_CAN_ENABLE,
   keyIsSetFor,
-  organisationNote,
+  noticeReason,
   providerOptions,
-  whoCanEnable,
+  providerSwitch,
 } from "./aiProviders";
 
 // NEW-llm-bring-your-own AC-33: every provider value the web code accepts or
@@ -37,44 +38,44 @@ describe("AI provider values follow the contract", () => {
     expect(Object.keys(PROVIDER_LABELS).sort()).toEqual([...KEY_PROVIDERS].sort());
   });
 
-  it("offers off and the five providers, organisation only to a member, never unsupported or ollama", () => {
+  it("offers off and the five providers, never organisation, unsupported or ollama", () => {
     const values = (opts: ReturnType<typeof providerOptions>) => opts.filter((o) => !o.disabled).map((o) => o.value);
-    expect(values(providerOptions("openai", false))).toEqual(["", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]);
-    expect(values(providerOptions("openai", true))).toEqual(["", "organization", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]);
+    for (const current of ["", "openai", "organization", "unsupported"] as const) {
+      expect(values(providerOptions(current))).toEqual(["", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]);
+    }
     for (const current of ["unsupported", "organization", "openai"] as const) {
-      for (const inOrg of [false, true]) {
-        const opts = providerOptions(current, inOrg);
-        expect(opts.map((o) => o.value)).not.toContain("ollama");
-        expect(values(opts)).not.toContain("unsupported");
-        // The stored choice is always representable in the select.
-        expect(opts.map((o) => o.value)).toContain(current);
-      }
+      const opts = providerOptions(current);
+      expect(opts.map((o) => o.value)).not.toContain("ollama");
+      // The stored choice is always representable in the select.
+      expect(opts.map((o) => o.value)).toContain(current);
     }
-    expect(providerOptions("unsupported", false).find((o) => o.value === "unsupported")?.label).toMatch(/no longer supported/i);
+    expect(providerOptions("unsupported").find((o) => o.value === "unsupported")?.label).toMatch(/no longer supported/i);
   });
 
-  // Review finding on smart-calendar-flow#131: every new account on a generic
-  // domain is stored as "organization", and has no organisation. AC-21: such a
-  // user sees no organisation option and no organisation copy, enabled or not.
-  it("a user with no organisation sees no organisation wording, whatever is stored", () => {
+  // Spec revision 2 (challenge of revision 1, Blocking 1) and D-21: until
+  // Part 2 no organisation admin can set up AI, so no Part 1 user, in an
+  // organisation or not, is offered an organisation option or organisation
+  // copy. A stored "organization" (every new account) is shown, disabled, as
+  // "No provider chosen".
+  it("no Part 1 user sees organisation wording, whatever is stored", () => {
     for (const current of ["", "organization", "unsupported", "openai"] as const) {
-      const labels = providerOptions(current, false).map((o) => o.label);
-      for (const label of labels) expect(label).not.toMatch(/organi[sz]ation/i);
-      expect(organisationNote(current, false)).toBeNull();
+      for (const label of providerOptions(current).map((o) => o.label)) expect(label).not.toMatch(/organi[sz]ation/i);
     }
-    const stored = providerOptions("organization", false).find((o) => o.value === "organization");
-    expect(stored).toEqual({ value: "organization", label: "No provider chosen", disabled: true });
+    expect(providerOptions("organization").find((o) => o.value === "organization")).toEqual({
+      value: "organization",
+      label: "No provider chosen",
+      disabled: true,
+    });
   });
 
-  it("explains an organisation that has not set up AI only to its members who follow it", () => {
-    expect(organisationNote("organization", true)).toMatch(/your organisation has not set up AI yet/i);
-    for (const current of ["", "unsupported", "openai"] as const) {
-      expect(organisationNote(current, true)).toBeNull();
-    }
-    expect(providerOptions("organization", true).find((o) => o.value === "organization")).toEqual({
-      value: "organization",
-      label: "Use my organisation's AI",
-    });
+  // Contract challenge rev. 2, non-blocking 6: an unsaved provider switch must
+  // not carry one provider's model to another.
+  it("switching provider resets the model, and returning restores the saved one", () => {
+    const saved = { llm_provider: "anthropic", llm_model: "claude-haiku-4-5-20251001" };
+    expect(providerSwitch("openai", saved)).toEqual({ llm_provider: "openai", llm_model: "" });
+    expect(providerSwitch("bedrock", saved)).toEqual({ llm_provider: "bedrock", llm_model: "" });
+    expect(providerSwitch("anthropic", saved)).toEqual({ llm_provider: "anthropic", llm_model: "claude-haiku-4-5-20251001" });
+    expect(providerSwitch("openai")).toEqual({ llm_provider: "openai", llm_model: "" });
   });
 
   it("the mock probe knows exactly the five providers", () => {
@@ -92,12 +93,22 @@ describe("AI provider values follow the contract", () => {
 });
 
 describe("who can turn AI on", () => {
-  it("names the user, and the organisation's admin only when the server says so", () => {
-    expect(whoCanEnable({ reason: "needs_key", provider: "anthropic", enablers: ["user"], message: "m" })).toBe(
-      "You can turn them on in Settings.",
+  it("names only the user in Part 1, never an organisation admin", () => {
+    expect(WHO_CAN_ENABLE).toBe("You can turn them on in Settings.");
+    expect(WHO_CAN_ENABLE).not.toMatch(/admin|organi[sz]ation/i);
+  });
+
+  // Contract challenge rev. 2, non-blocking 6: the notice's heading already
+  // says "AI features are off", so the reason line does not repeat it.
+  it("the reason line drops the server's own 'AI features are off' lead", () => {
+    expect(noticeReason({ reason: "needs_key", provider: "anthropic", enablers: ["user"], message: "AI features are off: Anthropic needs an API key. Add one in Settings." })).toBe(
+      "Anthropic needs an API key. Add one in Settings.",
     );
-    expect(whoCanEnable({ reason: "nothing_configured", enablers: ["user", "organization_admin"], message: "m" })).toBe(
-      "You can turn them on in Settings, or your organisation's admin can.",
+    expect(noticeReason({ reason: "off", enablers: ["user"], message: "AI features are off: you turned them off in Settings." })).toBe(
+      "You turned them off in Settings.",
+    );
+    expect(noticeReason({ reason: "needs_key", provider: "openai", enablers: ["user"], message: "OpenAI needs an API key. Enter one to test it." })).toBe(
+      "OpenAI needs an API key. Enter one to test it.",
     );
   });
 });

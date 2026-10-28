@@ -49,18 +49,17 @@ export interface ProviderOption {
 }
 
 /**
- * The provider select's options: off and the five providers; "use my
- * organisation's AI" only for a member of an organisation (spec AC-21). A
- * stored value that cannot be chosen is shown, disabled, so the select can
- * display it: unsupported as a former provider, and organization for a user
- * with no organisation (the default of every new account on a generic domain)
- * under a neutral label, so that user sees no organisation option (AC-21).
+ * The provider select's options: off and the five providers. Part 1 of the
+ * spec has no organisation AI (no admin can set one up before Part 2), so
+ * "use my organisation's AI" is offered to nobody yet (spec AC-21, revision 2).
+ * A stored value that cannot be chosen is shown, disabled, so the select can
+ * display it: unsupported as a former provider, and organization (the default
+ * of every new account, in an organisation or not) under the neutral label
+ * "No provider chosen" (D-21), so no Part 1 user sees an organisation option.
  */
-export function providerOptions(current: LLMProvider | string, inOrganization: boolean): ProviderOption[] {
+export function providerOptions(current: LLMProvider | string): ProviderOption[] {
   const opts: ProviderOption[] = [{ value: "", label: "Off (AI features off)" }];
-  if (inOrganization) {
-    opts.push({ value: "organization", label: "Use my organisation's AI" });
-  } else if (current === "organization") {
+  if (current === "organization") {
     opts.push({ value: "organization", label: "No provider chosen", disabled: true });
   }
   for (const p of KEY_PROVIDERS) opts.push({ value: p, label: PROVIDER_LABELS[p] });
@@ -71,20 +70,37 @@ export function providerOptions(current: LLMProvider | string, inOrganization: b
 }
 
 /**
- * The line under the select for a member following an organisation that has
- * not set up AI. Null for anyone else: a user with no organisation is never
- * told about one (AC-21).
+ * Who can turn AI on. Until Part 2 of the spec is deployed only the user can
+ * (spec §3, revision 2): no organisation admin has a way to configure AI, so
+ * the page never sends the user to one.
  */
-export function organisationNote(current: LLMProvider | string, inOrganization: boolean): string | null {
-  if (!inOrganization || current !== "organization") return null;
-  return "Your organisation has not set up AI yet, so AI features stay off. You can choose a provider and use your own API key instead.";
+export const WHO_CAN_ENABLE = "You can turn them on in Settings.";
+
+const OFF_PREFIX = "AI features are off: ";
+
+/**
+ * The reason line under the notice's "AI features are off" heading: the
+ * server's sentence without its own "AI features are off: " lead, so the
+ * notice does not say it twice. Any other sentence is shown as sent.
+ */
+export function noticeReason(nc: AINotConfigured): string {
+  const m = nc.message;
+  if (!m.startsWith(OFF_PREFIX) || m.length === OFF_PREFIX.length) return m;
+  const rest = m.slice(OFF_PREFIX.length);
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
-/** Who can turn AI on, from the server's enablers. */
-export function whoCanEnable(nc: AINotConfigured): string {
-  return nc.enablers.includes("organization_admin")
-    ? "You can turn them on in Settings, or your organisation's admin can."
-    : "You can turn them on in Settings.";
+/**
+ * The draft change when the user picks another provider. The general model
+ * (OpenAI / Anthropic) is per provider in meaning, so it is not carried over:
+ * it goes back to the saved model when the user returns to the saved
+ * provider, and is otherwise emptied, which means the provider's default.
+ * This keeps an unsaved switch from probing or saving one provider's model on
+ * another (contract challenge rev. 2, non-blocking 6).
+ */
+export function providerSwitch(next: LLMProvider | string, saved?: Pick<Settings, "llm_provider" | "llm_model">): Pick<Settings, "llm_provider" | "llm_model"> {
+  const llm_model = saved && saved.llm_provider === next ? saved.llm_model : "";
+  return { llm_provider: next, llm_model };
 }
 
 /** Whether a key bound to `provider` is on file, as the server last reported. */

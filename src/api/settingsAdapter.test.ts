@@ -239,6 +239,19 @@ describe("PATCH body", () => {
     });
     expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "sk-try" }).llmApiKey).toBe("sk-try");
   });
+
+  // Contract challenge rev. 2, non-blocking 6: "Remove saved key" then "Test
+  // connection" before saving tests the form as it stands, so it sends an
+  // empty key (the server answers "needs a key"), never the stored one.
+  it("probes a removed, unsaved key as an empty key, and an untouched field as the stored key", () => {
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: "" })).toEqual({
+      llmProvider: "openai",
+      llmModel: read.llm_model,
+      llmApiKey: "",
+    });
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: undefined })).not.toHaveProperty("llmApiKey");
+    expect(llmTestBody({ ...read, llm_provider: "", llm_api_key: "" })).not.toHaveProperty("llmApiKey");
+  });
 });
 
 // API-039: provider values the server uses that the app did not know.
