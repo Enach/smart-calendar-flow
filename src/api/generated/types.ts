@@ -33,11 +33,14 @@ export interface paths {
          *        the decoder ignored undeclared properties although the schema said
          *        `additionalProperties: false`.)
          *     3. Domain: `domain` must equal the caller's org domain, exact and
-         *        case-insensitive. Otherwise 400 `provider_domain_mismatch`. A
-         *        subdomain does NOT match: with org `example.com`, `sub.example.com`
-         *        is a 400. Nothing is trimmed: `" acme.com "` is a 400 too. (Before PAC-50 this was the suffix rule
-         *        domain.DomainMatchesOrg, which accepted any subdomain, and a
-         *        mismatch was a 403; ex-PAC-46.)
+         *        case-insensitive. Otherwise 403 `provider_domain_mismatch` (owner
+         *        decision 2026-10-27, RFC 9110 §15.5.4: the request is understood
+         *        and the caller is not permitted to configure that domain). A
+         *        subdomain does NOT match: with org `acme.com`, `sub.acme.com` is a
+         *        403, and so is a foreign domain such as `other.com`. Nothing is
+         *        trimmed: `" acme.com "` is a 403 too. Nothing is written and a live
+         *        grant is NOT consumed. (Before PAC-50 this was the suffix rule
+         *        domain.DomainMatchesOrg, which accepted any subdomain; ex-PAC-46.)
          *     4. Authorization, one of:
          *        a. a live admin step-up grant for (caller, caller's org), obtained
          *           through GET /api/admin/sso/stepup less than 10 minutes earlier.
@@ -45,8 +48,9 @@ export interface paths {
          *           the caller's newest live grant and consumes it in the same
          *           statement, so one grant authorizes exactly one write, and two
          *           concurrent writes on one grant yield one success and one 403.
-         *           Every 400 above happens before this step and leaves the grant
-         *           live; a failure after it (the 500 below) leaves it consumed.
+         *           Every 400 and 403 above happens before this step and leaves
+         *           the grant live; a failure after it (the 500 below) leaves it
+         *           consumed.
          *        b. break-glass: the caller's session email is listed in the
          *           deployment's `PACEDAY_ADMIN_EMAILS` (exact, lower-cased) AND the
          *           session JWT was issued less than 10 minutes ago. Listed with an
@@ -54,9 +58,9 @@ export interface paths {
          *        (a) is tried first: a break-glass caller who also holds a live
          *        grant consumes that grant on the write.
          *        Neither gives 403 `sso_write_requires_admin_stepup` with
-         *        `stepup_url`. A 403 rather than a 401: the session is valid, the
-         *        privilege is not there. Every 403 leaves the provider table
-         *        unchanged.
+         *        `stepup_url`, `stepup_scopes` and `without_stepup`. A 403 rather
+         *        than a 401: the session is valid, the privilege is not there.
+         *        Every 403 leaves the provider table unchanged.
          *     5. Write: the domain is stored lower-cased, so `ACME.com` updates the
          *        existing `acme.com` row rather than adding a second one. Each
          *        successful write is recorded server-side for operators (spec §4.6);
@@ -101,13 +105,22 @@ export interface paths {
          *     browser there (a top-level navigation, not a fetch), resolving the
          *     path against its configured API base's origin, not the page's.
          *
-         *     Scopes are requested for this round-trip only and the resulting
-         *     tokens are discarded after the check; nothing is written to the
-         *     user's settings or token store, and the calendar consent is not
-         *     widened. Google adds the read-only directory-user scope; Microsoft
-         *     adds delegated directory-role and organisation read scopes (whether
+         *     The step-up is optional and separate from sign-in (owner decision
+         *     2026-10-27, PAC-68 OQ-2 / PAC-50 OQ-2). Sign-in (startGoogleOAuth,
+         *     startMicrosoftOAuth, the OIDC SSO start) never requests these scopes
+         *     nor any scope needing admin consent; only this round-trip does. The
+         *     broader scopes are listed in SsoWriteStepupRequired.stepup_scopes and
+         *     what is lost without the step-up in `without_stepup`, so a client can
+         *     explain both before it navigates here. Declining costs nothing else:
+         *     the app keeps working, and the step-up can be started again at any
+         *     time (from Settings, where the callback lands). The resulting tokens
+         *     are discarded after the check; nothing is written to the user's
+         *     settings or token store, and the calendar consent is not widened.
+         *     Google adds the read-only directory-user scope; Microsoft adds
+         *     delegated directory-role and organisation read scopes (whether
          *     `User.Read` suffices for the organisation's verified domains is spec
-         *     OQ-2, open for the plan; it does not change this interface).
+         *     OQ-2's technical sub-question, open for the plan; it does not change
+         *     this interface).
          *
          */
         get: operations["startSsoAdminStepup"];
@@ -194,8 +207,9 @@ export interface paths {
          * @description Same gate as createSsoProvider, in the same order (spec §4.2):
          *     membership (403 `org membership required` / `org not found`), then the
          *     `{domain}` segment, lower-cased and not trimmed, must equal the
-         *     caller's org domain exactly (400 `provider_domain_mismatch`; a
-         *     subdomain does not match, nor does `%20acme.com`),
+         *     caller's org domain exactly (403 `provider_domain_mismatch`, owner
+         *     decision 2026-10-27; a subdomain does not match, nor does a foreign
+         *     domain, nor `%20acme.com`; no grant is consumed),
          *     then authorization (a live step-up grant, consumed, or break-glass with
          *     a fresh session; otherwise 403 `sso_write_requires_admin_stepup` with
          *     `stepup_url`, or `sso_write_requires_fresh_login`).
@@ -210,7 +224,7 @@ export interface paths {
          *
          *     `DELETE /api/admin/sso/stepup` is this operation with `{domain}` =
          *     `stepup` (the step-up paths define only GET): it gets the same gate,
-         *     so an org member gets 400 `provider_domain_mismatch` and nothing is
+         *     so an org member gets 403 `provider_domain_mismatch` and nothing is
          *     consumed.
          *
          */
@@ -4910,9 +4924,9 @@ export interface components {
          *      */
         SsoProviderCreateRequest: {
             /** @description Must equal the caller's org domain, exact and case-insensitive,
-             *     else 400 `provider_domain_mismatch`; a subdomain does not match,
-             *     and surrounding whitespace is not trimmed (`" acme.com "` is a
-             *     400). Stored lower-cased.
+             *     else 403 `provider_domain_mismatch`; a subdomain or a foreign
+             *     domain does not match, and surrounding whitespace is not trimmed
+             *     (`" acme.com "` is a 403). Stored lower-cased.
              *      */
             domain: string;
             provider_name: string;
@@ -4943,7 +4957,7 @@ export interface components {
         SsoProviderResponse: {
             /** Format: uuid */
             ID: string;
-            /** @description Lower-case for every row written since PAC-50; migration 028 (`028_sso_admin_stepup`) lower-cases existing rows. */
+            /** @description Lower-case for every row written since PAC-50; migration 029 (`029_sso_admin_stepup`) lower-cases existing rows. */
             Domain: string;
             ProviderName: string;
             /** @enum {string} */
@@ -4967,14 +4981,26 @@ export interface components {
          * @enum {string}
          */
         SsoStepupProvider: "google" | "microsoft";
+        /** @description The provider domain (create body `domain`, or the DELETE `{domain}`
+         *     segment) is not exactly the caller's org domain, compared
+         *     case-insensitively and untrimmed: a subdomain (`sub.acme.com`), a
+         *     foreign domain (`other.com`) or a padded value (`" acme.com "`).
+         *     A 403 by owner decision (2026-10-27, RFC 9110 §15.5.4), not a 400.
+         *     Checked after membership and body shape, before authorization:
+         *     nothing is written and a live step-up grant is not consumed.
+         *      */
+        SsoWriteDomainMismatch: {
+            /** @constant */
+            error: "provider_domain_mismatch";
+        };
         /** @description The 403 of createSsoProvider and deleteSsoProvider (PAC-50). Exactly
          *     one variant applies, told apart by `error`; `stepup_url` is present
-         *     on, and only on, `sso_write_requires_admin_stepup`. All three keep the
+         *     on, and only on, `sso_write_requires_admin_stepup`. All four keep the
          *     shared `{error}` envelope, so a client that reads only `error` still
          *     shows a specific message (the web client renders a 403 without
          *     `error` as a generic "no permission" text).
          *      */
-        SsoWriteForbiddenResponse: components["schemas"]["SsoWriteMembershipRequired"] | components["schemas"]["SsoWriteStepupRequired"] | components["schemas"]["SsoWriteFreshLoginRequired"];
+        SsoWriteForbiddenResponse: components["schemas"]["SsoWriteMembershipRequired"] | components["schemas"]["SsoWriteDomainMismatch"] | components["schemas"]["SsoWriteStepupRequired"] | components["schemas"]["SsoWriteFreshLoginRequired"];
         /** @description The caller's email is on the deployment's break-glass list but the
          *     session JWT was issued 10 minutes ago or more. The client sends the
          *     user through sign-in again; a step-up grant also satisfies the gate.
@@ -4992,14 +5018,42 @@ export interface components {
             error: "org membership required" | "org not found";
         };
         /** @description An org member with no live step-up grant for (caller, caller's org)
-         *     who is not a break-glass admin. The client asks the user which
-         *     provider administers their organisation, appends
-         *     `?provider=google` or `?provider=microsoft` to `stepup_url` and
-         *     navigates the browser there.
+         *     who is not a break-glass admin. The step-up is optional (owner
+         *     decision 2026-10-27, PAC-68 OQ-2 / PAC-50 OQ-2): before navigating
+         *     anywhere, the client explains `without_stepup` and `stepup_scopes`
+         *     and lets the user decline, in which case nothing is navigated and the
+         *     app keeps working. If the user goes ahead, the client asks which
+         *     provider administers their organisation, appends `?provider=google`
+         *     or `?provider=microsoft` to `stepup_url` and navigates the browser
+         *     there.
          *      */
         SsoWriteStepupRequired: {
             /** @constant */
             error: "sso_write_requires_admin_stepup";
+            /** @description The scopes the step-up requests from each provider on top of the
+             *     identity scopes (`openid`, `email`, `profile`, and Microsoft's
+             *     `User.Read`, which sign-in already requests). Requested only by
+             *     startSsoAdminStepup, never at sign-in; the tokens are discarded
+             *     after the check. Google: the read-only Directory user scope
+             *     (`https://www.googleapis.com/auth/admin.directory.user.readonly`).
+             *     Microsoft: organisation and directory-role read scopes
+             *     (`Organization.Read.All`, `RoleManagement.Read.Directory`, which a
+             *     tenant administrator may have to consent to). Each list is exactly
+             *     what startSsoAdminStepup requests beyond those, so a client shows
+             *     it as given.
+             *      */
+            stepup_scopes: {
+                google: string[];
+                microsoft: string[];
+            };
+            /** @description What the caller cannot do without the step-up, for the client to
+             *     explain before it navigates. `sso_configuration_writes`: no SSO
+             *     configuration write (create, update or delete); only a deployment
+             *     operator on the break-glass list can write without it. Nothing
+             *     else the user already has is lost. Values may be added; a client
+             *     ignores one it does not know.
+             *      */
+            without_stepup: "sso_configuration_writes"[];
             /**
              * @description Path of startSsoAdminStepup on the API's origin, without the
              *     `provider` parameter (spec §4.3 and OQ-8). It has the same form as
@@ -5500,10 +5554,9 @@ export interface operations {
             };
             /** @description JSON error, one of: `invalid JSON`; `unknown property: <name>`
              *     (added by PAC-50); `domain, provider_name and provider_type are
-             *     required`; `provider_type must be 'oidc' or 'saml'`;
-             *     `provider_domain_mismatch` (added by PAC-50; replaces the 403
-             *     `can only configure SSO for your own domain`). No row is written
-             *     and a live grant is NOT consumed.
+             *     required`; `provider_type must be 'oidc' or 'saml'`. No row is
+             *     written and a live grant is NOT consumed. A domain that is not the
+             *     org domain is not a 400: it is the 403 `provider_domain_mismatch`.
              *      */
             400: {
                 headers: {
@@ -5523,9 +5576,13 @@ export interface operations {
                 };
             };
             /** @description The caller may not write SSO configuration. The `error` field tells
-             *     the three cases apart (see SsoWriteForbiddenResponse); only
-             *     `sso_write_requires_admin_stepup` carries `stepup_url`. The
-             *     provider table is unchanged.
+             *     the four cases apart (see SsoWriteForbiddenResponse): membership,
+             *     `provider_domain_mismatch` (the body's `domain` is not exactly the
+             *     org domain: a subdomain, a foreign domain, or one with surrounding
+             *     whitespace; replaces the pre-PAC-50 403 `can only configure SSO
+             *     for your own domain`; a live grant is not consumed), the step-up,
+             *     or a fresh login. Only `sso_write_requires_admin_stepup` carries
+             *     `stepup_url`. The provider table is unchanged.
              *      */
             403: {
                 headers: {
@@ -5738,18 +5795,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description `provider_domain_mismatch`: `{domain}` is not the caller's org
-             *     domain (added by PAC-50; replaces the 403 `can only delete SSO for
-             *     your own domain`). No grant is consumed.
-             *      */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
             /** @description No/invalid JWT (text/plain). */
             401: {
                 headers: {
@@ -5760,7 +5805,10 @@ export interface operations {
                 };
             };
             /** @description The caller may not write SSO configuration; see
-             *     SsoWriteForbiddenResponse. Nothing is deleted.
+             *     SsoWriteForbiddenResponse. Nothing is deleted. Includes
+             *     `provider_domain_mismatch` when `{domain}` is not exactly the
+             *     caller's org domain (replaces the pre-PAC-50 403 `can only delete
+             *     SSO for your own domain`); no grant is consumed then.
              *      */
             403: {
                 headers: {

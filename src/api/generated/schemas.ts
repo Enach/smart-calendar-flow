@@ -412,17 +412,20 @@ export const SsoProviderResponse = z.strictObject({ ID: z.uuid(), Domain: z.stri
 export type SsoStepupProvider = __TypedOpenapi.Schemas.SsoStepupProvider;
 export const SsoStepupProvider = z.enum(["google", "microsoft"]);
 
+export type SsoWriteDomainMismatch = __TypedOpenapi.Schemas.SsoWriteDomainMismatch;
+export const SsoWriteDomainMismatch = z.strictObject({ error: z.literal("provider_domain_mismatch") });
+
 export type SsoWriteMembershipRequired = __TypedOpenapi.Schemas.SsoWriteMembershipRequired;
 export const SsoWriteMembershipRequired = z.strictObject({ error: z.enum(["org membership required", "org not found"]) });
 
 export type SsoWriteStepupRequired = __TypedOpenapi.Schemas.SsoWriteStepupRequired;
-export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_url: z.literal("/api/admin/sso/stepup") });
+export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_scopes: z.strictObject({ google: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), microsoft: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }) }), without_stepup: z.array(z.literal("sso_configuration_writes")).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), stepup_url: z.literal("/api/admin/sso/stepup") });
 
 export type SsoWriteFreshLoginRequired = __TypedOpenapi.Schemas.SsoWriteFreshLoginRequired;
 export const SsoWriteFreshLoginRequired = z.strictObject({ error: z.literal("sso_write_requires_fresh_login") });
 
 export type SsoWriteForbiddenResponse = __TypedOpenapi.Schemas.SsoWriteForbiddenResponse;
-export const SsoWriteForbiddenResponse = z.union([SsoWriteMembershipRequired, SsoWriteStepupRequired, SsoWriteFreshLoginRequired]).refine((data) => [SsoWriteMembershipRequired.safeParse(data).success, SsoWriteStepupRequired.safeParse(data).success, SsoWriteFreshLoginRequired.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
+export const SsoWriteForbiddenResponse = z.union([SsoWriteMembershipRequired, SsoWriteDomainMismatch, SsoWriteStepupRequired, SsoWriteFreshLoginRequired]).refine((data) => [SsoWriteMembershipRequired.safeParse(data).success, SsoWriteDomainMismatch.safeParse(data).success, SsoWriteStepupRequired.safeParse(data).success, SsoWriteFreshLoginRequired.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
 
 export type Team = __TypedOpenapi.Schemas.Team;
 export const Team = z.strictObject({ id: z.uuid(), orgId: z.uuid().optional(), name: z.string(), createdBy: z.uuid(), createdAt: z.iso.datetime() });
