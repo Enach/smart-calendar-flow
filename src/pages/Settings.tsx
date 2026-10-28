@@ -24,6 +24,7 @@ import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
 import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
+import { SsoAdminStepupSection } from "@/components/settings/SsoAdminStepupSection";
 import {
   SCHEDULING_TEMPLATES,
   applyDefaultInterval,
@@ -759,6 +760,8 @@ export default function SettingsPage() {
             </p>
           </div>
         </Section>
+
+        <SsoAdminStepupSection />
       </main>
     </div>
   );
