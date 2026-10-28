@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
-import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch } from "@/lib/aiProviders";
+import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
@@ -721,13 +721,7 @@ export default function SettingsPage() {
                 {keyIsSetFor(draft, draft.llm_provider) && draft.llm_api_key === undefined && (
                   <button
                     type="button"
-                    onClick={() =>
-                      setDraft((d) => {
-                        if (!d || !isKeyProvider(d.llm_provider)) return d;
-                        const keys = d.llm_api_keys_set ? { ...d.llm_api_keys_set, [d.llm_provider]: false } : d.llm_api_keys_set;
-                        return { ...d, llm_api_key: "", llm_api_key_set: false, llm_api_keys_set: keys };
-                      })
-                    }
+                    onClick={() => setDraft((d) => (d ? removeSavedKey(d) : d))}
                     className="mt-1 text-[11px] text-muted-foreground underline hover:text-foreground"
                   >
                     Remove saved key

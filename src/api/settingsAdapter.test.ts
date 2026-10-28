@@ -8,6 +8,7 @@ import {
   validateLunchWithinWorkingHours,
   workingHoursCapacity,
 } from "@/lib/schedulingPresets";
+import { keyIsSetFor, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
 import type { Settings } from "./types";
 
 const base = {
@@ -251,6 +252,56 @@ describe("PATCH body", () => {
     });
     expect(llmTestBody({ ...read, llm_provider: "openai", llm_api_key: undefined })).not.toHaveProperty("llmApiKey");
     expect(llmTestBody({ ...read, llm_provider: "", llm_api_key: "" })).not.toHaveProperty("llmApiKey");
+  });
+});
+
+// Contract challenge rev. 2.1, W-1: a key is bound to the provider it was
+// typed or removed for. A provider switch must never carry it to another
+// provider, in the probe body or in the PATCH body.
+describe("provider switch and the draft key", () => {
+  const saved = {
+    ...normalizeSettings({
+      ...patchPayload,
+      llmProvider: "openai",
+      llmApiKeySet: true,
+      llmApiKeysSet: { openai: true, anthropic: true, azure_openai: false, bedrock: false, vertex: false },
+    }),
+    calendar_id: "primary",
+  } as Settings;
+  const switchTo = (d: Settings, next: string): Settings => ({ ...d, ...providerSwitch(next, saved) });
+
+  it("remove saved key, then switch: neither the probe nor the PATCH sends llmApiKey", () => {
+    const removed = removeSavedKey({ ...saved });
+    expect(llmTestBody(removed)).toHaveProperty("llmApiKey", "");
+    const draft = switchTo(removed, "anthropic");
+    expect(llmTestBody(draft)).toEqual({ llmProvider: "anthropic", llmModel: "" });
+    const patch = settingsPatchBody(draft, saved);
+    expect(patch).not.toHaveProperty("llmApiKey");
+    expect(patch).toEqual({ llmProvider: "anthropic" });
+    // The Anthropic key is shown as on file again, and so is the OpenAI one.
+    expect(keyIsSetFor(draft, "anthropic")).toBe(true);
+    expect(keyIsSetFor(draft, "openai")).toBe(true);
+  });
+
+  it("a key typed for one provider is dropped when the user switches to another", () => {
+    const typed = { ...saved, llm_api_key: "sk-openai-typed" };
+    expect(llmTestBody(typed).llmApiKey).toBe("sk-openai-typed");
+    const draft = switchTo(typed, "anthropic");
+    expect(llmTestBody(draft)).not.toHaveProperty("llmApiKey");
+    expect(settingsPatchBody(draft, saved)).not.toHaveProperty("llmApiKey");
+    // Switching back does not bring it back either.
+    const back = switchTo(draft, "openai");
+    expect(llmTestBody(back)).not.toHaveProperty("llmApiKey");
+    expect(settingsPatchBody(back, saved)).toEqual({});
+  });
+
+  it("restores the single-key flag when the server sends no per-provider map", () => {
+    const old = { ...saved, llm_api_keys_set: undefined } as Settings;
+    const removed = removeSavedKey(old);
+    expect(keyIsSetFor(removed, "openai")).toBe(false);
+    const back = { ...removed, ...providerSwitch("openai", old) };
+    expect(keyIsSetFor(back, "openai")).toBe(true);
+    expect(llmTestBody(back)).not.toHaveProperty("llmApiKey");
   });
 });
 

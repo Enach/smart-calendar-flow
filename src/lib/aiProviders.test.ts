@@ -72,10 +72,31 @@ describe("AI provider values follow the contract", () => {
   // not carry one provider's model to another.
   it("switching provider resets the model, and returning restores the saved one", () => {
     const saved = { llm_provider: "anthropic", llm_model: "claude-haiku-4-5-20251001" };
-    expect(providerSwitch("openai", saved)).toEqual({ llm_provider: "openai", llm_model: "" });
-    expect(providerSwitch("bedrock", saved)).toEqual({ llm_provider: "bedrock", llm_model: "" });
-    expect(providerSwitch("anthropic", saved)).toEqual({ llm_provider: "anthropic", llm_model: "claude-haiku-4-5-20251001" });
-    expect(providerSwitch("openai")).toEqual({ llm_provider: "openai", llm_model: "" });
+    expect(providerSwitch("openai", saved)).toMatchObject({ llm_provider: "openai", llm_model: "" });
+    expect(providerSwitch("bedrock", saved)).toMatchObject({ llm_provider: "bedrock", llm_model: "" });
+    expect(providerSwitch("anthropic", saved)).toMatchObject({ llm_provider: "anthropic", llm_model: "claude-haiku-4-5-20251001" });
+    expect(providerSwitch("openai")).toMatchObject({ llm_provider: "openai", llm_model: "" });
+  });
+
+  // Contract challenge rev. 2.1, W-1: a switch drops the draft key and puts
+  // the "key on file" flags back to what the server last reported.
+  it("switching provider drops the draft key and restores the saved key flags", () => {
+    const saved = {
+      llm_provider: "openai",
+      llm_model: "",
+      llm_api_key_set: true,
+      llm_api_keys_set: { openai: true, anthropic: true, azure_openai: false, bedrock: false, vertex: false },
+    };
+    const patch = providerSwitch("anthropic", saved);
+    expect(patch).toEqual({
+      llm_provider: "anthropic",
+      llm_model: "",
+      llm_api_key: undefined,
+      llm_api_key_set: true,
+      llm_api_keys_set: saved.llm_api_keys_set,
+    });
+    expect(patch).toHaveProperty("llm_api_key", undefined);
+    expect(providerSwitch("openai")).toHaveProperty("llm_api_key", undefined);
   });
 
   it("the mock probe knows exactly the five providers", () => {

@@ -90,6 +90,12 @@ export function noticeReason(nc: AINotConfigured): string {
   return rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
+/** The saved settings a provider switch restores from. */
+export type SavedProviderSettings = Pick<Settings, "llm_provider" | "llm_model" | "llm_api_key_set" | "llm_api_keys_set">;
+
+/** What a provider switch changes in the draft. */
+export type ProviderSwitchPatch = Pick<Settings, "llm_provider" | "llm_model" | "llm_api_key" | "llm_api_key_set" | "llm_api_keys_set">;
+
 /**
  * The draft change when the user picks another provider. The general model
  * (OpenAI / Anthropic) is per provider in meaning, so it is not carried over:
@@ -97,14 +103,40 @@ export function noticeReason(nc: AINotConfigured): string {
  * provider, and is otherwise emptied, which means the provider's default.
  * This keeps an unsaved switch from probing or saving one provider's model on
  * another (contract challenge rev. 2, non-blocking 6).
+ *
+ * The draft key goes too (contract challenge rev. 2.1, W-1). A key is bound to
+ * the provider it was typed or removed for, so a switch drops the draft key
+ * (`llm_api_key: undefined`, nothing sent) and puts the "key on file" flags
+ * back to what the server last reported. Otherwise a key typed for OpenAI
+ * would be tested against and saved for Anthropic, and "Remove saved key"
+ * followed by a switch would send `llmApiKey: ""` for the new provider and
+ * delete its key while keeping the one the user removed.
  */
-export function providerSwitch(next: LLMProvider | string, saved?: Pick<Settings, "llm_provider" | "llm_model">): Pick<Settings, "llm_provider" | "llm_model"> {
+export function providerSwitch(next: LLMProvider | string, saved?: SavedProviderSettings): ProviderSwitchPatch {
   const llm_model = saved && saved.llm_provider === next ? saved.llm_model : "";
-  return { llm_provider: next, llm_model };
+  return {
+    llm_provider: next,
+    llm_model,
+    llm_api_key: undefined,
+    llm_api_key_set: saved?.llm_api_key_set,
+    llm_api_keys_set: saved?.llm_api_keys_set,
+  };
 }
 
 /** Whether a key bound to `provider` is on file, as the server last reported. */
 export function keyIsSetFor(s: Settings, provider: KeyProvider): boolean {
   if (s.llm_api_keys_set) return !!s.llm_api_keys_set[provider];
   return s.llm_provider === provider && !!s.llm_api_key_set;
+}
+
+/**
+ * The draft after "Remove saved key": the key bound to the chosen provider is
+ * to be deleted on Save (`llm_api_key: ""`), and the page stops showing it as
+ * on file. Only the chosen provider's key is affected; a switch afterwards
+ * undoes this (see providerSwitch).
+ */
+export function removeSavedKey(d: Settings): Settings {
+  if (!isKeyProvider(d.llm_provider)) return d;
+  const keys = d.llm_api_keys_set ? { ...d.llm_api_keys_set, [d.llm_provider]: false } : d.llm_api_keys_set;
+  return { ...d, llm_api_key: "", llm_api_key_set: false, llm_api_keys_set: keys };
 }
