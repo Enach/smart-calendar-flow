@@ -46,6 +46,9 @@ export const BookingError = z.strictObject({ error: z.string() });
 export type BookingRateLimitError = __TypedOpenapi.Schemas.BookingRateLimitError;
 export const BookingRateLimitError = z.strictObject({ error: z.literal("rate limit exceeded") });
 
+export type BookingSlotUnavailableError = __TypedOpenapi.Schemas.BookingSlotUnavailableError;
+export const BookingSlotUnavailableError = z.strictObject({ error: z.literal("slot is no longer available") });
+
 export type CadenceGap = __TypedOpenapi.Schemas.CadenceGap;
 export const CadenceGap = z.strictObject({ member_email: z.email(), display_name: z.string(), cadence: Cadence, last_one_on_one_at: z.iso.datetime().nullable(), next_expected_by: z.iso.datetime(), days_overdue: z.number().int().min(0) });
 
