@@ -40,6 +40,7 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
+import { PROVIDER_LABELS, isKeyProvider } from "@/lib/aiProviders";
 
 // ---------- Mock state ----------
 // Used as a fallback when the Go backend at /api is not reachable
@@ -115,7 +116,6 @@ const DEFAULT_SETTINGS: Settings = {
   calendar_provider: "google",
   webcal_url: "",
   aws_region: "us-east-1",
-  aws_profile: "",
   azure_endpoint: "",
   azure_deployment: "",
   azure_api_version: "2024-02-01",
@@ -714,17 +714,19 @@ const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
   ["llm_model", "llmModel"],
   ["llm_api_key", "llmApiKey"],
   ["llm_api_key_set", "llmApiKeySet"],
+  ["llm_api_keys_set", "llmApiKeysSet"],
+  ["llm_unbound_api_key_set", "llmUnboundApiKeySet"],
+  ["llm_unbound_api_key", "llmUnboundApiKey"],
+  ["ai_status", "aiStatus"],
   ["llm_base_url", "llmBaseUrl"],
   ["calendar_provider", "calendarProvider"],
   ["webcal_url", "webcalUrl"],
   ["aws_region", "awsRegion"],
-  ["aws_profile", "awsProfile"],
+  ["bedrock_model", "bedrockModel"],
   ["azure_endpoint", "azureEndpoint"],
   ["azure_deployment", "azureDeployment"],
   ["azure_api_version", "azureApiVersion"],
   ["time_format", "timeFormat"],
-  ["gcp_project", "gcpProject"],
-  ["gcp_location", "gcpLocation"],
   ["vertex_model", "vertexModel"],
 ];
 
@@ -808,10 +810,14 @@ export function settingsRequestBody(s: Settings): Record<string, unknown> {
 }
 
 
+/**
+ * Read-only members of the settings document: accepted and ignored on write,
+ * so never sent (contract Settings, NEW-llm-bring-your-own adds three).
+ */
+const SETTINGS_READ_ONLY = new Set(["llmApiKeySet", "llmApiKeysSet", "llmUnboundApiKeySet", "aiStatus", "updatedAt"]);
+
 /** Properties PATCH /api/settings accepts (SettingsUpdate), minus the read-only ones. */
-const SETTINGS_PATCH_KEYS = new Set(
-  Object.keys(SettingsUpdate.shape).filter((k) => k !== "llmApiKeySet" && k !== "updatedAt"),
-);
+const SETTINGS_PATCH_KEYS = new Set(Object.keys(SettingsUpdate.shape).filter((k) => !SETTINGS_READ_ONLY.has(k)));
 
 /**
  * Build the PATCH /api/settings body (PAC-24): only contract properties, and
@@ -829,6 +835,29 @@ export function settingsPatchBody(s: Settings, previous?: Settings): Record<stri
     out[key] = value;
   }
   return out;
+}
+
+/**
+ * The preview (mock) probe. It knows exactly the five key-based providers
+ * (NEW-llm-bring-your-own AC-33); any other choice has nothing to test.
+ */
+export function mockLlmTest(s: Settings): LLMTestResult {
+  const provider = String(s.llm_provider ?? "");
+  if (!isKeyProvider(provider)) {
+    return { ok: false, message: "No AI provider is chosen, so there is nothing to test." };
+  }
+  const need = (...keys: Array<keyof Settings>) => keys.find((k) => !s[k] || String(s[k]).trim() === "");
+  let missing: keyof Settings | undefined;
+  if (provider === "bedrock") missing = need("aws_region");
+  else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
+  if (missing) {
+    return { ok: false, message: `Missing required field: ${String(missing)}` };
+  }
+  return {
+    ok: true,
+    message: `Reached ${PROVIDER_LABELS[provider]} (${s.llm_model || "default model"}) — mock response`,
+    latency_ms: 120 + Math.floor(Math.random() * 80),
+  };
 }
 
 /** The probe body: provider, model and an unsaved key only (PAC-24). */
@@ -1427,23 +1456,7 @@ export const api = {
         );
         return { ok: res.ok, message: `Reached ${res.provider || "the provider"}: ${res.response}` };
       },
-      () => {
-        const provider = s.llm_provider;
-        const need = (...keys: Array<keyof Settings>) =>
-          keys.find((k) => !s[k] || String(s[k]).trim() === "");
-        let missing: keyof Settings | undefined;
-        if (provider === "bedrock") missing = need("aws_region");
-        else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
-        else if (provider === "ollama") missing = need("llm_base_url");
-        if (missing) {
-          return { ok: false, message: `Missing required field: ${String(missing)}` };
-        }
-        return {
-          ok: true,
-          message: `Reached ${provider} (${s.llm_model || "default model"}) — mock response`,
-          latency_ms: 120 + Math.floor(Math.random() * 80),
-        };
-      },
+      () => mockLlmTest(s),
     ),
 
   // ----- Events: edit / delete -----
