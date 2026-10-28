@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import { AINotConfigured, AIStatus, LLMApiKeysSet, LLMTestRequest, LLMTestResult, Settings } from "@/api/generated/schemas";
 import { mockLlmTest } from "@/api/client";
 import type { Settings as AppSettings } from "@/api/types";
-import { KEY_PROVIDERS, LLM_CHOICES, PROVIDER_LABELS, keyIsSetFor, providerOptions, whoCanEnable } from "./aiProviders";
+import {
+  KEY_PROVIDERS,
+  LLM_CHOICES,
+  PROVIDER_LABELS,
+  keyIsSetFor,
+  organisationNote,
+  providerOptions,
+  whoCanEnable,
+} from "./aiProviders";
 
 // NEW-llm-bring-your-own AC-33: every provider value the web code accepts or
 // offers is exactly the contract's set for that use. No `ollama` anywhere.
@@ -43,6 +51,30 @@ describe("AI provider values follow the contract", () => {
       }
     }
     expect(providerOptions("unsupported", false).find((o) => o.value === "unsupported")?.label).toMatch(/no longer supported/i);
+  });
+
+  // Review finding on smart-calendar-flow#131: every new account on a generic
+  // domain is stored as "organization", and has no organisation. AC-21: such a
+  // user sees no organisation option and no organisation copy, enabled or not.
+  it("a user with no organisation sees no organisation wording, whatever is stored", () => {
+    for (const current of ["", "organization", "unsupported", "openai"] as const) {
+      const labels = providerOptions(current, false).map((o) => o.label);
+      for (const label of labels) expect(label).not.toMatch(/organi[sz]ation/i);
+      expect(organisationNote(current, false)).toBeNull();
+    }
+    const stored = providerOptions("organization", false).find((o) => o.value === "organization");
+    expect(stored).toEqual({ value: "organization", label: "No provider chosen", disabled: true });
+  });
+
+  it("explains an organisation that has not set up AI only to its members who follow it", () => {
+    expect(organisationNote("organization", true)).toMatch(/your organisation has not set up AI yet/i);
+    for (const current of ["", "unsupported", "openai"] as const) {
+      expect(organisationNote(current, true)).toBeNull();
+    }
+    expect(providerOptions("organization", true).find((o) => o.value === "organization")).toEqual({
+      value: "organization",
+      label: "Use my organisation's AI",
+    });
   });
 
   it("the mock probe knows exactly the five providers", () => {
