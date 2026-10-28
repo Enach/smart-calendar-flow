@@ -419,7 +419,7 @@ export type SsoWriteMembershipRequired = __TypedOpenapi.Schemas.SsoWriteMembersh
 export const SsoWriteMembershipRequired = z.strictObject({ error: z.enum(["org membership required", "org not found"]) });
 
 export type SsoWriteStepupRequired = __TypedOpenapi.Schemas.SsoWriteStepupRequired;
-export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_scopes: z.strictObject({ google: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), microsoft: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }) }), without_stepup: z.array(z.literal("sso_configuration_writes")).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), stepup_url: z.literal("/api/admin/sso/stepup") });
+export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_scopes: z.strictObject({ google: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), microsoft: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }) }).partial(), without_stepup: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), stepup_url: z.literal("/api/admin/sso/stepup") });
 
 export type SsoWriteFreshLoginRequired = __TypedOpenapi.Schemas.SsoWriteFreshLoginRequired;
 export const SsoWriteFreshLoginRequired = z.strictObject({ error: z.literal("sso_write_requires_fresh_login") });
