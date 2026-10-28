@@ -49,10 +49,14 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function serve(connect: (path: string) => Response = (path) =>
-  jsonResponse({ authorize_url: path.includes("microsoft") ? MICROSOFT_AUTHORIZE : GOOGLE_AUTHORIZE })) {
+function serve(
+  connect: (path: string) => Response = (path) =>
+    jsonResponse({ authorize_url: path.includes("microsoft") ? MICROSOFT_AUTHORIZE : GOOGLE_AUTHORIZE }),
+  saveSettings: (body: unknown) => Response = (body) => jsonResponse(body),
+) {
   fetchMock.mockImplementation(async (input, init) => {
     const path = new URL(String(input), "https://app.paceday.test").pathname;
+    if (path === "/api/settings" && init?.method === "PATCH") return saveSettings(JSON.parse(String(init.body)));
     if (path === "/api/auth/status") return jsonResponse({ connected: false });
     if (path === "/api/integrations/availability") {
       return jsonResponse({
@@ -69,6 +73,17 @@ function serve(connect: (path: string) => Response = (path) =>
     }
     return jsonResponse({ error: "not here" }, 404);
   });
+}
+
+/** Every write the controls made, in order: the settings PATCH and the connect POST. */
+function writes() {
+  return fetchMock.mock.calls
+    .filter(([, init]) => init?.method === "PATCH" || init?.method === "POST")
+    .map(([input, init]) => ({
+      method: init?.method,
+      path: new URL(String(input), "https://app.paceday.test").pathname,
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+    }));
 }
 
 function connectCalls() {
@@ -133,7 +148,8 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     );
     fireEvent.click(await screen.findByRole("button", { name: /connect/i }));
     await waitFor(() => expect(assigned).toEqual([GOOGLE_AUTHORIZE]));
-    expect(connectCalls()).toEqual([{ path: "/api/auth/google/connect", method: "POST", body: undefined }]);
+    // This control does not change the work calendar: nothing is saved.
+    expect(writes()).toEqual([{ method: "POST", path: "/api/auth/google/connect", body: undefined }]);
     expectNoSignInStart();
   });
 
@@ -151,10 +167,34 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     fireEvent.click(await screen.findByRole("radio", { name: new RegExp(label) }));
     fireEvent.click(screen.getByRole("button", { name: `Connect ${label}` }));
     await waitFor(() => expect(assigned).toEqual([authorize]));
-    // The work calendar is the user's explicit choice in this control, made before the connect (spec §3).
+    // The work calendar is the user's explicit choice in this control, saved
+    // (only that field) before the connect starts (spec §3, AC-12): the
+    // connect itself never sets it, and the Settings draft is lost on leaving.
     expect(onPatch).toHaveBeenCalledWith({ calendar_provider: provider });
-    expect(connectCalls()).toEqual([{ path, method: "POST", body: undefined }]);
+    expect(writes()).toEqual([
+      { method: "PATCH", path: "/api/settings", body: { calendarProvider: provider } },
+      { method: "POST", path, body: undefined },
+    ]);
     expectNoSignInStart();
+  });
+
+  it.each([
+    ["the server refuses it (500)", () => jsonResponse({ error: "internal error" }, 500)],
+    ["the session is gone (401)", () => jsonResponse({ error: "unauthorized" }, 401)],
+  ])("Settings work-calendar control: when saving the choice fails (%s), it says so and does not connect", async (_case, answer) => {
+    serve(undefined, answer);
+    render(
+      <Shell>
+        <WorkCalendarConnection settings={{} as Settings} onPatch={() => {}} />
+      </Shell>,
+    );
+    fireEvent.click(await screen.findByRole("radio", { name: /Microsoft Outlook/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Microsoft Outlook" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(writes()).toEqual([{ method: "PATCH", path: "/api/settings", body: { calendarProvider: "outlook" } }]);
+    expect(connectCalls()).toEqual([]);
+    expect(assigned).toEqual([]);
+    expect(isUsingMocks()).toBe(false);
   });
 
   it("Dashboard 'Connect calendar' banner: POSTs the Google connect", async () => {
@@ -166,7 +206,8 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     );
     fireEvent.click(await screen.findByRole("button", { name: "Connect calendar" }));
     await waitFor(() => expect(assigned).toEqual([GOOGLE_AUTHORIZE]));
-    expect(connectCalls()).toEqual([{ path: "/api/auth/google/connect", method: "POST", body: undefined }]);
+    // This control does not change the work calendar: nothing is saved.
+    expect(writes()).toEqual([{ method: "POST", path: "/api/auth/google/connect", body: undefined }]);
     expectNoSignInStart();
   });
 
@@ -180,8 +221,28 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     fireEvent.click(await screen.findByRole("button", { name: /Microsoft Outlook/ }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     await waitFor(() => expect(assigned).toEqual([MICROSOFT_AUTHORIZE]));
-    expect(connectCalls()).toEqual([{ path: "/api/auth/microsoft/connect", method: "POST", body: undefined }]);
+    // The chosen work calendar is saved first, so the user does not loop back here.
+    expect(writes()).toEqual([
+      { method: "PATCH", path: "/api/settings", body: { calendarProvider: "outlook" } },
+      { method: "POST", path: "/api/auth/microsoft/connect", body: undefined },
+    ]);
     expectNoSignInStart();
+  });
+
+  it("onboarding calendar step: when saving the choice fails, it says so, does not connect, and stays on the step", async () => {
+    serve(undefined, () => jsonResponse({ error: "internal error" }, 500));
+    render(
+      <Shell>
+        <Onboarding />
+      </Shell>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Microsoft Outlook/ }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(connectCalls()).toEqual([]);
+    expect(assigned).toEqual([]);
+    expect(screen.getByRole("heading", { name: "Connect your calendar" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /continue/i })).not.toBeDisabled());
   });
 
   it("onboarding: a WebCal feed starts no connect", async () => {
@@ -194,7 +255,7 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     fireEvent.click(await screen.findByRole("button", { name: /WebCal/ }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     expect(await screen.findByText(/how do you use your calendar/i)).toBeInTheDocument();
-    expect(connectCalls()).toEqual([]);
+    expect(writes()).toEqual([]);
     expect(assigned).toEqual([]);
   });
 

@@ -87,7 +87,9 @@ export function WorkCalendarConnection({
       toast.success("WebCal URL saved — remember to click Save changes");
       return;
     }
-    void connect(provider);
+    // PAC-71: the choice is saved (only calendarProvider) before the connect
+    // starts; the connect never sets it, and the draft is lost on leaving.
+    void connect(provider, { setWorkCalendar: true });
   };
 
   const handleDisconnect = async () => {

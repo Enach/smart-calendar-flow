@@ -88,7 +88,8 @@ export default function Onboarding() {
         setStep("profile");
         return;
       }
-      await connect(provider);
+      // PAC-71: save the chosen work calendar first; the connect never sets it.
+      await connect(provider, { setWorkCalendar: true });
     } finally {
       setBusy(false);
     }

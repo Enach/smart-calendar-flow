@@ -67,6 +67,8 @@ export interface ApiPort {
   integrationAvailability(): Promise<IntegrationAvailability>;
   /** PAC-71: POST the connect start; resolves to the provider's authorize_url. */
   startConnect(provider?: "google" | "outlook"): Promise<string>;
+  /** PAC-71: PATCH /api/settings with only `calendarProvider`, before a connect that changes the work calendar. */
+  saveWorkCalendar(provider: "google" | "outlook"): Promise<Settings>;
   authDisconnect(): Promise<void>;
 
   getSettings(): Promise<Settings>;

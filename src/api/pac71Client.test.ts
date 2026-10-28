@@ -48,9 +48,28 @@ describe("PAC-71 connect start (startGoogleConnect / startMicrosoftConnect)", ()
     await expect(api.startConnect("google")).rejects.toThrow();
   });
 
-  it("refuses an authorize_url that is not a web address", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ authorize_url: "javascript:alert(1)" }));
-    await expect(api.startConnect("google")).rejects.toThrow(/not a web address/);
+  it.each(["javascript:alert(1)", "http://accounts.google.com/o/oauth2/v2/auth?state=s"])(
+    "refuses an authorize_url that is not https (%s)",
+    async (url) => {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ authorize_url: url }));
+      await expect(api.startConnect("google")).rejects.toThrow(/not a secure web address/);
+    },
+  );
+
+  it.each(["google", "outlook"] as const)("saves the %s work calendar with a PATCH carrying only calendarProvider", async (provider) => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ calendarProvider: provider }));
+    await expect(api.saveWorkCalendar(provider)).resolves.toMatchObject({ calendar_provider: provider });
+    const [input, init] = fetchMock.mock.calls[0];
+    expect(new URL(String(input)).pathname).toBe("/api/settings");
+    expect(init?.method).toBe("PATCH");
+    expect(JSON.parse(String(init?.body))).toEqual({ calendarProvider: provider });
+  });
+
+  it("a failed work-calendar save is thrown, never preview data", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "internal error" }, 500));
+    const err = await api.saveWorkCalendar("outlook").catch((e: unknown) => e);
+    expect(isApiHttpError(err)).toBe(true);
+    expect(isUsingMocks()).toBe(false);
   });
 
   it.each([401, 500, 503])("surfaces a %s as an HTTP failure and never switches to preview data", async (status) => {

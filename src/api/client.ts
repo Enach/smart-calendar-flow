@@ -559,12 +559,16 @@ export async function confirmOrganizationAI(configurationVersion: number): Promi
  * addEventConference), and how the app says them. They point to Settings,
  * where the connect is a signed-in step, never to a sign-in start.
  */
-const TEAMS_CONNECT_TEXT: Record<string, string> = {
-  "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)":
+const TEAMS_CONNECT_TEXT: ReadonlyMap<string, string> = new Map([
+  [
+    "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)",
     "Microsoft Teams is not connected. Connect Outlook in Settings to add Teams links.",
-  "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)":
+  ],
+  [
+    "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)",
     "The Microsoft Teams connection was lost. Reconnect Outlook in Settings to add Teams links.",
-};
+  ],
+]);
 
 /** Human-readable message for an API failure, usable directly in the UI. */
 export function apiErrorMessage(e: unknown): string {
@@ -575,7 +579,8 @@ export function apiErrorMessage(e: unknown): string {
   if (isApiHttpError(e)) {
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
-    if (e.status === 400 && detail && TEAMS_CONNECT_TEXT[detail]) return TEAMS_CONNECT_TEXT[detail];
+    const teams = e.status === 400 && detail ? TEAMS_CONNECT_TEXT.get(detail) : undefined;
+    if (teams) return teams;
     if (detail) return detail;
     switch (e.status) {
       case 401:
@@ -605,15 +610,14 @@ export function connectStartPath(provider: ConnectProvider): string {
 
 /**
  * PAC-71: POST the connect start and return where to send the window. The
- * answer is parsed strictly (ConnectStartResponse); a URL that is not http(s)
+ * answer is parsed strictly (ConnectStartResponse); a URL that is not https
  * is refused rather than followed.
  */
 export async function startConnect(provider: ConnectProvider): Promise<string> {
   const raw = await requestApi<unknown>("POST", connectStartPath(provider));
   const { authorize_url } = ConnectStartResponseSchema.parse(raw);
-  const protocol = new URL(authorize_url).protocol;
-  if (protocol !== "https:" && protocol !== "http:") {
-    throw new Error("The connect start answered an address that is not a web address.");
+  if (new URL(authorize_url).protocol !== "https:") {
+    throw new Error("The connect start answered an address that is not a secure web address.");
   }
   return authorize_url;
 }
@@ -1326,6 +1330,15 @@ export const api = {
    * Every failure is thrown, never replaced with preview data.
    */
   startConnect: (provider: ConnectProvider = "google") => startConnect(provider),
+  /**
+   * PAC-71: save the work calendar, and only it, before a connect from a
+   * control that changes it (spec §3: "by the user's explicit choice in that
+   * control before the connect starts"). The connect itself never sets it.
+   * PATCH /api/settings with `{ calendarProvider }`. A failure is thrown,
+   * never replaced with preview data, so the caller does not connect.
+   */
+  saveWorkCalendar: async (provider: ConnectProvider): Promise<Settings> =>
+    normalizeSettings(await requestApi<unknown>("PATCH", "/settings", { calendarProvider: provider })),
   authDisconnect: () =>
     withFallback(
       () => requestApi<void>("DELETE", "/auth/disconnect"),
