@@ -4,58 +4,88 @@
   /**
  * NEW-llm-bring-your-own. Why AI is not configured for a caller, and who
  * can change that. One row of the table in
- * `docs/specs/NEW-llm-bring-your-own.md` §3, decided from the caller's
- * stored choice at the moment of the request, rows evaluated top to
- * bottom:
+ * `docs/specs/NEW-llm-bring-your-own-part2.md` §3.1 (Part 2; rows 1-8
+ * are the parent spec's, rows 9-11 are new), decided from the caller's
+ * stored choice and their organisation's configuration at the moment of
+ * the request. Rows are evaluated IN THE ORDER LISTED (9-11 right after
+ * 1). "Complete": the organisation's configuration is `configured`
+ * (OrganizationAIConfiguration). "Forbids": its `personalKeysAllowed` is
+ * false. "Confirmed": the caller's stored confirmation
+ * (confirmOrganizationAI) names exactly the `configurationVersion` the
+ * request reads, the two read as one consistent state; a patchSettings
+ * that stores `""` or a provider deletes it (spec revision 1).
  * 
  * | Row | Stored choice | Condition | `reason` | `enablers` |
  * |---|---|---|---|---|
  * | 1 | `""` (off) | - | `off` | user |
- * | 2 | a provider | a key bound to it | (configured) | - |
+ * | 9 | (reserved) | never answered under spec P2-D2's current default (OQ-P2-2) | - | - |
+ * | 10 | a provider, or `unsupported` | forbids; complete | `personal_keys_forbidden` | user |
+ * | 11 | a provider, or `unsupported` | forbids; not complete | `personal_keys_forbidden` | organization_admin |
+ * | 2 | a provider | a key bound to it | (configured: own) | - |
  * | 3 | a provider | no key bound to it | `needs_key` (+ `provider`) | user |
- * | 4 | `organization` | organisation complete, user confirmed (Part 2) | (configured) | - |
- * | 5 | `organization` | organisation complete, not confirmed (Part 2) | `organization_unconfirmed` | user |
- * | 6 | `organization` | no organisation, or it is not complete | `nothing_configured` | user; from Part 2, also organization_admin when in an organisation |
- * | 7 | `unsupported` (Ollama) | organisation complete (Part 2) | `provider_removed_organization_available` | user |
- * | 8 | `unsupported` (Ollama) | otherwise | `provider_removed` | user; from Part 2, also organization_admin when in an organisation |
+ * | 4 | `organization` | complete; confirmed | (configured: organisation) | - |
+ * | 5 | `organization` | complete; not confirmed | `organization_unconfirmed` | user |
+ * | 6 | `organization` | no organisation, or not complete | `nothing_configured` | user, plus organization_admin in an organisation; organization_admin only when it forbids |
+ * | 7 | `unsupported` (Ollama) | complete | `provider_removed_organization_available` | user |
+ * | 8 | `unsupported` (Ollama) | otherwise | `provider_removed` | user, plus organization_admin in an organisation |
  * 
- * The same caller state gives the same `reason` on parse, brief refresh,
- * the probe naming nothing, and the settings read (spec AC-40). Before
- * Part 2 of the spec (the organisation-wide configuration) only `off`,
- * `needs_key`, `nothing_configured` and `provider_removed` occur; the
- * other two values are in the set now so that a client written against
- * this revision needs no change when Part 2 lands. A stored `bedrock`,
+ * The same caller state gives the same `reason` and `enablers` on parse,
+ * brief refresh, the probe naming nothing, and the settings read (spec
+ * P2-AC-29). Row 1 wins over everything: "off" is never overridden by
+ * the organisation (parent D-9, P2-AC-16). While the organisation
+ * forbids personal keys, no personal key, stored or submitted, is ever
+ * sent (owner O-12), and nobody is moved onto the organisation's
+ * configuration (spec P2-D2, current default, pending the owner): a
+ * caller on their own or a removed provider answers row 10 or 11 and
+ * nothing is sent until they choose `organization` (patchSettings) and
+ * confirm. The caller's stored choice and keys are not rewritten, so
+ * allowing personal keys again puts the caller back in row 2 or 3.
+ * `organization_unconfirmed` means the caller can turn AI on in one step
+ * by confirming (owner O-13; nothing is sent before);
+ * `personal_keys_forbidden` with `enablers: [user]` (row 10) means the
+ * caller can turn AI on by choosing "Use my organisation's AI", which
+ * shows the O-13 notice and confirms. Only rows 2 and 4 send anything. A stored `bedrock`,
  * `azure_openai` or `vertex` choice is a supported provider: with no key
  * bound it is `needs_key`, never a removed-provider reason (spec D-17).
+ * 
+ * A probe can also give `personal_keys_forbidden` with `enablers:
+ * [organization_admin]` when it names a provider or carries a key while
+ * the organisation forbids personal keys (see testLLMConnection).
  * Carries no key, and nothing about any key beyond the facts above.
+ * Before Part 2 only `off`, `needs_key`, `nothing_configured` and
+ * `provider_removed` occurred, always with `enablers: [user]`.
  */
 export type AINotConfigured = {
-  reason: ("off" | "needs_key" | "organization_unconfirmed" | "nothing_configured" | "provider_removed_organization_available" | "provider_removed");
+  reason: ("off" | "needs_key" | "organization_unconfirmed" | "nothing_configured" | "provider_removed_organization_available" | "provider_removed" | "personal_keys_forbidden");
   /**
    * Present exactly when `reason` is `needs_key`; the provider that needs a key.
    */
   provider?: ("openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
   /**
-   * Who can turn AI on for this caller: `user` (the caller, in Settings) is present in every answer before Part 2 of the spec. Before Part 2 it is the only value: no organisation administrator can configure AI yet, so no answer names one (spec revision 2). From Part 2, `organization_admin` (an administrator of the caller's organisation) is added in rows 6 and 8 when the caller belongs to an organisation; Part 2 may also produce answers without `user` (owner answer O-12, personal keys forbidden). Never names a person.
+   * Who can turn AI on for this caller, by the table above: `user` (the caller, in Settings or by confirming) and/or `organization_admin` (an administrator of the caller's organisation, who can change its configuration with PAC-50's proof). `organization_admin` appears only for a caller who belongs to an organisation. It is the ONLY value in row 11, in row 6 when the organisation forbids personal keys, and in a probe refused for naming a personal provider or key while forbidden. Never names a person. (Before Part 2 it was `[user]` in every answer.)
    */
   enablers: Array<("user" | "organization_admin")>;
   /**
-   * A sentence for the user saying why the configuration decided on cannot be used and who can fix it. When that configuration is the caller's saved choice (parse, brief refresh, the settings read, and a probe that names no other choice and carries no `llmApiKey`) it says that AI features are off. When a probe named a different choice or carried `llmApiKey`, it describes only the probed choice ("Anthropic needs an API key") and never says AI features are off, which may be false for the caller (see `testLLMConnection`). Wording is not contractual beyond that, and it never carries a key.
+   * A sentence for the user saying why the configuration decided on cannot be used and who can fix it. When that configuration is the caller's saved choice (parse, brief refresh, the settings read, and a probe that names no other choice and carries no `llmApiKey`) it says that AI features are off. When a probe named a different choice or carried `llmApiKey`, it describes only the probed choice ("Anthropic needs an API key") and never says AI features are off, which may be false for the caller (see `testLLMConnection`). For `organization_unconfirmed` it says that the caller's text and meeting details would be sent to their organisation's AI provider account, which its administrators can access outside Paceday, and that nothing is sent until they confirm in Paceday (owner O-13). For `personal_keys_forbidden` with `enablers: [user]` (row 10) it says the organisation does not allow personal keys, that the caller's own provider and key are kept but not used, and to choose "Use my organisation's AI" in Settings (spec P2-AC-18). No message, in any row, contains the words "read", "reads" or "see" (spec P2-AC-26). Wording is not contractual beyond that, and it never carries a key.
    */
   message: string;
 }
 /**
- * NEW-llm-bring-your-own. Read-only summary on the settings document of whether AI works for the caller right now, by the same table as `AINotConfigured` (spec AC-8). Exactly one of `provider` and `notConfigured` is present: `provider` exactly when `configured` is true, `notConfigured` exactly when `configured` is false (rows 1, 3, 5-8), so a client always has the reason and the enablers to render the notice of spec AC-21. It does not check the destination: a configured caller whose stored destination is refused is `configured: true` and gets the 422 / refusal sentence when a request is attempted.
+ * NEW-llm-bring-your-own. Read-only summary on the settings document of whether AI works for the caller right now, by the same table as `AINotConfigured` (spec AC-8). Exactly one of `provider` and `notConfigured` is present: `provider` (with `configuration`) exactly when `configured` is true, `notConfigured` exactly when `configured` is false (rows 1, 3, 5-8, 10, 11), so a client always has the reason and the enablers to render the notice of spec AC-21. Also the 200 of confirmOrganizationAI (Part 2). It does not check the destination: a configured caller whose stored destination is refused is `configured: true` and gets the 422 / refusal sentence when a request is attempted.
  */
 export type AIStatus = {
   /**
-   * True exactly in rows 2 and 4.
+   * True exactly in rows 2 and 4 (row 9 is reserved).
    */
   configured: boolean;
   /**
    * Present exactly when `configured` is true; the provider requests go to.
    */
   provider?: ("openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
+  /**
+   * NEW-llm-bring-your-own Part 2. Present exactly when `configured` is true: `own` in row 2 (the caller's provider, key and destination), `organization` in row 4 (the organisation's at the confirmed version, and nothing of the caller's, parent D-18).
+   */
+  configuration?: ("own" | "organization");
   /**
    * Whether the caller belongs to an organisation. Lets a client offer "use my organisation's AI" only to a member (spec AC-21; Part 2). Says nothing else about the organisation.
    */
@@ -1125,9 +1155,10 @@ export type LLMDestinationRefusal = {
    */
   reason: ("provider_not_enabled" | "destination_not_approved" | "destination_not_set");
   /**
-   * The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. `gcpLocation`, `awsProfile` and `ollamaBaseUrl` are gone with the settings they named (NEW-llm-bring-your-own).
+   * The stored setting the refused destination was built from. Present whenever `reason` is not `provider_not_enabled`. When `configuration` is `organization`, it names the organisation's stored value (`llmBaseUrl` stands for the organisation's `baseUrl`). `gcpLocation`, `awsProfile` and `ollamaBaseUrl` are gone with the settings they named (NEW-llm-bring-your-own).
    */
   property?: ("azureEndpoint" | "awsRegion" | "llmBaseUrl");
+  configuration?: "organization";
 }
 /**
  * NEW-llm-bring-your-own. Body of the 409 from POST /api/llm/test and POST /api/meetings/{event_id}/brief/refresh: AI is not configured for the caller, and nothing was sent. A superset of the JSON error shape (`error` is the same member as in `SchedulingErrorResponse` and `ErrorResponse`), so a client that reads only `error` shows the sentence.
@@ -1148,7 +1179,7 @@ export type LLMNotConfiguredResponse = {
  */
 export type LLMTestRequest = Partial<{
   /**
-   * The choice to probe (NEW-llm-bring-your-own, spec D-19); absent means the caller's saved choice. A provider name selects that provider, the caller's own stored destination values for it, and the submitted key or else the key bound to it; never a key bound to another provider. `""` is the 409 `off`. `organization` is decided as a follower's request (before Part 2: the 409 `nothing_configured`). `unsupported` is accepted only when the caller's saved choice reads as `unsupported` and is then decided as the saved choice (the row 7/8 409, a submitted key sent nowhere); otherwise it is a 400. `ollama` is not in the set (400). The same set as `Settings.llmProvider`. The approved-destination check follows this value when present, not the saved provider (PAC-66 AC-18, PAC-66-B AC-B11). Nothing submitted here is stored.
+   * The choice to probe (NEW-llm-bring-your-own, spec D-19); absent means the caller's saved choice. A provider name selects that provider, the caller's own stored destination values for it, and the submitted key or else the key bound to it; never a key bound to another provider (and, while the caller's organisation forbids personal keys, the 409 `personal_keys_forbidden`). `""` is the 409 `off`. `organization` is decided as a follower's request (rows 4-6; in row 4 it tests the organisation's configuration at the confirmed version). Only the five provider values "name a provider" (testLLMConnection, Part 2). `unsupported` is accepted only when the caller's saved choice reads as `unsupported` and is then decided as the saved choice (the row 7/8 409, a submitted key sent nowhere); otherwise it is a 400. `ollama` is not in the set (400). The same set as `Settings.llmProvider`. The approved-destination check follows this value when present, not the saved provider (PAC-66 AC-18, PAC-66-B AC-B11). Nothing submitted here is stored.
    */
   llmProvider: ("" | "organization" | "unsupported" | "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
   /**
@@ -1176,6 +1207,10 @@ export type LLMTestResult = {
    * The provider that was actually probed: the one named in the body, else the caller's saved one. Never empty since NEW-llm-bring-your-own (a probe with no provider is the 409). It is what tells a client which configuration the result is about. It never carries the key.
    */
   provider: ("openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
+  /**
+   * NEW-llm-bring-your-own Part 2. `organization` when the probe tested the organisation's configuration (row 4), `own` otherwise.
+   */
+  configuration: ("own" | "organization");
 }
 /**
  * storage.LunchBreakSchedule - a bare map keyed by lowercase weekday name. Normalised to `{}` (never null) on read (`backend/storage/settings.go:103-105`). A per-day entry overrides the legacy global `lunchStart`/`lunchEnd`/`protectLunch` trio, including disabling lunch for that day. Replaced whole by a PATCH that mentions it; `lunchBreaks: {}` clears every per-day override (spec AC-9).
@@ -1514,6 +1549,220 @@ export type OrgMember = {
   org?: Org;
   createdAt: string;
 }
+/**
+ * NEW-llm-bring-your-own Part 2 (spec §3.2, parent D-7). The
+ * organisation's AI configuration as every member reads it, identical
+ * for every member (getOrganizationAI, and the 200 of
+ * patchOrganizationAI). NEVER carries the key: `keySet` is the only fact
+ * about it.
+ * 
+ * `configured` is true exactly when the configuration is complete: a
+ * `provider`, a key for it, and for `azure_openai` a non-empty
+ * `azureEndpoint` and `azureDeployment` (every other value has a
+ * default: `model` the provider's default model, `baseUrl` the vendor's
+ * public host, `azureApiVersion` the default API version, `awsRegion`
+ * `us-east-1`). Only a complete configuration can be used (row 4 of the
+ * table on AINotConfigured) or confirmed (confirmOrganizationAI).
+ * 
+ * Destination properties appear only for the provider they apply to:
+ * `baseUrl` for `openai` and `anthropic`; `azureEndpoint`,
+ * `azureDeployment` and `azureApiVersion` for `azure_openai`;
+ * `awsRegion` for `bedrock`; none for `vertex`. `model` is the model for
+ * `openai`, `anthropic`, `bedrock` and `vertex` (absent for
+ * `azure_openai`, whose deployment names it). An empty string means the
+ * default. All are absent when `provider` is absent.
+ */
+export type OrganizationAIConfiguration = {
+  configured: boolean;
+  /**
+   * Present exactly when a provider is set.
+   */
+  provider?: ("openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
+  model?: string;
+  /**
+   * `openai` / `anthropic` only. `""` is the vendor's public host.
+   */
+  baseUrl?: string;
+  azureEndpoint?: string;
+  azureDeployment?: string;
+  azureApiVersion?: string;
+  awsRegion?: string;
+  /**
+   * Whether a key bound to `provider` is stored. Never the key.
+   */
+  keySet: boolean;
+  /**
+   * Owner O-12. `true` (the default) means a member's own provider and key take precedence for that member (rows 2-3). `false` means no member's personal key is sent: a member on their own or a removed provider has no AI (rows 10-11) until they choose "Use my organisation's AI" and confirm (spec P2-D2, current default, pending the owner); followers are unaffected (rows 4-6).
+   */
+  personalKeysAllowed: boolean;
+  /**
+   * `0` when no configuration was ever set. Advances by one on every change of `provider` (including the removal, `provider: ""`), every write of `apiKey` (keys are never compared), and every change of a destination property (spec P2-D4), never otherwise. Never reused within an organisation: removal keeps the count, so a configuration set after a removal never has a version an earlier configuration had (contract revision 3, spec P2-D17, P2-AC-42). A version fixes `provider`, the key and the destination properties; `model` and `personalKeysAllowed` are not part of it, and a request in row 4 sends the model read together with the version. A member's confirmation is for one version (confirmOrganizationAI); an administrator's change names the version it was made from (patchOrganizationAI).
+   */
+  configurationVersion: number;
+  /**
+   * When the configuration last changed. Absent when it never was set.
+   */
+  updatedAt?: string;
+  changeableBy: "organization_admin";
+}
+/**
+ * NEW-llm-bring-your-own Part 2. Body of patchOrganizationAI. MERGE:
+ * an absent property is unchanged; a present one is set to exactly that
+ * value; `null` is a 400. `configurationVersion` (required, contract
+ * revision 2) names the version the change was made from, plus at
+ * least one property to change.
+ * 
+ * * `provider` set to a provider DIFFERENT from the stored one replaces
+ *   the whole configuration: `apiKey` (non-empty) is required, and every
+ *   property not in the body takes its default (`""`), except
+ *   `personalKeysAllowed`, which is kept unless the body names it
+ *   (contract revision 3.1, spec revision 2.1). A key is never
+ *   carried from one provider to another (spec P2-D7).
+ * * `provider: ""` removes the whole configuration, key included. No
+ *   other property may be sent with it (400), so the removal is
+ *   unambiguous (`configurationVersion` excepted); the stored
+ *   `personalKeysAllowed` is kept, and so is the version count: the
+ *   removal advances `configurationVersion` and the next setup names
+ *   that version (never reused, contract revision 3).
+ * * `apiKey: ""` removes only the key (the configuration is then not
+ *   complete; followers answer `nothing_configured`, P2-AC-13). A
+ *   non-empty `apiKey` replaces the key for the provider after this
+ *   write; with no provider stored or sent it is a 400. Because
+ *   `configurationVersion` must be current, a key typed against one
+ *   provider is never stored under another provider that a concurrent
+ *   change installed (challenge B-1).
+ * * `model` and every destination property with no provider stored
+ *   or sent is a 400 (`<property> requires a provider`).
+ * * A destination property that does not apply to the provider after
+ *   this write is a 400 (`<property> does not apply to <provider>`),
+ *   not ignored; so is `model` with `azure_openai`.
+ * * `personalKeysAllowed` may be changed whether or not the
+ *   configuration is complete (spec P2-D3).
+ */
+export type OrganizationAIConfigurationUpdate = {
+  /**
+   * Contract revision 2 (challenge B-1). The `configurationVersion` of the configuration the administrator was shown (getOrganizationAI; `0` for an organisation that never set one). Required: an absent value is the 400, never read as `0` (contract revision 3). Not equal to the current version: the 409, checked early (step 2a) and decided by the atomic conditional write (step 4); a conflict never consumes the proof.
+   */
+  configurationVersion: number;
+  provider?: ("" | "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
+  model?: string;
+  /**
+   * Never returned, by any operation, in any status (PAC-24, owner O-7).
+   */
+  apiKey?: string;
+  baseUrl?: string;
+  /**
+   * Contract revision 3 (spec P2-D18): for the organisation, `https://<host>` with at most one trailing `/` and no path, query, fragment or userinfo, because every member reads it; otherwise the 400 (shape). The host must be approved as for a user's (PAC-66).
+   */
+  azureEndpoint?: string;
+  azureDeployment?: string;
+  azureApiVersion?: string;
+  awsRegion?: string;
+  personalKeysAllowed?: boolean;
+}
+/**
+ * 409 of confirmOrganizationAI and (contract revision 2) of patchOrganizationAI: nothing recorded or stored, no grant consumed. A superset of the JSON error shape. patchOrganizationAI gives only `configuration_changed`.
+ */
+export type OrganizationAIConsentConflict = { error: string, reason: ("organization_not_configured" | "configuration_changed"), organization: OrganizationAIConfiguration }
+/**
+ * Body of confirmOrganizationAI.
+ */
+export type OrganizationAIConsentRequest = {
+  /**
+   * The `configurationVersion` of the configuration the user was shown and confirmed.
+   */
+  configurationVersion: number;
+}
+/**
+ * The caller has no org (or its org row is gone). Checked before
+ * anything else, including break-glass. No `stepup_url`: there is no org
+ * to step up for. Also the 403 of getSsoStepupOptions and of
+ * startSsoAdminStepup (the latter always with `org membership
+ * required`), and (NEW-llm-bring-your-own Part 2) of getOrganizationAI,
+ * patchOrganizationAI and confirmOrganizationAI.
+ */
+export type SsoWriteMembershipRequired = { error: ("org membership required" | "org not found") }
+export type SsoStepupUrl = "/api/admin/sso/stepup"
+/**
+ * The scopes the SSO admin step-up requests from each provider on top of
+ * the identity scopes (`openid`, `email`, `profile`, and Microsoft's
+ * `User.Read`, which sign-in already requests). Requested only by
+ * startSsoAdminStepup, never at sign-in; the tokens are discarded after
+ * the check. Carried by SsoWriteStepupRequired and SsoStepupOptions.
+ * 
+ * Normative rule: each list is exactly what startSsoAdminStepup
+ * requests from that provider beyond the identity scopes, so a client
+ * shows it as given and does not hard-code it. A provider's key is
+ * present if and only if that provider's step-up is configured on this
+ * deployment, that is, startSsoAdminStepup would not answer 503 for it
+ * (spec §9 D-2 and D-9: no OAuth client for the provider, or `APP_URL`
+ * unset). A deployment with only Google configured sends only `google`;
+ * an empty object means no step-up can be started on this deployment.
+ * An unconfigured provider is an absent key, never an empty list.
+ * 
+ * Today's values, informative only (the exact Microsoft list is spec
+ * OQ-2's open technical sub-question and may narrow): Google, the
+ * read-only Directory user scope
+ * (`https://www.googleapis.com/auth/admin.directory.user.readonly`);
+ * Microsoft, organisation and directory-role read scopes
+ * (`Organization.Read.All`, `RoleManagement.Read.Directory`, which a
+ * tenant administrator may have to consent to).
+ */
+export type SsoStepupScopes = Partial<{ google: Array<string>, microsoft: Array<string> }>
+/**
+ * What the caller cannot do without the SSO admin step-up, for the
+ * client to explain before it navigates. Carried by
+ * SsoWriteStepupRequired and SsoStepupOptions. An open list of codes:
+ * the item schema is a non-empty string, not an enum, so a value added
+ * later (for example by PAC-68 if it reuses this step-up) does not make
+ * the body fail validation in a client generated from this revision. A
+ * client explains the codes it knows and ignores any other. The only
+ * value the server sends today is `sso_configuration_writes`: no SSO
+ * configuration write (create, replace or delete); only a deployment
+ * operator on the break-glass list can write without it. Nothing else
+ * the user already has is lost. Suspend and resume
+ * (setSsoProviderState) are not served under PAC-50; they become SSO
+ * configuration writes covered by this code when PAC-22's follow-up
+ * serves them, and a client must not offer them before then (PAC-50
+ * contract revision 8.1, N6).
+ * 
+ * NEW-llm-bring-your-own Part 2 adds a second value, sent only for the
+ * `llm_org_key_write` purpose (OrganizationAIWriteStepupRequired, and
+ * getSsoStepupOptions with `?purpose=llm_org_key_write`):
+ * `organization_ai_configuration_writes`, no change to the
+ * organisation's AI provider, model, key, destination or personal-keys
+ * setting except by a break-glass operator. Each response carries the
+ * one code of its purpose.
+ */
+export type SsoWithoutStepup = Array<string>
+/**
+ * A member with no live `llm_org_key_write` grant who is not a
+ * break-glass address. As PAC-50's SsoWriteStepupRequired: the step-up
+ * is optional; before navigating, the client explains `without_stepup`
+ * and `stepup_scopes` and lets the user decline. If the user goes
+ * ahead, the client asks which provider administers the organisation
+ * (only keys of `stepup_scopes`) and navigates the browser to
+ * `stepup_url` with `?provider=<p>&purpose=<stepup_purpose>`. The
+ * landing page then carries `&purpose=llm_org_key_write`. A live
+ * `sso_write` grant the caller may hold was not consumed.
+ */
+export type OrganizationAIWriteStepupRequired = { error: "organization_ai_write_requires_admin_stepup", stepup_url: SsoStepupUrl, stepup_purpose: "llm_org_key_write", stepup_scopes: SsoStepupScopes, without_stepup: SsoWithoutStepup }
+/**
+ * The caller's email is on the break-glass list but the session JWT was
+ * issued 10 minutes ago or more, or more than one minute in the future
+ * (PAC-50 AC-14a), or the same session already made one
+ * organisation-AI change (spec P2-D13, contract revision 2). The client
+ * sends the user through sign-in again; an `llm_org_key_write` grant
+ * also satisfies the gate.
+ */
+export type OrganizationAIWriteFreshLoginRequired = { error: "organization_ai_write_requires_fresh_login" }
+/**
+ * The 403 of patchOrganizationAI (NEW-llm-bring-your-own Part 2), the
+ * shapes of PAC-50's SsoWriteForbiddenResponse for this purpose.
+ * Exactly one variant applies, told apart by `error`; all keep the
+ * shared `{error}` envelope.
+ */
+export type OrganizationAIWriteForbiddenResponse = (SsoWriteMembershipRequired | OrganizationAIWriteStepupRequired | OrganizationAIWriteFreshLoginRequired)
 /**
  * All fields optional. Present-but-null is indistinguishable from absent for cadence_custom_days (both decode to a nil *int and preserve the stored value).
  */
@@ -2076,7 +2325,7 @@ export type Settings = {
    */
   autoScheduleCron: string;
   /**
-   * The caller's AI choice (NEW-llm-bring-your-own, spec §3; the table is on `AINotConfigured`). `""`: AI off by the caller's own choice (row 1). A row stored as `""` before this change stays off and never follows the organisation (spec AC-17, D-9). `organization`: use my organisation's AI (rows 4-6). The stored default for an account created after this change (owner decision O-5); before Part 2 of the spec there is no organisation configuration, so it reads as `nothing_configured`. Accepted on write whether or not the caller belongs to an organisation (for a caller with none it is row 6 with `enablers: [user]`). `openai`, `anthropic`, `azure_openai`, `bedrock`, `vertex`: the caller's own key-based provider (rows 2-3). A row stored on `bedrock`, `azure_openai` or `vertex` before this change keeps that choice and its stored destination values, and needs a key (spec AC-8, AC-40). `unsupported`: a READ value only in effect. The stored choice is a provider Paceday no longer supports (`ollama`; rows 7-8). The stored value is not rewritten (spec D-10), so a rollback restores it. A write carrying `unsupported` is accepted only when the caller's row already reads as `unsupported` (the document read and written back unchanged, spec AC-9); otherwise it is a 400. `ollama` is never returned and is a 400 on write (spec AC-6, AC-7).
+   * The caller's AI choice (NEW-llm-bring-your-own, spec §3; the table is on `AINotConfigured`). `""`: AI off by the caller's own choice (row 1). A row stored as `""` before this change stays off and never follows the organisation (spec AC-17, D-9). `organization`: use my organisation's AI (rows 4-6). The stored default for an account created after Part 1 (owner decision O-5). Part 2: requests then use the organisation's configuration once it is complete and the caller has confirmed it (confirmOrganizationAI). Accepted on write whether or not the caller belongs to an organisation (for a caller with none it is row 6 with `enablers: [user]`). `openai`, `anthropic`, `azure_openai`, `bedrock`, `vertex`: the caller's own key-based provider (rows 2-3; rows 10-11 while the caller's organisation forbids personal keys, Part 2). Writing `""` or a provider deletes the caller's organisation confirmation (Part 2, spec P2-AC-36). A row stored on `bedrock`, `azure_openai` or `vertex` before this change keeps that choice and its stored destination values, and needs a key (spec AC-8, AC-40). `unsupported`: a READ value only in effect. The stored choice is a provider Paceday no longer supports (`ollama`; rows 7-8). The stored value is not rewritten (spec D-10), so a rollback restores it. A write carrying `unsupported` is accepted only when the caller's row already reads as `unsupported` (the document read and written back unchanged, spec AC-9); otherwise it is a 400. `ollama` is never returned and is a 400 on write (spec AC-6, AC-7).
    */
   llmProvider: ("" | "organization" | "unsupported" | "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
   /**
@@ -2257,7 +2506,7 @@ export type SettingsUpdate = Partial<{
    */
   autoScheduleCron: string;
   /**
-   * The caller's AI choice (NEW-llm-bring-your-own, spec §3; the table is on `AINotConfigured`). `""`: AI off by the caller's own choice (row 1). A row stored as `""` before this change stays off and never follows the organisation (spec AC-17, D-9). `organization`: use my organisation's AI (rows 4-6). The stored default for an account created after this change (owner decision O-5); before Part 2 of the spec there is no organisation configuration, so it reads as `nothing_configured`. Accepted on write whether or not the caller belongs to an organisation (for a caller with none it is row 6 with `enablers: [user]`). `openai`, `anthropic`, `azure_openai`, `bedrock`, `vertex`: the caller's own key-based provider (rows 2-3). A row stored on `bedrock`, `azure_openai` or `vertex` before this change keeps that choice and its stored destination values, and needs a key (spec AC-8, AC-40). `unsupported`: a READ value only in effect. The stored choice is a provider Paceday no longer supports (`ollama`; rows 7-8). The stored value is not rewritten (spec D-10), so a rollback restores it. A write carrying `unsupported` is accepted only when the caller's row already reads as `unsupported` (the document read and written back unchanged, spec AC-9); otherwise it is a 400. `ollama` is never returned and is a 400 on write (spec AC-6, AC-7).
+   * The caller's AI choice (NEW-llm-bring-your-own, spec §3; the table is on `AINotConfigured`). `""`: AI off by the caller's own choice (row 1). A row stored as `""` before this change stays off and never follows the organisation (spec AC-17, D-9). `organization`: use my organisation's AI (rows 4-6). The stored default for an account created after Part 1 (owner decision O-5). Part 2: requests then use the organisation's configuration once it is complete and the caller has confirmed it (confirmOrganizationAI). Accepted on write whether or not the caller belongs to an organisation (for a caller with none it is row 6 with `enablers: [user]`). `openai`, `anthropic`, `azure_openai`, `bedrock`, `vertex`: the caller's own key-based provider (rows 2-3; rows 10-11 while the caller's organisation forbids personal keys, Part 2). Writing `""` or a provider deletes the caller's organisation confirmation (Part 2, spec P2-AC-36). A row stored on `bedrock`, `azure_openai` or `vertex` before this change keeps that choice and its stored destination values, and needs a key (spec AC-8, AC-40). `unsupported`: a READ value only in effect. The stored choice is a provider Paceday no longer supports (`ollama`; rows 7-8). The stored value is not rewritten (spec D-10), so a rollback restores it. A write carrying `unsupported` is accepted only when the caller's row already reads as `unsupported` (the document read and written back unchanged, spec AC-9); otherwise it is a 400. `ollama` is never returned and is a 400 on write (spec AC-6, AC-7).
    */
   llmProvider: ("" | "organization" | "unsupported" | "openai" | "anthropic" | "azure_openai" | "bedrock" | "vertex");
   /**
@@ -2557,51 +2806,6 @@ export type SsoProviderList = {
  * `null`) is refused with 400 `invalid JSON`.
  */
 export type SsoProviderStateRequest = { state: SsoProviderState }
-export type SsoStepupUrl = "/api/admin/sso/stepup"
-/**
- * The scopes the SSO admin step-up requests from each provider on top of
- * the identity scopes (`openid`, `email`, `profile`, and Microsoft's
- * `User.Read`, which sign-in already requests). Requested only by
- * startSsoAdminStepup, never at sign-in; the tokens are discarded after
- * the check. Carried by SsoWriteStepupRequired and SsoStepupOptions.
- * 
- * Normative rule: each list is exactly what startSsoAdminStepup
- * requests from that provider beyond the identity scopes, so a client
- * shows it as given and does not hard-code it. A provider's key is
- * present if and only if that provider's step-up is configured on this
- * deployment, that is, startSsoAdminStepup would not answer 503 for it
- * (spec §9 D-2 and D-9: no OAuth client for the provider, or `APP_URL`
- * unset). A deployment with only Google configured sends only `google`;
- * an empty object means no step-up can be started on this deployment.
- * An unconfigured provider is an absent key, never an empty list.
- * 
- * Today's values, informative only (the exact Microsoft list is spec
- * OQ-2's open technical sub-question and may narrow): Google, the
- * read-only Directory user scope
- * (`https://www.googleapis.com/auth/admin.directory.user.readonly`);
- * Microsoft, organisation and directory-role read scopes
- * (`Organization.Read.All`, `RoleManagement.Read.Directory`, which a
- * tenant administrator may have to consent to).
- */
-export type SsoStepupScopes = Partial<{ google: Array<string>, microsoft: Array<string> }>
-/**
- * What the caller cannot do without the SSO admin step-up, for the
- * client to explain before it navigates. Carried by
- * SsoWriteStepupRequired and SsoStepupOptions. An open list of codes:
- * the item schema is a non-empty string, not an enum, so a value added
- * later (for example by PAC-68 if it reuses this step-up) does not make
- * the body fail validation in a client generated from this revision. A
- * client explains the codes it knows and ignores any other. The only
- * value the server sends today is `sso_configuration_writes`: no SSO
- * configuration write (create, replace or delete); only a deployment
- * operator on the break-glass list can write without it. Nothing else
- * the user already has is lost. Suspend and resume
- * (setSsoProviderState) are not served under PAC-50; they become SSO
- * configuration writes covered by this code when PAC-22's follow-up
- * serves them, and a client must not offer them before then (PAC-50
- * contract revision 8.1, N6).
- */
-export type SsoWithoutStepup = Array<string>
 /**
  * getSsoStepupOptions response (PAC-50 contract revision 8, spec §9
  * D-13, AC-25): what the optional SSO admin step-up would request and
@@ -2616,6 +2820,14 @@ export type SsoStepupOptions = { stepup_url: SsoStepupUrl, stepup_scopes: SsoSte
  */
 export type SsoStepupProvider = ("google" | "microsoft")
 /**
+ * The write an admin step-up grant authorises (PAC-50 §4.8 `purpose`;
+ * NEW-llm-bring-your-own Part 2, spec P2-D1). `sso_write`: one SSO
+ * configuration write (PAC-50). `llm_org_key_write`: one change of the
+ * caller's organisation's AI configuration (patchOrganizationAI). A
+ * grant is consumed only by a write of its own purpose (PAC-50 AC-27).
+ */
+export type SsoStepupPurpose = ("sso_write" | "llm_org_key_write")
+/**
  * The provider domain (create body `domain`, or the `{domain}` segment
  * of the DELETE and of setSsoProviderState) is not exactly the caller's
  * org domain, compared case-insensitively and untrimmed: a subdomain
@@ -2626,14 +2838,6 @@ export type SsoStepupProvider = ("google" | "microsoft")
  * not consumed.
  */
 export type SsoWriteDomainMismatch = { error: "provider_domain_mismatch" }
-/**
- * The caller has no org (or its org row is gone). Checked before
- * anything else, including break-glass. No `stepup_url`: there is no org
- * to step up for. Also the 403 of getSsoStepupOptions and of
- * startSsoAdminStepup (the latter always with `org membership
- * required`).
- */
-export type SsoWriteMembershipRequired = { error: ("org membership required" | "org not found") }
 /**
  * An org member with no live step-up grant for (caller, caller's org)
  * who is not a break-glass admin. The step-up is optional (owner
@@ -3091,12 +3295,27 @@ export type get_ListSsoProviders = {
  * page's. A client with no refused write in hand (the web app's
  * Settings, spec AC-25) obtains those values from getSsoStepupOptions.
  * 
+ * **Purpose (NEW-llm-bring-your-own Part 2, spec
+ * `docs/specs/NEW-llm-bring-your-own-part2.md` §3.3, P2-D1).** The
+ * optional `purpose` names the write the resulting grant may authorise:
+ * `sso_write` (the default when absent: PAC-50's flow, byte-identical)
+ * or `llm_org_key_write` (one change of the organisation's AI
+ * configuration, patchOrganizationAI). The purpose is bound into the
+ * signed state cookie and the callback issues the grant with it; a
+ * grant is only ever consumed by a write of its own purpose (PAC-50
+ * AC-27, spec P2-AC-2). The checks the callback makes and the scopes
+ * requested do not depend on the purpose. A client that received
+ * OrganizationAIWriteStepupRequired navigates to `stepup_url` with
+ * `?provider=<p>&purpose=<stepup_purpose>`; a client that omits
+ * `purpose` obtains an SSO grant, which the organisation-AI change
+ * refuses without consuming it.
+ * 
  * Checks run in this order; the first that fails decides the response,
- * and none of them sets the state cookie: `provider` (400), membership
- * (403), the provider configured on this deployment (503), the state
- * value generated (500). So an orgless caller with `?provider=okta`
- * gets the 400, and an orgless caller naming an unconfigured provider
- * gets the 403.
+ * and none of them sets the state cookie: `provider` (400), `purpose`
+ * (400), membership (403), the provider configured on this deployment
+ * (503), the state value generated (500). So an orgless caller with
+ * `?provider=okta` gets the 400, and an orgless caller naming an
+ * unconfigured provider gets the 403.
  * 
  * The step-up is optional and separate from sign-in (owner decision
  * 2026-10-27, PAC-68 OQ-2 / PAC-50 OQ-2). Sign-in (startGoogleOAuth,
@@ -3125,7 +3344,7 @@ export type get_StartSsoAdminStepup = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query:  { provider: Schemas.SsoStepupProvider },
+            query:  { provider: Schemas.SsoStepupProvider, purpose?: Schemas.SsoStepupPurpose },
         
         
         
@@ -3172,10 +3391,20 @@ export type get_StartSsoAdminStepup = {
  *    Microsoft `wids` (or, when absent, the directory-role lookup)
  *    containing a qualifying role template id (spec §4.4). Anything
  *    else, including a lookup error, gives `not_admin`.
- * 5. A grant for (caller, caller's org, provider) is issued with
- *    purpose `sso_write`, valid for 10 minutes and good for one SSO
- *    configuration write (spec §4.8; a write of another purpose cannot
- *    spend it).
+ * 5. A grant for (caller, caller's org, provider) is issued with the
+ *    purpose bound in the state (`sso_write` unless the start named
+ *    `llm_org_key_write`; NEW-llm-bring-your-own Part 2), valid for 10
+ *    minutes and good for one write of that purpose (spec §4.8; a write
+ *    of another purpose cannot spend it, PAC-50 AC-27). A state signed
+ *    before NEW-llm-bring-your-own Part 2 was deployed carries no
+ *    purpose; it is read as `sso_write` (contract revision 2), so a
+ *    step-up in flight across the deploy completes as PAC-50's.
+ * 
+ * "Byte-identical to PAC-50" for an absent or `sso_write` purpose
+ * (NEW-llm-bring-your-own Part 2) covers what a client can observe: the
+ * 302 and its Location, the 400 bodies, the options read and the
+ * landing Location. It does not cover the signed state cookie's value,
+ * which now also binds the purpose and is opaque to clients.
  * 
  * Every outcome with a session, granted or denied, is recorded
  * server-side for operators (spec §4.6) and clears the state cookie.
@@ -3235,16 +3464,32 @@ export type get_SsoAdminStepupCallback = {
  * this path, so a browser in the middle of a step-up sends it here;
  * this operation ignores it.
  * 
- * Checks: membership (403), then 200. Calling it costs nothing, so a
- * client may call it whenever it renders the entry point.
+ * **Purpose (NEW-llm-bring-your-own Part 2, spec P2-AC-30).** The
+ * optional `purpose` says which write the client is about to offer the
+ * step-up for. `stepup_url` and `stepup_scopes` do not depend on it;
+ * `without_stepup` does: `[sso_configuration_writes]` for `sso_write`
+ * (the default when absent, byte-identical to PAC-50) and
+ * `[organization_ai_configuration_writes]` for `llm_org_key_write`. The
+ * client navigates to `stepup_url` with `?provider=<p>` and, for
+ * `llm_org_key_write`, `&purpose=llm_org_key_write`.
+ * 
+ * Checks: `purpose` (400), membership (403), then 200. Calling it costs
+ * nothing, so a client may call it whenever it renders the entry point.
  */
 export type get_GetSsoStepupOptions = {
       method: "GET",
       path: "/api/admin/sso/stepup/options",
       requestFormat: "json",
       responseFormat: "json",
-      parameters: never,
+      parameters: {
+            query?:  Partial<{ purpose: Schemas.SsoStepupPurpose }>,
+        
+        
+        
+        
+          }
       responses: {200: Schemas.SsoStepupOptions,
+400: Schemas.ErrorResponse,
 401: Schemas.PlainTextError,
 403: Schemas.SsoWriteMembershipRequired,
 },
@@ -4829,11 +5074,15 @@ export type get_GetSlackStatus = {
  *   `unsupported`, `unsupported` is a 400 (contract challenge
  *   2026-10-28, blocking 1).
  * * **`organization`**: decided as a request of a caller who follows
- *   their organisation. Before Part 2 of the spec no organisation
- *   configuration exists, so this is always the 409
- *   `nothing_configured`. A submitted `llmModel` or `llmApiKey` is never
- *   combined with an organisation configuration and is not sent (spec
- *   D-18, D-19).
+ *   their organisation (rows 4-6). In row 4 the probe tests the
+ *   organisation's configuration exactly as the caller's requests use
+ *   it: its provider, model, destination and key at the confirmed
+ *   version, nothing of the caller's (spec D-18). A submitted
+ *   `llmModel` or `llmApiKey` is never combined with an organisation
+ *   configuration: in row 4 it is the 400 below; in rows 5 and 6 it is
+ *   that row's 409; while personal keys are forbidden, a submitted
+ *   `llmApiKey` is the 409 `personal_keys_forbidden` of step 1a. Nothing
+ *   is sent in any of these cases (spec P2-AC-20, P2-AC-28).
  * * **Absent**: the caller's SAVED choice, decided exactly as their parse
  *   and brief refresh would decide it (spec §3 table, AC-40). When the
  *   saved choice is a provider, a submitted `llmModel` / `llmApiKey`
@@ -4841,8 +5090,10 @@ export type get_GetSlackStatus = {
  *   not (`""`, `organization`, `unsupported`), the answer is that row's
  *   409, and a submitted key is sent nowhere.
  * 
- * **Order of decisions.** (1) The body's shape: the 400. (2) Which configuration, as above: when there is none, the 409 and nothing is sent. (3) The destination check: the 422 and nothing sent. (4) The request: the 200 or the 502. Step 2 precedes step 3, so a caller with no key whose stored destination would also be refused gets the 409 `needs_key`, not the 422: by the spec's table only a configured caller sends anything, so only a configured caller's destination is checked. This replaces PAC-70's "a refused destination with no key is a 422" (`contracts/features/NEW-llm-bring-your-own.md` §6); nothing is sent in either case.
- * **THE DESTINATION IS NEVER SUPPLIED BY THE CALLER (PAC-24, unchanged).** Every value that contributes to the URL - `llmBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `bedrockModel`, `vertexModel` - is read from the CALLER'S OWN stored settings and from nowhere else. The body may carry only `llmProvider`, `llmModel` and `llmApiKey`, none of which reaches a URL (`llmModel` is a JSON body field of the `openai` and `anthropic` requests only). PAC-24 rejected per-property overrides because `{"llmProvider":"openai","llmBaseUrl":"https://attacker.example"}` would have paired a caller-chosen host with the stored key; that argument holds for every key-carrying provider, so the closed body stays. The body is REQUIRED: `{}` probes the saved choice, and an absent body is a 400.
+ * **NEW-llm-bring-your-own Part 2 (spec `docs/specs/NEW-llm-bring-your-own-part2.md` §3.5, revision 1).** "Names a provider" means `llmProvider` is one of `openai`, `anthropic`, `azure_openai`, `bedrock`, `vertex`; `""`, `organization` and `unsupported` do not name a provider. Naming a provider always probes the caller's OWN configuration for it, even when it is the organisation's provider: naming a provider never selects the organisation's key (spec P2-D6; this replaces the parent spec's "names exactly the organisation's provider" clause). The organisation's configuration is probed only by `{}` (saved choice in row 4) or `{"llmProvider":"organization"}`, and then the 200's `configuration` is `organization`. While the caller's organisation forbids personal keys (owner O-12), a probe that names a provider or carries `llmApiKey` (whatever `llmProvider` is, including `organization` and `unsupported`) is the 409 `personal_keys_forbidden` with `enablers: [organization_admin]`, and nothing is sent (P2-AC-20). Otherwise a caller whose decided row is 5, 6, 7, 8, 10 or 11 gets that row's 409; in particular `{"llmProvider":"unsupported"}` with a saved `unsupported` choice in an organisation that forbids personal keys is row 10 (`[user]`) or 11 (`[organization_admin]`), decided as the saved choice. Row 9 is reserved and never answered.
+ * **No key in provider error text (spec §3.1a, P2-AC-39; contract revision 3).** The 502's body is the fixed `upstream provider error` in every row, so no answer carries provider or gateway error text. The upstream error string goes only to the server log and Sentry, after every occurrence of every key sent with this request (in row 4 the confirmed version's key, even if replaced since) and of the caller's keys (stored and submitted) is replaced by `[redacted]` (exact strings; an encoded echo can reach those operator-only surfaces, spec §5).
+ * **Order of decisions.** (1) The body's shape: the 400. (1a, Part 2) Personal keys forbidden and the body names a provider or carries `llmApiKey`: the 409. Step 1a wins over every later step, so a confirmed follower's `{"llmApiKey":"…"}` or `{"llmProvider":"organization","llmApiKey":"…"}` while forbidden is this 409, never the 400 of step 2a (spec §3.5, P2-AC-20; contract revision 3). (2) Which configuration, as above: when there is none, the 409 and nothing is sent; (2a, Part 2) when it is the organisation's (row 4) and the body carries `llmModel` (or, with personal keys allowed, `llmApiKey`), the 400. (3) The destination check: the 422 and nothing sent. (4) The request: the 200 or the 502. Step 2 precedes step 3, so a caller with no key whose stored destination would also be refused gets the 409 `needs_key`, not the 422: by the spec's table only a configured caller sends anything, so only a configured caller's destination is checked. This replaces PAC-70's "a refused destination with no key is a 422" (`contracts/features/NEW-llm-bring-your-own.md` §6); nothing is sent in either case.
+ * **THE DESTINATION IS NEVER SUPPLIED BY THE CALLER (PAC-24, unchanged).** Every value that contributes to the URL - `llmBaseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`, `bedrockModel`, `vertexModel` - is read from the CALLER'S OWN stored settings (in row 4, Part 2: from the organisation's stored configuration at the confirmed version, and nothing of the caller's) and from nowhere else. The body may carry only `llmProvider`, `llmModel` and `llmApiKey`, none of which reaches a URL (`llmModel` is a JSON body field of the `openai` and `anthropic` requests only). PAC-24 rejected per-property overrides because `{"llmProvider":"openai","llmBaseUrl":"https://attacker.example"}` would have paired a caller-chosen host with the stored key; that argument holds for every key-carrying provider, so the closed body stays. The body is REQUIRED: `{}` probes the saved choice, and an absent body is a 400.
  * **Approved destinations (PAC-66, PAC-66-B; carried, with the changes marked NEW).** A request is sent only to a destination the OPERATOR approved for the provider in use. No request property and no stored setting can add to the approved set, and a destination approved for one provider is never one for another.
  * * `openai` / `anthropic`: the effective destination is the stored
  *   `llmBaseUrl`, or the vendor's public host (`https://api.openai.com`,
@@ -5193,6 +5444,24 @@ export type get_GetMeetingBrief = {
  * bound to it; no identity of the machine Paceday runs on and no deployment-level
  * key is used (spec O-2, O-3, AC-2). A destination refusal or a provider failure on
  * a configured caller is unchanged: 200, `status: "failed"`, stored.
+ * 
+ * **NEW-llm-bring-your-own Part 2 (spec `docs/specs/NEW-llm-bring-your-own-part2.md`
+ * revision 1).** In row 4 the brief is generated with the organisation's configuration
+ * at the version the caller confirmed (read with the confirmation as one consistent
+ * state; otherwise row 5, the 409). In row 4 a provider or gateway failure stores and
+ * returns a FIXED `brief_text`, `The organisation's AI provider returned an error.`,
+ * which contains nothing the provider or gateway returned, so no form of the
+ * organisation's key (verbatim, JSON-escaped, percent-encoded) can reach the caller
+ * through the 200 or any later `getMeetingBrief` (spec §3.1a, P2-D16, P2-AC-39;
+ * contract revision 3). The provider text goes only to the server log and Sentry,
+ * with every occurrence of every key sent with this request (the confirmed version's
+ * key, even if replaced since) and of the caller's keys replaced by `[redacted]`
+ * (exact strings; an encoded echo can reach those operator-only surfaces, spec §5).
+ * In row 2 (the caller's own key) a failed brief's text keeps Part 1's form,
+ * `LLM error: <provider text>`, with the caller's own keys replaced by `[redacted]`
+ * before it is stored, returned, logged or reported. In row 4 a destination refusal's
+ * text names the organisation's AI destination and its administrator, never the
+ * caller's own Settings (P2-AC-41).
  */
 export type post_RefreshMeetingBrief = {
       method: "POST",
@@ -5241,6 +5510,8 @@ export type post_ConfirmNaturalLanguage = {
  * **NEW-llm-bring-your-own: "AI not configured" is an answer, not an error.** Before anything is sent, the server decides which AI configuration the request runs on, by the table in `docs/specs/NEW-llm-bring-your-own.md` §3 (summarised on `AINotConfigured`). When the caller has none, the answer is 200 with `intent: "unknown"`, `error` a sentence saying that AI features are off, why and who can turn them on, and `not_configured` carrying the same facts for a client to act on without reading the sentence (spec AC-13). Nothing is sent to any host (spec AC-10, AC-11, AC-40). `not_configured` is present ONLY in that case, so its presence is how a client tells "AI not configured" apart from "the model did not understand you" (both are `intent: "unknown"`). A client that reads only `intent` and `error` (the web bar before this change, the MCP tool `clockwise_parse_command`) still shows a sentence.
  * A configured request uses only the caller's own key-based provider with the key bound to that provider (see `testLLMConnection` for the provider modes). No identity of the machine Paceday runs on (AWS default credential chain or shared profile, Azure DefaultAzureCredential, Google Application Default Credentials) and no deployment-level key is ever used (spec O-2, O-3, AC-1, AC-2).
  * A destination refusal on a configured caller (PAC-66, PAC-66-B) is unchanged: 200 `{"intent":"unknown","error":"<sentence>"}`, with no `not_configured`, and nothing sent.
+ * **Part 2 (spec `docs/specs/NEW-llm-bring-your-own-part2.md`, revision 1).** In row 4 the request uses the caller's organisation's configuration and nothing of the caller's (parent D-18): exactly the values of the `configurationVersion` the caller's stored confirmation names. The configuration and the confirmation are read as one consistent state; when the stored configuration's version is not the confirmed one (an administrator changed it before or while the request was decided), the answer is row 5 and nothing is sent. No request sends values of another version or combines values of two versions (spec P2-AC-37). In row 5 the caller has not confirmed the organisation's current configuration: the not-configured 200, nothing sent until they confirm in Paceday (owner O-13; confirmOrganizationAI). In row 10 (personal keys forbidden, the caller on their own provider) nothing is sent until the caller chooses "Use my organisation's AI" (patchSettings `llmProvider: organization`) and confirms (spec P2-D2, current default). Row 9 is reserved and never answered (see AINotConfigured). In row 4 a destination refusal's sentence names the organisation's AI destination and its administrator, never the caller's own Settings (spec P2-AC-41). The MCP tool `clockwise_parse_command` receives the same body; no MCP tool confirms (spec P2-AC-33).
+ * **No provider error text reaches the caller from the organisation's configuration (spec §3.1a, P2-D16, P2-AC-39; contract revision 3).** A provider or gateway failure of the parse is the 500 below with the fixed `internal error`, in every row (as before Part 2), so no answer carries provider or gateway error text. The provider text goes only to the server log and Sentry, and before it does every occurrence of every key sent with this request (the confirmed version's key in row 4, even if an administrator has replaced it since) and of the caller's own keys (stored and submitted) is replaced by `[redacted]`. That replacement is of exact strings: an encoded or partial echo of a key can still reach the server log or Sentry (operator-only; spec §5), never an answer.
  * API-080 is fixed here (spec AC-35, D-20): a result with no time range carries neither `range_start` nor `range_end`, never `0001-01-01T00:00:00Z`.
  */
 export type post_ParseNaturalLanguage = {
@@ -5273,6 +5544,162 @@ export type get_ListOrgMembers = {
       responses: {200: Array<Schemas.OrgMember>,
 401: Schemas.MiddlewareUnauthorized,
 500: Schemas.ErrorResponse,
+},
+      
+    }
+/**
+ * NEW-llm-bring-your-own Part 2 (spec `docs/specs/NEW-llm-bring-your-own-part2.md` §3.2, P2-AC-7). The organisation is the caller's, never a parameter, so no caller can name another organisation (P2-AC-8).
+ * **Every member reads the same bytes.** The answer depends only on the organisation's stored configuration, never on the caller: not on whether the caller is an administrator (Paceday stores no admin role; PAC-50's proof exists only around a write), not on whether the caller holds a live grant, is on the break-glass list, has confirmed, or just made the last change (parent spec D-7, P2-AC-7). Per-caller state (whether the caller has confirmed the current version) is on the caller's settings read (`AIStatus`), not here.
+ * The key is NEVER returned (owner O-7, PAC-24): `keySet` is the only thing a reader learns about it. An organisation that never set a configuration answers `configured: false`, `keySet: false`, `personalKeysAllowed: true`, `configurationVersion: 0` and no `provider`. An organisation whose configuration was removed (`provider: ""`) answers the same except that `configurationVersion` is the removal's version (never `0` again; versions are never reused within an organisation, contract revision 3, spec P2-D17) and `personalKeysAllowed` and `updatedAt` are as stored. A client keeps the `configurationVersion` it displayed: patchOrganizationAI and confirmOrganizationAI both name it.
+ * Checks: membership (403), then 200. Read-only: nothing is consumed, written or recorded.
+ */
+export type get_GetOrganizationAI = {
+      method: "GET",
+      path: "/api/organization/ai",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: never,
+      responses: {200: Schemas.OrganizationAIConfiguration,
+401: Schemas.PlainTextError,
+403: Schemas.SsoWriteMembershipRequired,
+500: Schemas.SchedulingErrorResponse,
+},
+      
+    }
+/**
+ * NEW-llm-bring-your-own Part 2 (spec §3.2, P2-AC-1 to P2-AC-6, P2-AC-17; owner O-11, O-12). MERGE against the caller's organisation's configuration, with the rules on OrganizationAIConfigurationUpdate. The answer is the re-read configuration, byte-identical to what any member's getOrganizationAI returns right after (P2-AC-7).
+ * **Who may change it (owner O-11: PAC-50's admin proof, repeated per change).** Exactly PAC-50's write gate (`docs/specs/PAC-50.md` §4.2) with its own grant purpose:
+ * 1. Membership: no organisation or its row gone is the 403
+ *    SsoWriteMembershipRequired, before anything else (break-glass
+ *    included).
+ * 
+ * 2. The body's shape: every 400 that can be decided from the body
+ *    alone (the "shape" list on the 400), before anything stored is
+ *    read and before any proof is looked at, so a refused body leaves
+ *    a live grant unconsumed (P2-AC-4).
+ * 
+ * 2a. The version (contract revision 2, challenge B-1; spec P2-D15,
+ *     P2-AC-40). `configurationVersion` must equal the stored
+ *     configuration's current version (the one the admin was shown).
+ *     Otherwise the 409 OrganizationAIConsentConflict with `reason:
+ *     configuration_changed` and `organization` the current read;
+ *     nothing is stored, nothing is recorded, and no proof is looked at
+ *     or consumed, so a stale form costs no step-up. This is an early
+ *     answer for the common case; step 4 repeats the comparison
+ *     atomically, and step 4's is the one that decides.
+ * 
+ * 2b. The body against what is stored (contract revision 3, challenge
+ *     revision 2 non-blocking 3): every 400 on the "state" list on the
+ *     400, decided against the configuration at the version just
+ *     checked. A stale form therefore gets the 409 of 2a, never a 400
+ *     that only the newer configuration explains.
+ * 
+ * 3. Authorisation: the caller's newest
+ *    live grant for (caller, caller's organisation) **whose purpose is
+ *    `llm_org_key_write`** is consumed in one statement; a grant of any
+ *    other purpose (`sso_write`) is never selected and stays live, and
+ *    an SSO write never consumes an `llm_org_key_write` grant (PAC-50
+ *    AC-27, P2-AC-2). Without such a grant: an address on the
+ *    deployment's break-glass list (`PACEDAY_ADMIN_EMAILS`, compared
+ *    case-insensitively) whose session JWT was issued less than 10
+ *    minutes ago, and not more than one minute in the future, is
+ *    authorised without a grant (PAC-50 AC-14a); the same address with
+ *    an older session is the 403
+ *    OrganizationAIWriteFreshLoginRequired; anyone else is the 403
+ *    OrganizationAIWriteStepupRequired. One grant authorises one
+ *    change, so a second change needs a new step-up (owner O-11).
+ *    **One break-glass session authorises one change** (spec P2-D13,
+ *    factory-assumed pending the owner; revision 2): a break-glass
+ *    change is recorded with the session's issue time, and a further
+ *    change by the same address with a session of the same issue time
+ *    is the 403 OrganizationAIWriteFreshLoginRequired, even inside the
+ *    10 minutes. The check that no change was recorded for (address,
+ *    session issue time) and the recording of this one are one atomic
+ *    step (at most one record per pair, enforced by storage), so two
+ *    concurrent changes with one session cannot both pass (contract
+ *    revision 3, challenge revision 2 non-blocking 2). Sessions carry
+ *    no identifier besides `iat`, which has one-second resolution: two
+ *    sign-ins by the same address within one second share an issue
+ *    time and count as one session, so the second is refused. That
+ *    fails safe. PAC-50's SSO write gate is unchanged (its break-glass
+ *    rule still allows several SSO writes per fresh session).
+ * 
+ * 4. The write (contract revision 3, challenge revision 2 B-1'; spec
+ *    P2-D15). Steps 3 and 4 run in ONE transaction: the grant
+ *    consumption (or the break-glass record) and one atomic
+ *    conditional write that stores the change only if the stored
+ *    version still equals `configurationVersion`. The condition is
+ *    the stored version alone, and an organisation with no stored
+ *    configuration counts as version `0` (contract revision 3.1,
+ *    challenge revision 3 NB-C): so the first setup names `0`, and a
+ *    row that a `personalKeysAllowed`-only change left at version `0`
+ *    does not make a concurrent first setup naming `0` a conflict,
+ *    while of two first setups naming `0` exactly one is stored (the
+ *    first advances the version). When the
+ *    condition fails (another administrator's change was stored
+ *    between step 2a and here), the transaction is rolled back and the
+ *    answer is the 409 OrganizationAIConsentConflict
+ *    `configuration_changed` with the current read: nothing stored,
+ *    nothing recorded, the grant NOT consumed and a break-glass session
+ *    NOT marked used. When storage fails, the transaction is rolled
+ *    back the same way and the answer is the 500: the configuration is
+ *    unchanged and the grant is still live (P2-AC-5, revision 3;
+ *    revision 2 said the grant stayed consumed). So a grant is spent
+ *    exactly when a change is stored. The operator record of a
+ *    successful change is inserted in this same transaction (contract
+ *    revision 3.1, challenge revision 3 NB-B), so a stored change is
+ *    never left unrecorded and a rolled-back one is never recorded.
+ * 
+ * Being a team owner, or having made the last change, proves nothing. Every successful change is recorded for operators, in the write's transaction (who, when, `stepup` or `breakglass`, the names of the properties that changed; never the key; P2-AC-6). No API reads that record.
+ * **What a change does to members** (spec §3.1): `configurationVersion` advances by one when the change alters `provider` (including `provider: ""`, the removal), writes `apiKey` (any present `apiKey`, including `""` and including a value equal to the stored key: the server never compares keys, so re-entering the same key re-asks members), or alters any destination property (`baseUrl`, `azureEndpoint`, `azureDeployment`, `azureApiVersion`, `awsRegion`), including removing them; members who follow the organisation must then confirm again before anything is sent to it (spec P2-D4, factory-assumed pending the owner, OQ-P2-1; P2-AC-23). A change of only `model` and/or `personalKeysAllowed` does not advance it, so such a change is never a conflict for another administrator's change and, for `model` and `personalKeysAllowed`, the later change wins. Forbidding personal keys moves nobody onto this configuration: members on their own provider answer row 10 or 11 until they choose `llmProvider: organization` and confirm (spec P2-D2, current default).
+ * **A version is never reused within an organisation** (contract revision 3, spec P2-D17, P2-AC-42), including across `provider: ""` and a later setup: the removal empties the configuration and keeps its version count, so the next setup names the removal's version and gets the next one. A confirmation of a removed configuration therefore never matches a later configuration.
+ * Approved destinations: the organisation's `baseUrl`, `azureEndpoint` and `awsRegion` are checked on write with exactly the rules of patchSettings for a user's (PAC-66, PAC-66-B, owner O-10 path prefixes), for the organisation's provider, and again on every send (`testLLMConnection`). Because every member reads them (spec P2-D18, contract revision 3), the organisation's addresses are also held to a stricter shape: `baseUrl` must be exactly an approved origin plus that entry's path prefix with no query, fragment or userinfo (the user rule, which leaves no room for a credential in the path); `azureEndpoint` must be `https://<host>` with at most one trailing `/` and no path, query, fragment or userinfo (stricter than a user's, whose path is not checked on write).
+ */
+export type patch_PatchOrganizationAI = {
+      method: "PATCH",
+      path: "/api/organization/ai",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: {
+            
+        
+        
+        
+        body:  Schemas.OrganizationAIConfigurationUpdate,
+          }
+      responses: {200: Schemas.OrganizationAIConfiguration,
+400: Schemas.SchedulingErrorResponse,
+401: Schemas.PlainTextError,
+403: Schemas.OrganizationAIWriteForbiddenResponse,
+409: Schemas.OrganizationAIConsentConflict,
+500: Schemas.SchedulingErrorResponse,
+},
+      
+    }
+/**
+ * NEW-llm-bring-your-own Part 2 (spec §3.4, P2-AC-22 to P2-AC-25; owner O-13: tell and ask once, nothing is sent before the user confirms). The caller confirms the organisation's configuration at `configurationVersion`, the version they were shown (from getOrganizationAI). Recorded for (caller, caller's organisation): a later confirmation of a newer version replaces it; confirming the current version again is accepted and changes nothing.
+ * Before calling this, a client tells the user, naming the organisation's `provider`, that their text and meeting details (event titles, attendee emails, and the Slack and Notion excerpts used for briefs) are sent to their organisation's AI provider account, which its administrators can **access** outside Paceday (owner O-13: the wording says "access", never "read"). The client calls this only on the user's explicit confirmation. Choosing "Use my organisation's AI" in Settings shows the same notice and, on the user's confirm, confirms the version DISPLAYED (the client calls this with that version, then patchSettings with `llmProvider: organization`); if this answers 409, the client shows the current configuration's notice instead. This operation is the ONLY way a confirmation is recorded: patchSettings never records one, whatever its body (spec P2-D14, P2-AC-38), and a patchSettings that stores `""` or a provider DELETES the caller's confirmation (P2-AC-36).
+ * The confirmation is what lets row 4 of the table on AINotConfigured send anything, and only for the version it names; it does not change the caller's stored choice. It confirms nobody else (P2-AC-25). No MCP tool calls it (spec P2-D9).
+ * Checks: body (400), membership (403), then the organisation's current state (409), then 200. When the current configuration is not complete, the 409 is `organization_not_configured` whatever `configurationVersion` says (it wins over `configuration_changed`: there is nothing to confirm).
+ */
+export type post_ConfirmOrganizationAI = {
+      method: "POST",
+      path: "/api/organization/ai/consent",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: {
+            
+        
+        
+        
+        body:  Schemas.OrganizationAIConsentRequest,
+          }
+      responses: {200: Schemas.AIStatus,
+400: Schemas.SchedulingErrorResponse,
+401: Schemas.PlainTextError,
+403: Schemas.SsoWriteMembershipRequired,
+409: Schemas.OrganizationAIConsentConflict,
+500: Schemas.SchedulingErrorResponse,
 },
       
     }
@@ -5890,8 +6317,18 @@ export type get_GetSettings = {
  * * `llmApiKeysSet`, `llmUnboundApiKeySet` and `aiStatus` are read-only
  *   and, like `llmApiKeySet`, accepted and ignored on write.
  * * Nothing here reads, writes or reveals an organisation's
- *   configuration or key (Part 2 of the spec adds those as separate
- *   operations).
+ *   configuration or key: that is getOrganizationAI and
+ *   patchOrganizationAI (Part 2). Writing `llmProvider: organization`
+ *   does not confirm the organisation's configuration, alone or inside
+ *   a whole settings document (confirmOrganizationAI does; spec P2-D14,
+ *   P2-AC-38). Writing `llmProvider` as `""` or as one of the five
+ *   providers DELETES the caller's stored confirmation for their
+ *   organisation, whether or not the stored choice changes, so a later
+ *   return to `organization` asks again (spec §3.4, P2-AC-36); this is a
+ *   side effect, never a refusal. While the caller's organisation
+ *   forbids personal keys, choosing a provider and writing a key for it
+ *   are accepted and stored, and that key is never sent (spec P2-D8,
+ *   P2-AC-21).
  * 
  * Before PAC-24 there was no PATCH; the only write was a full-replace PUT that persisted every omitted field as its Go zero value (API-004).
  */
@@ -6335,6 +6772,7 @@ export type delete_DeleteNoMeetingZone = {
 "/api/meetings/{event_id}/brief/refresh": Endpoints.post_RefreshMeetingBrief,
 "/api/nlp/confirm": Endpoints.post_ConfirmNaturalLanguage,
 "/api/nlp/parse": Endpoints.post_ParseNaturalLanguage,
+"/api/organization/ai/consent": Endpoints.post_ConfirmOrganizationAI,
 "/api/personal-calendars": Endpoints.post_CreatePersonalCalendar,
 "/api/personal-calendars/{id}/sync": Endpoints.post_SyncPersonalCalendar,
 "/api/schedule/compress": Endpoints.post_PreviewCompression,
@@ -6398,6 +6836,7 @@ get: {
 "/api/manager/team": Endpoints.get_GetManagerRoster,
 "/api/meetings/{event_id}/brief": Endpoints.get_GetMeetingBrief,
 "/api/org/members": Endpoints.get_ListOrgMembers,
+"/api/organization/ai": Endpoints.get_GetOrganizationAI,
 "/api/personal-calendars": Endpoints.get_ListPersonalCalendars,
 "/api/personal-calendars/{id}/preview": Endpoints.get_PreviewPersonalCalendar,
 "/api/rooms": Endpoints.get_ListRooms,
@@ -6439,6 +6878,7 @@ patch: {
 "/api/habits/{id}": Endpoints.patch_UpdateHabit,
 "/api/habits/{id}/occurrences/{occurrenceId}": Endpoints.patch_UpdateHabitOccurrenceStatus,
 "/api/manager/team/members/{email}": Endpoints.patch_PatchManagerTeamMember,
+"/api/organization/ai": Endpoints.patch_PatchOrganizationAI,
 "/api/personal-calendars/{id}": Endpoints.patch_UpdatePersonalCalendar,
 "/api/scheduling-links/{id}": Endpoints.patch_UpdateSchedulingLink,
 "/api/settings": Endpoints.patch_PatchSettings,

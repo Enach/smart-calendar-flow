@@ -44,7 +44,9 @@ export function NLPBar({ initialValue, loading, error, notConfigured, onSubmit }
         </button>
       </form>
       {notConfigured ? (
-        <AINotConfiguredNotice notConfigured={notConfigured} />
+        // PAC-73 Part 2 (spec §3.6): once the user confirms the organisation's
+        // AI from the notice, the request they made is sent.
+        <AINotConfiguredNotice notConfigured={notConfigured} onResolved={() => text.trim() && onSubmit(text.trim())} />
       ) : (
         error && <p className="px-3 text-xs font-medium text-destructive">{error}</p>
       )}

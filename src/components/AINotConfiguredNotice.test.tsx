@@ -45,6 +45,48 @@ describe("AINotConfiguredNotice", () => {
   });
 });
 
+// PAC-73 Part 2 (P2-AC-31, P2-AC-35): the notice names the organisation's
+// administrator exactly when the answer's enablers include them, and alone
+// when only they can turn AI on.
+describe("AINotConfiguredNotice in an organisation", () => {
+  it("names the user and the administrator for an organisation with no AI configuration (row 6)", () => {
+    render(
+      <MemoryRouter>
+        <AINotConfiguredNotice
+          notConfigured={{
+            reason: "nothing_configured",
+            enablers: ["user", "organization_admin"],
+            message: "AI features are off: no AI provider is set up. Add your own API key in Settings, or ask an administrator of your organisation to set up its AI.",
+          }}
+        />
+      </MemoryRouter>,
+    );
+    const notice = screen.getByTestId("ai-off-notice");
+    expect(notice).toHaveTextContent("You can turn them on in Settings, or an administrator of your organisation can set up its AI.");
+    expect(screen.queryByTestId("ai-org-confirm")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("ai-use-org")).not.toBeInTheDocument();
+  });
+
+  it("names only the administrator when only they can (row 11)", () => {
+    render(
+      <MemoryRouter>
+        <AINotConfiguredNotice
+          notConfigured={{
+            reason: "personal_keys_forbidden",
+            enablers: ["organization_admin"],
+            message: "AI features are off: your organisation does not allow personal API keys and has not finished setting up its AI. An administrator of your organisation can set it up.",
+          }}
+          showLink={false}
+        />
+      </MemoryRouter>,
+    );
+    const notice = screen.getByTestId("ai-off-notice");
+    expect(notice).toHaveTextContent("An administrator of your organisation can turn them on.");
+    expect(notice).not.toHaveTextContent("You can turn them on in Settings");
+    expect(screen.queryByTestId("ai-use-org")).not.toBeInTheDocument();
+  });
+});
+
 describe("NLPBar", () => {
   it("shows the AI-off notice instead of an error when the parse was not configured", () => {
     render(

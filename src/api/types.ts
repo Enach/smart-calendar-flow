@@ -21,6 +21,10 @@ export type AINotConfigured = components["schemas"]["AINotConfigured"];
 export type AIStatus = components["schemas"]["AIStatus"];
 /** Per provider, whether a key bound to it is on file (generated). */
 export type LLMApiKeysSet = components["schemas"]["LLMApiKeysSet"];
+/** PAC-73 Part 2: the organisation's AI configuration as every member reads it (generated; never the key). */
+export type OrganizationAIConfiguration = components["schemas"]["OrganizationAIConfiguration"];
+/** PAC-73 Part 2: the body of patchOrganizationAI (generated). */
+export type OrganizationAIConfigurationUpdate = components["schemas"]["OrganizationAIConfigurationUpdate"];
 export type IntegrationProvider = "google" | "microsoft" | "zoom" | "slack" | "notion" | "webcal";
 
 export interface IntegrationAvailabilityStatus {

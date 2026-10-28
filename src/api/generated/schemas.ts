@@ -5,10 +5,10 @@ import type * as __TypedOpenapi from "./schemas.types.js";
 
 // <Schemas>
 export type AINotConfigured = __TypedOpenapi.Schemas.AINotConfigured;
-export const AINotConfigured = z.strictObject({ reason: z.enum(["off", "needs_key", "organization_unconfirmed", "nothing_configured", "provider_removed_organization_available", "provider_removed"]), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), enablers: z.array(z.enum(["user", "organization_admin"])).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), message: z.string().min(1) });
+export const AINotConfigured = z.strictObject({ reason: z.enum(["off", "needs_key", "organization_unconfirmed", "nothing_configured", "provider_removed_organization_available", "provider_removed", "personal_keys_forbidden"]), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), enablers: z.array(z.enum(["user", "organization_admin"])).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), message: z.string().min(1) });
 
 export type AIStatus = __TypedOpenapi.Schemas.AIStatus;
-export const AIStatus = z.strictObject({ configured: z.boolean(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), inOrganization: z.boolean(), notConfigured: AINotConfigured.optional() });
+export const AIStatus = z.strictObject({ configured: z.boolean(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), configuration: z.enum(["own", "organization"]).optional(), inOrganization: z.boolean(), notConfigured: AINotConfigured.optional() });
 
 export type AddEventConferenceRequest = __TypedOpenapi.Schemas.AddEventConferenceRequest;
 export const AddEventConferenceRequest = z.strictObject({ provider: z.enum(["google_meet", "zoom", "teams", "custom"]), url: z.url().optional() });
@@ -218,7 +218,7 @@ export type LLMApiKeysSet = __TypedOpenapi.Schemas.LLMApiKeysSet;
 export const LLMApiKeysSet = z.strictObject({ openai: z.boolean(), anthropic: z.boolean(), azure_openai: z.boolean(), bedrock: z.boolean(), vertex: z.boolean() });
 
 export type LLMDestinationRefusal = __TypedOpenapi.Schemas.LLMDestinationRefusal;
-export const LLMDestinationRefusal = z.strictObject({ error: z.string().min(1), reason: z.enum(["provider_not_enabled", "destination_not_approved", "destination_not_set"]), property: z.enum(["azureEndpoint", "awsRegion", "llmBaseUrl"]).optional() });
+export const LLMDestinationRefusal = z.strictObject({ error: z.string().min(1), reason: z.enum(["provider_not_enabled", "destination_not_approved", "destination_not_set"]), property: z.enum(["azureEndpoint", "awsRegion", "llmBaseUrl"]).optional(), configuration: z.literal("organization").optional() });
 
 export type LLMNotConfiguredResponse = __TypedOpenapi.Schemas.LLMNotConfiguredResponse;
 export const LLMNotConfiguredResponse = z.strictObject({ error: z.string().min(1), notConfigured: AINotConfigured });
@@ -227,7 +227,7 @@ export type LLMTestRequest = __TypedOpenapi.Schemas.LLMTestRequest;
 export const LLMTestRequest = z.strictObject({ llmProvider: z.enum(["", "organization", "unsupported", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]), llmModel: z.string(), llmApiKey: z.string() }).partial();
 
 export type LLMTestResult = __TypedOpenapi.Schemas.LLMTestResult;
-export const LLMTestResult = z.strictObject({ ok: z.boolean(), response: z.string(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]) });
+export const LLMTestResult = z.strictObject({ ok: z.boolean(), response: z.string(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]), configuration: z.enum(["own", "organization"]) });
 
 export type LunchBreakSchedule = __TypedOpenapi.Schemas.LunchBreakSchedule;
 export const LunchBreakSchedule = z.record(z.string(), DaySchedule);
@@ -306,6 +306,39 @@ export const Org = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.st
 
 export type OrgMember = __TypedOpenapi.Schemas.OrgMember;
 export const OrgMember = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.string(), org: Org.optional(), createdAt: z.iso.datetime() });
+
+export type OrganizationAIConfiguration = __TypedOpenapi.Schemas.OrganizationAIConfiguration;
+export const OrganizationAIConfiguration = z.strictObject({ configured: z.boolean(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), model: z.string().optional(), baseUrl: z.string().optional(), azureEndpoint: z.string().optional(), azureDeployment: z.string().optional(), azureApiVersion: z.string().optional(), awsRegion: z.string().optional(), keySet: z.boolean(), personalKeysAllowed: z.boolean(), configurationVersion: z.number().int().min(0), updatedAt: z.iso.datetime().optional(), changeableBy: z.literal("organization_admin") });
+
+export type OrganizationAIConfigurationUpdate = __TypedOpenapi.Schemas.OrganizationAIConfigurationUpdate;
+export const OrganizationAIConfigurationUpdate = z.strictObject({ configurationVersion: z.number().int().min(0), provider: z.enum(["", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), model: z.string().optional(), apiKey: z.string().optional(), baseUrl: z.string().optional(), azureEndpoint: z.string().optional(), azureDeployment: z.string().optional(), azureApiVersion: z.string().optional(), awsRegion: z.string().optional(), personalKeysAllowed: z.boolean().optional() }).refine((obj) => Object.keys(obj).length >= 2, { message: "minProperties" });
+
+export type OrganizationAIConsentConflict = __TypedOpenapi.Schemas.OrganizationAIConsentConflict;
+export const OrganizationAIConsentConflict = z.strictObject({ error: z.string().min(1), reason: z.enum(["organization_not_configured", "configuration_changed"]), organization: OrganizationAIConfiguration });
+
+export type OrganizationAIConsentRequest = __TypedOpenapi.Schemas.OrganizationAIConsentRequest;
+export const OrganizationAIConsentRequest = z.strictObject({ configurationVersion: z.number().int().min(1) });
+
+export type SsoWriteMembershipRequired = __TypedOpenapi.Schemas.SsoWriteMembershipRequired;
+export const SsoWriteMembershipRequired = z.strictObject({ error: z.enum(["org membership required", "org not found"]) });
+
+export type SsoStepupUrl = __TypedOpenapi.Schemas.SsoStepupUrl;
+export const SsoStepupUrl = z.literal("/api/admin/sso/stepup");
+
+export type SsoStepupScopes = __TypedOpenapi.Schemas.SsoStepupScopes;
+export const SsoStepupScopes = z.strictObject({ google: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), microsoft: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }) }).partial();
+
+export type SsoWithoutStepup = __TypedOpenapi.Schemas.SsoWithoutStepup;
+export const SsoWithoutStepup = z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" });
+
+export type OrganizationAIWriteStepupRequired = __TypedOpenapi.Schemas.OrganizationAIWriteStepupRequired;
+export const OrganizationAIWriteStepupRequired = z.strictObject({ error: z.literal("organization_ai_write_requires_admin_stepup"), stepup_url: SsoStepupUrl, stepup_purpose: z.literal("llm_org_key_write"), stepup_scopes: SsoStepupScopes, without_stepup: SsoWithoutStepup });
+
+export type OrganizationAIWriteFreshLoginRequired = __TypedOpenapi.Schemas.OrganizationAIWriteFreshLoginRequired;
+export const OrganizationAIWriteFreshLoginRequired = z.strictObject({ error: z.literal("organization_ai_write_requires_fresh_login") });
+
+export type OrganizationAIWriteForbiddenResponse = __TypedOpenapi.Schemas.OrganizationAIWriteForbiddenResponse;
+export const OrganizationAIWriteForbiddenResponse = z.union([SsoWriteMembershipRequired, OrganizationAIWriteStepupRequired, OrganizationAIWriteFreshLoginRequired]).refine((data) => [SsoWriteMembershipRequired.safeParse(data).success, OrganizationAIWriteStepupRequired.safeParse(data).success, OrganizationAIWriteFreshLoginRequired.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
 
 export type PatchManagerMemberRequest = __TypedOpenapi.Schemas.PatchManagerMemberRequest;
 export const PatchManagerMemberRequest = z.object({ display_name: z.string().nullable(), cadence: Cadence, cadence_custom_days: z.number().int().min(1).max(365).nullable() }).partial().catchall(z.unknown());
@@ -430,26 +463,17 @@ export const SsoProviderList = z.strictObject({ providers: z.array(SsoProvider) 
 export type SsoProviderStateRequest = __TypedOpenapi.Schemas.SsoProviderStateRequest;
 export const SsoProviderStateRequest = z.strictObject({ state: SsoProviderState });
 
-export type SsoStepupUrl = __TypedOpenapi.Schemas.SsoStepupUrl;
-export const SsoStepupUrl = z.literal("/api/admin/sso/stepup");
-
-export type SsoStepupScopes = __TypedOpenapi.Schemas.SsoStepupScopes;
-export const SsoStepupScopes = z.strictObject({ google: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }), microsoft: z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" }) }).partial();
-
-export type SsoWithoutStepup = __TypedOpenapi.Schemas.SsoWithoutStepup;
-export const SsoWithoutStepup = z.array(z.string().min(1)).min(1).refine((arr) => new Set(arr).size === arr.length, { message: "uniqueItems" });
-
 export type SsoStepupOptions = __TypedOpenapi.Schemas.SsoStepupOptions;
 export const SsoStepupOptions = z.strictObject({ stepup_url: SsoStepupUrl, stepup_scopes: SsoStepupScopes, without_stepup: SsoWithoutStepup });
 
 export type SsoStepupProvider = __TypedOpenapi.Schemas.SsoStepupProvider;
 export const SsoStepupProvider = z.enum(["google", "microsoft"]);
 
+export type SsoStepupPurpose = __TypedOpenapi.Schemas.SsoStepupPurpose;
+export const SsoStepupPurpose = z.enum(["sso_write", "llm_org_key_write"]);
+
 export type SsoWriteDomainMismatch = __TypedOpenapi.Schemas.SsoWriteDomainMismatch;
 export const SsoWriteDomainMismatch = z.strictObject({ error: z.literal("provider_domain_mismatch") });
-
-export type SsoWriteMembershipRequired = __TypedOpenapi.Schemas.SsoWriteMembershipRequired;
-export const SsoWriteMembershipRequired = z.strictObject({ error: z.enum(["org membership required", "org not found"]) });
 
 export type SsoWriteStepupRequired = __TypedOpenapi.Schemas.SsoWriteStepupRequired;
 export const SsoWriteStepupRequired = z.strictObject({ error: z.literal("sso_write_requires_admin_stepup"), stepup_scopes: SsoStepupScopes, without_stepup: SsoWithoutStepup, stepup_url: SsoStepupUrl });

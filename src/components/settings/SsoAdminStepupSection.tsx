@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 import { fetchSsoStepupOptions, ssoStepupStartUrl, type SsoStepupOffer } from "@/api/client";
+import { isSsoStepupLanding } from "@/lib/orgAI";
 import type { SsoStepupProvider } from "@/api/generated/schemas";
 
 // PAC-50 AC-25 (owner, 2026-10-27; spec §9 D-11, D-13): the optional SSO
@@ -37,6 +38,7 @@ const DENIAL_TEXT: Record<string, string> = {
 
 function StepupOutcome() {
   const [params] = useSearchParams();
+  if (!isSsoStepupLanding(params)) return null;
   const stepup = params.get("stepup");
   if (stepup === "granted") {
     return (
@@ -141,9 +143,9 @@ function StepupEntry({ offer }: { offer: SsoStepupOffer }) {
  * user with no organisation gets 403 and is offered nothing).
  */
 export function SsoAdminStepupSection() {
-  const options = useQuery({ queryKey: ["sso-stepup-options"], queryFn: fetchSsoStepupOptions, retry: false });
+  const options = useQuery({ queryKey: ["sso-stepup-options"], queryFn: () => fetchSsoStepupOptions(), retry: false });
   const [params] = useSearchParams();
-  const hasOutcome = params.get("stepup") === "granted" || params.get("stepup") === "denied";
+  const hasOutcome = isSsoStepupLanding(params);
   if (!options.data && !hasOutcome) return null;
 
   return (
