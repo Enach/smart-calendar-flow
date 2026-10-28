@@ -51,21 +51,33 @@ export interface ProviderOption {
 /**
  * The provider select's options: off and the five providers; "use my
  * organisation's AI" only for a member of an organisation (spec AC-21). A
- * stored value that cannot be chosen (unsupported, or organization for a user
- * with none) is shown, disabled, so the select can display it.
+ * stored value that cannot be chosen is shown, disabled, so the select can
+ * display it: unsupported as a former provider, and organization for a user
+ * with no organisation (the default of every new account on a generic domain)
+ * under a neutral label, so that user sees no organisation option (AC-21).
  */
 export function providerOptions(current: LLMProvider | string, inOrganization: boolean): ProviderOption[] {
   const opts: ProviderOption[] = [{ value: "", label: "Off (AI features off)" }];
   if (inOrganization) {
     opts.push({ value: "organization", label: "Use my organisation's AI" });
   } else if (current === "organization") {
-    opts.push({ value: "organization", label: "Not set up yet", disabled: true });
+    opts.push({ value: "organization", label: "No provider chosen", disabled: true });
   }
   for (const p of KEY_PROVIDERS) opts.push({ value: p, label: PROVIDER_LABELS[p] });
   if (current === "unsupported") {
     opts.push({ value: "unsupported", label: "Previous provider (no longer supported)", disabled: true });
   }
   return opts;
+}
+
+/**
+ * The line under the select for a member following an organisation that has
+ * not set up AI. Null for anyone else: a user with no organisation is never
+ * told about one (AC-21).
+ */
+export function organisationNote(current: LLMProvider | string, inOrganization: boolean): string | null {
+  if (!inOrganization || current !== "organization") return null;
+  return "Your organisation has not set up AI yet, so AI features stay off. You can choose a provider and use your own API key instead.";
 }
 
 /** Who can turn AI on, from the server's enablers. */

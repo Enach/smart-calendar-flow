@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
-import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions } from "@/lib/aiProviders";
+import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, organisationNote, providerOptions } from "@/lib/aiProviders";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import {
   SCHEDULING_TEMPLATES,
@@ -736,9 +736,9 @@ export default function SettingsPage() {
               </Field>
             )}
 
-            {draft.llm_provider === "organization" && (
+            {organisationNote(draft.llm_provider, !!draft.ai_status?.inOrganization) && (
               <p className="text-xs text-muted-foreground sm:col-span-2">
-                Your organisation has not set up AI yet, so AI features stay off. You can choose a provider and use your own API key instead.
+                {organisationNote(draft.llm_provider, !!draft.ai_status?.inOrganization)}
               </p>
             )}
           </div>
