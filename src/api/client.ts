@@ -3,7 +3,11 @@ import {
   CalendarDisconnectUnsupported,
   ProviderDisconnectResult as ProviderDisconnectResultSchema,
   SettingsUpdate,
+  SsoStepupOptions as SsoStepupOptionsSchema,
+  SsoWriteStepupRequired,
 } from "./generated/schemas";
+import type { SsoStepupProvider, SsoStepupScopes } from "./generated/schemas";
+import { apiUrl } from "@/lib/api";
 
 import type {
   AuditEntry,
@@ -385,9 +389,77 @@ if (typeof window !== "undefined") {
   });
 }
 
+// ---------- PAC-50: the optional SSO administrator step-up ----------
+
+/**
+ * What a refused SSO configuration write (403 SsoWriteStepupRequired) or the
+ * Settings entry point (getSsoStepupOptions) says about the optional
+ * administrator step-up (PAC-50 AC-22, AC-25). The client never navigates on
+ * its own: a screen explains `stepupScopes` and `withoutStepup`, lets the user
+ * decline, and only on "go ahead", with a provider chosen, navigates to
+ * `ssoStepupStartUrl(...)`.
+ */
+export interface SsoStepupOffer {
+  /** `stepup_url` resolved against the API base's origin, never the page's (spec §9 D-6). */
+  stepupUrl: string;
+  /** As received: a key only for each provider configured on the deployment. */
+  stepupScopes: SsoStepupScopes;
+  /** As received, unknown codes included (an open list, contract revision 6). */
+  withoutStepup: string[];
+  /** The keys of `stepupScopes`, in a fixed order; empty means no step-up can be started. */
+  providers: SsoStepupProvider[];
+}
+
+/** The step-up-required outcome of a refused SSO configuration write (AC-22). */
+export interface SsoStepupRequired extends SsoStepupOffer {
+  kind: "sso_stepup_required";
+}
+
+const STEPUP_PROVIDERS: SsoStepupProvider[] = ["google", "microsoft"];
+
+function toOffer(raw: { stepup_url: string; stepup_scopes: SsoStepupScopes; without_stepup: string[] }): SsoStepupOffer {
+  return {
+    stepupUrl: apiUrl(raw.stepup_url),
+    stepupScopes: raw.stepup_scopes,
+    withoutStepup: raw.without_stepup,
+    providers: STEPUP_PROVIDERS.filter((p) => raw.stepup_scopes[p] !== undefined),
+  };
+}
+
+/**
+ * The step-up-required outcome carried by an API failure, or null. Only a 403
+ * whose body is SsoWriteStepupRequired (it carries `stepup_url`) qualifies; any
+ * other 403 is rendered as before by apiErrorMessage (AC-22).
+ */
+export function ssoStepupRequired(e: unknown): SsoStepupRequired | null {
+  if (!isApiHttpError(e) || e.status !== 403) return null;
+  const parsed = SsoWriteStepupRequired.safeParse(e.data);
+  if (!parsed.success) return null;
+  return { kind: "sso_stepup_required", ...toOffer(parsed.data) };
+}
+
+/** Where the browser goes once the user has chosen to go ahead with `provider`. */
+export function ssoStepupStartUrl(offer: SsoStepupOffer, provider: SsoStepupProvider): string {
+  return `${offer.stepupUrl}?provider=${encodeURIComponent(provider)}`;
+}
+
+/**
+ * GET /api/admin/sso/stepup/options (getSsoStepupOptions, PAC-50 contract
+ * revision 8): the step-up offer without making an SSO write. Read-only on
+ * the server. A 403 (no organisation) is an ApiHttpError: the caller offers no
+ * entry point. There is no preview fallback: in preview the entry point is not
+ * offered.
+ */
+export async function fetchSsoStepupOptions(): Promise<SsoStepupOffer> {
+  return toOffer(SsoStepupOptionsSchema.parse(await requestApi<unknown>("GET", "/admin/sso/stepup/options")));
+}
+
 /** Human-readable message for an API failure, usable directly in the UI. */
 export function apiErrorMessage(e: unknown): string {
   if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
+  if (ssoStepupRequired(e)) {
+    return "This change needs a confirmation from an administrator account of your organisation (Google Workspace or Microsoft 365).";
+  }
   if (isApiHttpError(e)) {
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
