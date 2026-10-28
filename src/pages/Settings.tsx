@@ -23,6 +23,9 @@ import {
 import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
 import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
+import { OrgAIConsentDialog } from "@/components/OrgAIConsentDialog";
+import { OrganizationAISection } from "@/components/settings/OrganizationAISection";
+import { useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
 import { SsoAdminStepupSection } from "@/components/settings/SsoAdminStepupSection";
 import {
@@ -118,9 +121,20 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function SettingsPage() {
-  const { data, isLoading } = useSettings();
+  const { data, isLoading, refetch } = useSettings();
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<Settings | null>(null);
+  // PAC-73 Part 2: members are offered their organisation's AI; choosing it
+  // shows the one-time notice and confirms the version displayed (P2-AC-38).
+  const inOrganization = !!data?.ai_status?.inOrganization;
+  const orgAI = useOrganizationAI(inOrganization);
+  const personalKeysForbidden = inOrganization && orgAI.data?.personalKeysAllowed === false;
+  const [choosingOrgAI, setChoosingOrgAI] = useState(false);
+  /** After a confirmation, the saved choice and AI status replace the draft's. */
+  const refreshAIChoice = async () => {
+    const fresh = (await refetch()).data;
+    if (fresh) setDraft((d) => (d ? { ...d, llm_provider: fresh.llm_provider, ai_status: fresh.ai_status } : d));
+  };
 
   useEffect(() => {
     if (data && !draft) {
@@ -597,17 +611,29 @@ export default function SettingsPage() {
         >
           {draft.ai_status && !draft.ai_status.configured && draft.ai_status.notConfigured && (
             <div className="mb-4">
-              <AINotConfiguredNotice notConfigured={draft.ai_status.notConfigured} showLink={false} />
+              <AINotConfiguredNotice notConfigured={draft.ai_status.notConfigured} showLink={false} onResolved={refreshAIChoice} />
             </div>
+          )}
+          {personalKeysForbidden && isKeyProvider(draft.llm_provider) && (
+            <p className="mb-4 text-sm text-muted-foreground" data-testid="ai-personal-keys-forbidden">
+              Your organisation does not allow personal API keys. Your own choice ({PROVIDER_LABELS[draft.llm_provider]}) and any key
+              you saved for it are kept but not used.
+            </p>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="AI provider">
               <select
                 value={draft.llm_provider}
-                onChange={(e) => patchDraft(providerSwitch(e.target.value, data))}
+                onChange={(e) => {
+                  if (e.target.value === "organization" && inOrganization && data?.llm_provider !== "organization") {
+                    setChoosingOrgAI(true);
+                    return;
+                  }
+                  patchDraft(providerSwitch(e.target.value, data));
+                }}
                 className={inputCls}
               >
-                {providerOptions(draft.llm_provider).map((p) => (
+                {providerOptions(draft.llm_provider, { inOrganization, personalKeysForbidden }).map((p) => (
                   <option key={p.value || "off"} value={p.value} disabled={p.disabled}>
                     {p.label}
                   </option>
@@ -761,8 +787,18 @@ export default function SettingsPage() {
           </div>
         </Section>
 
+        <OrganizationAISection inOrganization={inOrganization} />
+
         <SsoAdminStepupSection />
       </main>
+      {choosingOrgAI && (
+        <OrgAIConsentDialog
+          open
+          onOpenChange={(open) => !open && setChoosingOrgAI(false)}
+          choose
+          onConfirmed={refreshAIChoice}
+        />
+      )}
     </div>
   );
 }

@@ -375,7 +375,16 @@ describe("AI settings", () => {
     expect(settingsPatchBody(stale, read)).toEqual({});
   });
 
-  it("probes an unsupported saved choice with the value the read returned", () => {
-    expect(llmTestBody(read)).toEqual({ llmProvider: "unsupported", llmModel: "" });
+  // PAC-73 Part 2: a choice that is not one of the five providers is probed
+  // alone; the server refuses a model or key with the organisation's
+  // configuration (testLLMConnection 400), and sends neither anywhere for off
+  // or a removed provider.
+  it("probes an unsupported saved choice with the value the read returned, alone", () => {
+    expect(llmTestBody(read)).toEqual({ llmProvider: "unsupported" });
+  });
+
+  it("probes the organisation's AI with the choice alone, never a model or key", () => {
+    expect(llmTestBody({ ...read, llm_provider: "organization", llm_model: "gpt-x", llm_api_key: "sk-typed" })).toEqual({ llmProvider: "organization" });
+    expect(llmTestBody({ ...read, llm_provider: "", llm_model: "gpt-x" })).toEqual({ llmProvider: "" });
   });
 });

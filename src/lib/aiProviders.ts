@@ -48,33 +48,94 @@ export interface ProviderOption {
   disabled?: boolean;
 }
 
+/** PAC-73 Part 2: the choice that follows the organisation's AI, for members. */
+export const ORG_CHOICE_LABEL = "Use my organisation's AI";
+
+/** What the provider select needs to know about the user's organisation. */
+export interface ChoiceContext {
+  /** The user belongs to an organisation (aiStatus.inOrganization). */
+  inOrganization?: boolean;
+  /** The organisation forbids personal keys (OrganizationAIConfiguration.personalKeysAllowed false). */
+  personalKeysForbidden?: boolean;
+}
+
+/** The reason shown on an own-provider option while personal keys are forbidden. */
+export const PERSONAL_KEYS_FORBIDDEN_NOTE = "not allowed by your organisation";
+
 /**
- * The provider select's options: off and the five providers. Part 1 of the
- * spec has no organisation AI (no admin can set one up before Part 2), so
- * "use my organisation's AI" is offered to nobody yet (spec AC-21, revision 2).
- * A stored value that cannot be chosen is shown, disabled, so the select can
- * display it: unsupported as a former provider, and organization (the default
- * of every new account, in an organisation or not) under the neutral label
- * "No provider chosen" (D-21), so no Part 1 user sees an organisation option.
+ * The provider select's options: off, for members "Use my organisation's AI"
+ * (PAC-73 Part 2, P2-AC-31), and the five providers. A user with no
+ * organisation is never offered the organisation's AI: a stored organization
+ * (every new account) is shown to them, disabled, under the neutral label
+ * "No provider chosen" (Part 1, D-21). While the organisation forbids personal
+ * keys, the five providers are shown disabled with the reason; a stored one
+ * stays selected so the user sees it is kept. A stored removed provider is
+ * shown, disabled, so the select can display it.
  */
-export function providerOptions(current: LLMProvider | string): ProviderOption[] {
+export function providerOptions(current: LLMProvider | string, ctx: ChoiceContext = {}): ProviderOption[] {
   const opts: ProviderOption[] = [{ value: "", label: "Off (AI features off)" }];
-  if (current === "organization") {
+  if (ctx.inOrganization) {
+    opts.push({ value: "organization", label: ORG_CHOICE_LABEL });
+  } else if (current === "organization") {
     opts.push({ value: "organization", label: "No provider chosen", disabled: true });
   }
-  for (const p of KEY_PROVIDERS) opts.push({ value: p, label: PROVIDER_LABELS[p] });
+  for (const p of KEY_PROVIDERS) {
+    if (ctx.inOrganization && ctx.personalKeysForbidden) {
+      opts.push({ value: p, label: `${PROVIDER_LABELS[p]} (${PERSONAL_KEYS_FORBIDDEN_NOTE})`, disabled: true });
+    } else {
+      opts.push({ value: p, label: PROVIDER_LABELS[p] });
+    }
+  }
   if (current === "unsupported") {
     opts.push({ value: "unsupported", label: "Previous provider (no longer supported)", disabled: true });
   }
   return opts;
 }
 
-/**
- * Who can turn AI on. Until Part 2 of the spec is deployed only the user can
- * (spec §3, revision 2): no organisation admin has a way to configure AI, so
- * the page never sends the user to one.
- */
+/** Who can turn AI on when only the user can. */
 export const WHO_CAN_ENABLE = "You can turn them on in Settings.";
+
+/**
+ * Who can turn AI on, from the answer's enablers (PAC-73 Part 2, P2-AC-31):
+ * the organisation's administrator is named exactly when the enablers
+ * include them, and alone when only they can.
+ */
+export function whoCanEnable(nc: Pick<AINotConfigured, "enablers">): string {
+  const admin = nc.enablers.includes("organization_admin");
+  const user = nc.enablers.includes("user");
+  if (admin && !user) return "An administrator of your organisation can turn them on.";
+  if (admin) return "You can turn them on in Settings, or an administrator of your organisation can set up its AI.";
+  return WHO_CAN_ENABLE;
+}
+
+/** The answer is turned on by confirming the organisation's AI (row 5). */
+export function asksConfirmation(nc: Pick<AINotConfigured, "reason">): boolean {
+  return nc.reason === "organization_unconfirmed";
+}
+
+/**
+ * The answer is turned on by choosing "Use my organisation's AI" (row 10, and
+ * row 7 for a removed provider), which shows the notice and confirms.
+ */
+export function offersOrganizationAI(nc: Pick<AINotConfigured, "reason" | "enablers">): boolean {
+  return (
+    nc.reason === "provider_removed_organization_available" ||
+    (nc.reason === "personal_keys_forbidden" && nc.enablers.includes("user"))
+  );
+}
+
+/**
+ * The one-time notice before the organisation's AI is used (owner O-13,
+ * 2026-10-28): the provider account's administrators can ACCESS the data.
+ * It never says "read", "reads" or "see" (P2-AC-26).
+ */
+export function organizationConsentText(provider?: KeyProvider): string {
+  const account = provider ? `your organisation's AI provider account (${PROVIDER_LABELS[provider]})` : "your organisation's AI provider account";
+  return (
+    `Your text and meeting details (event titles, attendee emails, and the Slack and Notion excerpts used for meeting briefs) ` +
+    `are sent to ${account}, which its administrators can access outside Paceday. Nothing is sent until you confirm.`
+  );
+}
 
 const OFF_PREFIX = "AI features are off: ";
 

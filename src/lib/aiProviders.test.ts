@@ -6,12 +6,17 @@ import type { Settings as AppSettings } from "@/api/types";
 import {
   KEY_PROVIDERS,
   LLM_CHOICES,
+  ORG_CHOICE_LABEL,
   PROVIDER_LABELS,
   WHO_CAN_ENABLE,
+  asksConfirmation,
   keyIsSetFor,
   noticeReason,
+  offersOrganizationAI,
+  organizationConsentText,
   providerOptions,
   providerSwitch,
+  whoCanEnable,
 } from "./aiProviders";
 
 // NEW-llm-bring-your-own AC-33: every provider value the web code accepts or
@@ -52,20 +57,43 @@ describe("AI provider values follow the contract", () => {
     expect(providerOptions("unsupported").find((o) => o.value === "unsupported")?.label).toMatch(/no longer supported/i);
   });
 
-  // Spec revision 2 (challenge of revision 1, Blocking 1) and D-21: until
-  // Part 2 no organisation admin can set up AI, so no Part 1 user, in an
-  // organisation or not, is offered an organisation option or organisation
-  // copy. A stored "organization" (every new account) is shown, disabled, as
-  // "No provider chosen".
-  it("no Part 1 user sees organisation wording, whatever is stored", () => {
+  // Part 1, D-21, amended by PAC-73 Part 2 (P2-AC-31; manifest consumer
+  // aiProviders.test.ts:59-66): a user with NO organisation still sees no
+  // organisation option or wording, and a stored "organization" is shown
+  // disabled as "No provider chosen". A MEMBER is offered "Use my
+  // organisation's AI", enabled, and a stored "organization" is that option.
+  it("a user with no organisation sees no organisation wording, whatever is stored", () => {
     for (const current of ["", "organization", "unsupported", "openai"] as const) {
-      for (const label of providerOptions(current).map((o) => o.label)) expect(label).not.toMatch(/organi[sz]ation/i);
+      for (const ctx of [{}, { inOrganization: false }]) {
+        for (const label of providerOptions(current, ctx).map((o) => o.label)) expect(label).not.toMatch(/organi[sz]ation/i);
+      }
     }
     expect(providerOptions("organization").find((o) => o.value === "organization")).toEqual({
       value: "organization",
       label: "No provider chosen",
       disabled: true,
     });
+  });
+
+  it("a member is offered their organisation's AI, enabled, and sees a stored choice of it selected", () => {
+    const opts = providerOptions("organization", { inOrganization: true });
+    expect(opts.find((o) => o.value === "organization")).toEqual({ value: "organization", label: ORG_CHOICE_LABEL });
+    expect(opts.filter((o) => !o.disabled).map((o) => o.value)).toEqual(["", "organization", "openai", "anthropic", "azure_openai", "bedrock", "vertex"]);
+    expect(opts.map((o) => o.label)).not.toContain("No provider chosen");
+    for (const current of ["", "openai", "unsupported"] as const) {
+      expect(providerOptions(current, { inOrganization: true }).find((o) => o.value === "organization")?.disabled).toBeFalsy();
+    }
+  });
+
+  it("while personal keys are forbidden the own providers are disabled with the reason, and a stored one stays shown", () => {
+    const opts = providerOptions("openai", { inOrganization: true, personalKeysForbidden: true });
+    for (const p of KEY_PROVIDERS) {
+      const o = opts.find((x) => x.value === p);
+      expect(o?.disabled).toBe(true);
+      expect(o?.label).toMatch(/not allowed by your organisation/);
+    }
+    expect(opts.filter((o) => !o.disabled).map((o) => o.value)).toEqual(["", "organization"]);
+    expect(opts.map((o) => o.value)).toContain("openai");
   });
 
   // Contract challenge rev. 2, non-blocking 6: an unsaved provider switch must
@@ -114,9 +142,39 @@ describe("AI provider values follow the contract", () => {
 });
 
 describe("who can turn AI on", () => {
-  it("names only the user in Part 1, never an organisation admin", () => {
+  it("names only the user when only the user can", () => {
     expect(WHO_CAN_ENABLE).toBe("You can turn them on in Settings.");
     expect(WHO_CAN_ENABLE).not.toMatch(/admin|organi[sz]ation/i);
+    expect(whoCanEnable({ enablers: ["user"] })).toBe(WHO_CAN_ENABLE);
+  });
+
+  // PAC-73 Part 2, P2-AC-31: the organisation's administrator is named exactly
+  // when the enablers include them, and alone when only they can.
+  it("names the organisation's administrator exactly when the enablers include them", () => {
+    expect(whoCanEnable({ enablers: ["user", "organization_admin"] })).toMatch(/you can turn them on in settings, or an administrator of your organisation/i);
+    expect(whoCanEnable({ enablers: ["organization_admin"] })).toBe("An administrator of your organisation can turn them on.");
+  });
+
+  it("offers to confirm in row 5, and the organisation's AI in rows 7 and 10 only", () => {
+    expect(asksConfirmation({ reason: "organization_unconfirmed" })).toBe(true);
+    expect(asksConfirmation({ reason: "nothing_configured" })).toBe(false);
+    expect(offersOrganizationAI({ reason: "personal_keys_forbidden", enablers: ["user"] })).toBe(true);
+    expect(offersOrganizationAI({ reason: "personal_keys_forbidden", enablers: ["organization_admin"] })).toBe(false);
+    expect(offersOrganizationAI({ reason: "provider_removed_organization_available", enablers: ["user"] })).toBe(true);
+    expect(offersOrganizationAI({ reason: "organization_unconfirmed", enablers: ["user"] })).toBe(false);
+  });
+
+  // Owner O-13 / P2-AC-26: the notice says the administrators can ACCESS the
+  // data, names the provider, and never says read, reads or see.
+  it("the one-time notice says access, names the provider, and never read/reads/see", () => {
+    for (const p of [...KEY_PROVIDERS, undefined]) {
+      const text = organizationConsentText(p);
+      expect(text).toMatch(/\baccess\b/);
+      expect(text).not.toMatch(/\b(read|reads|see)\b/i);
+      expect(text).toMatch(/event titles, attendee emails/);
+      expect(text).toMatch(/Nothing is sent until you confirm/);
+      if (p) expect(text).toContain(PROVIDER_LABELS[p]);
+    }
   });
 
   // Contract challenge rev. 2, non-blocking 6: the notice's heading already

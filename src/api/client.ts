@@ -1,12 +1,18 @@
 import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
 import {
+  AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
+  OrganizationAIConsentConflict as OrganizationAIConsentConflictSchema,
+  OrganizationAIWriteFreshLoginRequired,
+  OrganizationAIWriteStepupRequired,
   ProviderDisconnectResult as ProviderDisconnectResultSchema,
   SettingsUpdate,
   SsoStepupOptions as SsoStepupOptionsSchema,
+  SsoWriteMembershipRequired,
   SsoWriteStepupRequired,
 } from "./generated/schemas";
-import type { SsoStepupProvider, SsoStepupScopes } from "./generated/schemas";
+import type { SsoStepupProvider, SsoStepupPurpose, SsoStepupScopes } from "./generated/schemas";
 import { apiUrl } from "@/lib/api";
 
 import type {
@@ -41,6 +47,9 @@ import type {
   PersonalCalendarType,
   ProviderDisconnectResult,
   Room,
+  OrganizationAIConfiguration,
+  OrganizationAIConfigurationUpdate,
+  AIStatus,
   Settings,
   SuggestedSlot,
 } from "./types";
@@ -438,9 +447,14 @@ export function ssoStepupRequired(e: unknown): SsoStepupRequired | null {
   return { kind: "sso_stepup_required", ...toOffer(parsed.data) };
 }
 
-/** Where the browser goes once the user has chosen to go ahead with `provider`. */
-export function ssoStepupStartUrl(offer: SsoStepupOffer, provider: SsoStepupProvider): string {
-  return `${offer.stepupUrl}?provider=${encodeURIComponent(provider)}`;
+/**
+ * Where the browser goes once the user has chosen to go ahead with `provider`.
+ * PAC-73 Part 2: a step-up for another write than SSO names its purpose; an
+ * SSO step-up sends none, exactly as under PAC-50.
+ */
+export function ssoStepupStartUrl(offer: SsoStepupOffer, provider: SsoStepupProvider, purpose?: SsoStepupPurpose): string {
+  const base = `${offer.stepupUrl}?provider=${encodeURIComponent(provider)}`;
+  return purpose && purpose !== "sso_write" ? `${base}&purpose=${encodeURIComponent(purpose)}` : base;
 }
 
 /**
@@ -450,8 +464,92 @@ export function ssoStepupStartUrl(offer: SsoStepupOffer, provider: SsoStepupProv
  * entry point. There is no preview fallback: in preview the entry point is not
  * offered.
  */
-export async function fetchSsoStepupOptions(): Promise<SsoStepupOffer> {
-  return toOffer(SsoStepupOptionsSchema.parse(await requestApi<unknown>("GET", "/admin/sso/stepup/options")));
+export async function fetchSsoStepupOptions(purpose?: SsoStepupPurpose): Promise<SsoStepupOffer> {
+  const query = purpose && purpose !== "sso_write" ? { purpose } : undefined;
+  return toOffer(SsoStepupOptionsSchema.parse(await requestApi<unknown>("GET", "/admin/sso/stepup/options", undefined, query)));
+}
+
+// ---------- PAC-73 Part 2: the organisation's AI configuration ----------
+
+/** The step-up purpose of an organisation-AI change (contract SsoStepupPurpose). */
+export const ORG_AI_STEPUP_PURPOSE: SsoStepupPurpose = "llm_org_key_write";
+
+/**
+ * GET /api/organization/ai (getOrganizationAI): every member reads the same
+ * configuration, never the key. A 403 (no organisation) is an ApiHttpError.
+ * No preview fallback: in preview the section is not shown.
+ */
+export async function fetchOrganizationAI(): Promise<OrganizationAIConfiguration> {
+  return OrganizationAIConfigurationSchema.parse(await requestApi<unknown>("GET", "/organization/ai"));
+}
+
+/** What a patchOrganizationAI answered, other than a body error (an ApiHttpError). */
+export type OrganizationAIChangeResult =
+  | { kind: "saved"; configuration: OrganizationAIConfiguration }
+  /** Another administrator changed it first: nothing stored, the proof is kept. */
+  | { kind: "conflict"; configuration: OrganizationAIConfiguration }
+  /** No live proof for this purpose: the step-up for it, as offered. */
+  | { kind: "stepup_required"; offer: SsoStepupOffer }
+  /** A break-glass address whose session is stale or already made a change. */
+  | { kind: "fresh_login_required" }
+  /** No organisation. */
+  | { kind: "no_organization" };
+
+/**
+ * PATCH /api/organization/ai (patchOrganizationAI). The body names the
+ * version the administrator was shown. 200, 403 and 409 are outcomes; a 400
+ * (the change itself is refused) or a 5xx is thrown as an ApiHttpError.
+ */
+export async function patchOrganizationAI(body: OrganizationAIConfigurationUpdate): Promise<OrganizationAIChangeResult> {
+  try {
+    const raw = await requestApi<unknown>("PATCH", "/organization/ai", body);
+    return { kind: "saved", configuration: OrganizationAIConfigurationSchema.parse(raw) };
+  } catch (e) {
+    if (isApiHttpError(e) && e.status === 409) {
+      const c = OrganizationAIConsentConflictSchema.safeParse(e.data);
+      if (c.success) return { kind: "conflict", configuration: c.data.organization };
+    }
+    if (isApiHttpError(e) && e.status === 403) {
+      const stepup = OrganizationAIWriteStepupRequired.safeParse(e.data);
+      if (stepup.success) return { kind: "stepup_required", offer: toOffer(stepup.data) };
+      if (OrganizationAIWriteFreshLoginRequired.safeParse(e.data).success) return { kind: "fresh_login_required" };
+      if (SsoWriteMembershipRequired.safeParse(e.data).success) return { kind: "no_organization" };
+    }
+    throw e;
+  }
+}
+
+/**
+ * The settings write that chooses "Use my organisation's AI" (patchSettings
+ * `llmProvider: organization`). It records no confirmation (P2-AC-38): it is
+ * sent only after confirmOrganizationAI has recorded the user's confirmation.
+ */
+export async function chooseOrganizationAIChoice(): Promise<Settings> {
+  return normalizeSettings(await requestApi<unknown>("PATCH", "/settings", { llmProvider: "organization" }));
+}
+
+/** What confirmOrganizationAI answered. */
+export type OrganizationAIConsentResult =
+  | { kind: "confirmed"; status: AIStatus }
+  /** Nothing recorded: the configuration changed since it was shown, or is not complete. */
+  | { kind: "conflict"; reason: "configuration_changed" | "organization_not_configured"; configuration: OrganizationAIConfiguration };
+
+/**
+ * POST /api/organization/ai/consent (confirmOrganizationAI): the user confirms
+ * the version they were shown (owner O-13). Called only on the user's
+ * explicit confirmation; the only way a confirmation is recorded.
+ */
+export async function confirmOrganizationAI(configurationVersion: number): Promise<OrganizationAIConsentResult> {
+  try {
+    const raw = await requestApi<unknown>("POST", "/organization/ai/consent", { configurationVersion });
+    return { kind: "confirmed", status: AIStatusSchema.parse(raw) };
+  } catch (e) {
+    if (isApiHttpError(e) && e.status === 409) {
+      const c = OrganizationAIConsentConflictSchema.safeParse(e.data);
+      if (c.success) return { kind: "conflict", reason: c.data.reason, configuration: c.data.organization };
+    }
+    throw e;
+  }
 }
 
 /** Human-readable message for an API failure, usable directly in the UI. */
@@ -943,6 +1041,10 @@ export function mockLlmTest(s: Settings): LLMTestResult {
  */
 export function llmTestBody(s: Settings): Record<string, string> {
   const provider = String(s.llm_provider ?? "");
+  // PAC-73 Part 2: a model or key is never combined with the organisation's
+  // configuration (the server refuses it), so "organization", off and a
+  // removed provider send the choice alone.
+  if (!isKeyProvider(provider)) return { llmProvider: provider };
   const body: Record<string, string> = { llmProvider: provider, llmModel: s.llm_model ?? "" };
   if (s.llm_api_key) body.llmApiKey = s.llm_api_key;
   else if (s.llm_api_key === "" && isKeyProvider(provider)) body.llmApiKey = "";
@@ -1531,12 +1633,13 @@ export const api = {
   llmTest: (s: Settings) =>
     withFallback(
       async () => {
-        const res = await requestApi<{ ok: boolean; response: string; provider: string }>(
+        const res = await requestApi<{ ok: boolean; response: string; provider: string; configuration?: "own" | "organization" }>(
           "POST",
           "/llm/test",
           llmTestBody(s),
         );
-        return { ok: res.ok, message: `Reached ${res.provider || "the provider"}: ${res.response}` };
+        const whose = res.configuration === "organization" ? "your organisation's " : "";
+        return { ok: res.ok, message: `Reached ${whose}${res.provider || "the provider"}: ${res.response}` };
       },
       () => mockLlmTest(s),
     ),
