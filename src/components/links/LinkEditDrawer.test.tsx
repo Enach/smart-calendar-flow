@@ -80,3 +80,12 @@ describe("LinkEditDrawer booking horizon and refusal message (PAC-72)", () => {
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe("LinkEditDrawer refusal copy (PAC-72)", () => {
+  it("quotes the server's generic refusal text exactly", () => {
+    renderDrawer();
+    expect(screen.getByRole("radio", { name: /same message every time/i })).toHaveTextContent(
+      "“slot is no longer available”",
+    );
+  });
+});

@@ -93,7 +93,7 @@ const REFUSAL_OPTIONS: Array<{
   {
     value: "generic",
     label: "Same message every time",
-    description: "“This slot is no longer available.” Says nothing about your calendar.",
+    description: "Visitors read “slot is no longer available”. It says nothing about your calendar.",
   },
   {
     value: "specific",
