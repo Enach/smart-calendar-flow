@@ -333,6 +333,18 @@ export type BookingError = {
  */
 export type BookingRateLimitError = { error: "rate limit exceeded" }
 /**
+ * The link owner's choice of 409 body for refused public bookings (PAC-72 revision 2, owner decisions D-2/D-5). `generic`: one message, "slot is no longer available", for every refusal, revealing nothing about the hosts' calendars. `specific`: the reason (see `BookingRefusalReason`), which tells a visitor, for example, that a host is busy at that time.
+ */
+export type BookingRefusalMessage = ("generic" | "specific")
+/**
+ * Why `createPublicBooking` refused a start (PAC-72 revision 2). Sent only when the link's `refusal_message` is `specific`. Precedence when several hold: `beyond_horizon`, `outside_link_hours`, `too_soon`, `taken`, `host_busy`. `outside_link_hours` covers a day not among the link's days, a start or end outside its daily window and a start off the 15-minute grid. `taken` is a non-cancelled booking on this same link; `host_busy` is any other busy time of an accepted host (calendar event widened by buffers, focus block, booking on another link, unreadable calendar per D-6) or a link with no accepted host.
+ */
+export type BookingRefusalReason = ("too_soon" | "outside_link_hours" | "beyond_horizon" | "host_busy" | "taken")
+/**
+ * The 409 body of `createPublicBooking` (PAC-72). Its shape depends on the link's `refusal_message` (PAC-72 revision 2, owner decisions D-2/D-5). `generic` (the default): exactly `{"error":"slot is no longer available"}`, no `reason` key, whatever rule failed. `specific`: both keys, `reason` naming the first failed rule and `error` the one text paired with it: `too_soon` - "slot is too soon"; `outside_link_hours` - "slot is outside the link's days or hours"; `beyond_horizon` - "slot is beyond the link's booking horizon"; `host_busy` - "a host is busy at that time"; `taken` - "slot is already booked". "slot is no longer available" never carries a `reason`, and a specific text never appears without its `reason`. The pairing is not expressible in this schema (no `oneOf`, see contracts/features/PAC-72.md); it is asserted by the implementation's tests, which compare the exact (error, reason) pair for every cause. Written by api.writeError (generic) or the same envelope plus `reason` (specific).
+ */
+export type BookingSlotUnavailableError = { error: ("slot is no longer available" | "slot is too soon" | "slot is outside the link's days or hours" | "slot is beyond the link's booking horizon" | "a host is busy at that time" | "slot is already booked"), reason?: BookingRefusalReason }
+/**
  * engine.CadenceGap.
  */
 export type CadenceGap = {
@@ -585,11 +597,11 @@ export type CreatePublicBookingRequest = {
    */
   email: string;
   /**
-   * RFC3339. Must be at least `min_notice_minutes` in the future, else 422.
+   * RFC3339, any UTC offset; compared as an instant. Must be the start of a slot `getPublicBookingSlots` would offer now for this link and the resolved duration (on the 15-minute grid, zero seconds, within the link's days, window and booking horizon in the link's zone, at least `min_notice_minutes` ahead, every accepted host free), else 409.
    */
   start: string;
   /**
-   * RFC3339, optional. When present it wins: the resulting length must equal `duration`/`duration_minutes` if either was also sent, else 400. When absent, end = start + resolved duration.
+   * RFC3339, optional. When present it wins: end - start must be exactly the requested length in minutes if one was sent (else 400 "duration does not match end time"); the requested length is `duration` when it is present and not null, else `duration_minutes`, and a requested length of 0 or null counts as not sent (no comparison is made). The length must be exactly a whole number of minutes that is one of the link's durations (else 400 "invalid duration"); a length with seconds or a fraction is never rounded. When absent, end = start + resolved duration.
    */
   end?: string;
   /**
@@ -597,11 +609,11 @@ export type CreatePublicBookingRequest = {
    */
   notes?: string;
   /**
-   * Minutes. Takes precedence over `duration_minutes` when both are sent. This is the field the frontend actually populates.
+   * Minutes. Takes precedence over `duration_minutes` whenever it is present and not null, even when it is 0. A requested length of 0 or null counts as not sent: with `end` no length comparison is made, without `end` the fallback below applies (so `"duration":0` with `"duration_minutes":60` books the fallback length, not 60). This is the field the frontend actually populates.
    */
   duration?: (number | null);
   /**
-   * Minutes. Overridden by `duration` when both are present. When neither is sent and `end` is absent, the length falls back to durations[0] (else 30). The resolved value must be in the link's duration set, else 400.
+   * Minutes. Overridden by `duration` when that is present and not null. When no length is sent (both absent or null, or the one that applies is 0) and `end` is absent, the length falls back to durations[0] (else 30). The resolved value must be in the link's duration set, else 400.
    */
   duration_minutes?: (number | null);
 }
@@ -652,6 +664,14 @@ export type CreateSchedulingLinkRequest = Partial<{
   buffer_before: number;
   buffer_after: number;
   min_notice_minutes: number;
+  /**
+   * PAC-72 revision 2 (owner decision D-1). Absent or null means 60. Outside 1..365 is a 422 "booking_horizon_days must be between 1 and 365".
+   */
+  booking_horizon_days: (number | null);
+  /**
+   * PAC-72 revision 2 (owner decisions D-2/D-5), see `BookingRefusalMessage`. Absent or null means `generic`. Any other value is a 422 "refusal_message must be generic or specific".
+   */
+  refusal_message: (("generic" | "specific") | null);
   /**
    * Lowercased and trimmed before validation; an empty string becomes `reusable`.
    */
@@ -1921,7 +1941,7 @@ export type PublicBookingConfirmation = {
  */
 export type PublicBookingSlot = { start: string, end: string }
 /**
- * How many accepted hosts had a STORED Google calendar token when the page was rendered. `total` counts accepted hosts whose user record resolved; `checked` counts those among them for whom a Google token row loads, whether or not that token still works. Nothing is renewed or tested to compute it. A host whose Google credential is dead, including one whose loss Paceday has recorded (PAC-67), still counts as checked, while the slots are computed without that host's calendar; a host with no Google token row at all (for example one on Outlook) is not counted as checked. This is deliberate: counting only usable tokens would tell every visitor with the link that a host's connection is dead (spec PAC-67 D-14, AC-28). Before PAC-67 this description said "a usable OAuth token", which was not what the server counted (factory section 7.2). Always present, even as {0,0}.
+ * How many accepted hosts had a STORED Google calendar token when the page was rendered. `total` counts accepted hosts whose user record resolved; `checked` counts those among them for whom a Google token row loads, whether or not that token still works. Nothing is renewed or tested to compute it. A host whose Google credential is dead, including one whose loss Paceday has recorded (PAC-67), still counts as checked, while the host's calendar cannot be read, so that host is busy and no slot is offered (owner decision PAC-72 D-6; before 2026-11-01 the slots were computed without that host's calendar); a host with no Google token row at all (for example one on Outlook) is not counted as checked. This is deliberate: counting only usable tokens would tell every visitor with the link that a host's connection is dead (spec PAC-67 D-14, AC-28). Before PAC-67 this description said "a usable OAuth token", which was not what the server counted (factory section 7.2). Always present, even as {0,0}.
  */
 export type PublicLinkCoverage = { total: number, checked: number }
 /**
@@ -1944,6 +1964,14 @@ export type PublicLinkInfo = {
    */
   usage_type: ("reusable" | "recurring" | "single_use");
   coverage: PublicLinkCoverage;
+  /**
+   * IANA name of the zone the link's days, hours, "today" and booking horizon are evaluated in (PAC-72 revision 2, owner decision D-9): the link owner's profile time zone, or `UTC` when the owner has no settings row or its stored name is not a loadable IANA zone. It is the zone actually used by `getPublicBookingSlots` and `createPublicBooking` for this link at the time of the read, so a booking page can show times in it by default (display and the visitor's zone switcher are PAC-88). Never empty. Disclosed to anyone who has the link, on every link: owner decision D-9 makes the owner's zone the page's default display. A failed read of the owner's settings is the operation's 500, never `UTC`.
+   */
+  time_zone: string;
+  /**
+   * The link's booking horizon (PAC-72 revision 2, owner decision D-1): today (in `time_zone`) and the next `booking_horizon_days` - 1 days can be listed and booked; later dates offer no slot.
+   */
+  booking_horizon_days: number;
 }
 /**
  * Both keys are always present. Exactly one is populated depending on whether the `date` query parameter was supplied.
@@ -1954,7 +1982,7 @@ export type PublicSlotsResponse = {
    */
   slots: Array<PublicBookingSlot>;
   /**
-   * Populated only when `date` was omitted; YYYY-MM-DD strings for days within the next 60 that have at least one bookable slot. Otherwise the empty array.
+   * Populated only when `date` was omitted; YYYY-MM-DD strings (calendar days in the link's zone, `PublicLinkInfo.time_zone`), in ascending order, for days within the link's booking horizon (today in that zone and the next `booking_horizon_days` - 1 days) that are among the link's `days_of_week` and have at least one offered slot. Otherwise the empty array.
    */
   available_dates: Array<string>;
 }
@@ -2139,6 +2167,15 @@ export type SchedulingLink = {
   buffer_before: number;
   buffer_after: number;
   min_notice_minutes: number;
+  /**
+   * How many days ahead the link can be booked, counting today in the link's zone (PAC-72 revision 2, owner decision D-1). 60 for every link created before PAC-72 revision 2 and for any link created without it.
+   */
+  booking_horizon_days: number;
+  refusal_message: BookingRefusalMessage;
+  /**
+   * Read-only. The zone the link's days and hours are evaluated in: the owner's profile time zone, `UTC` when the owner has none (PAC-72 revision 2, owner decision D-9). Not stored on the link; it follows the owner's settings, so changing the owner's time zone moves the link's hours with it. Same value as `PublicLinkInfo.time_zone`.
+   */
+  time_zone: string;
   usage_type: ("reusable" | "recurring" | "single_use");
   /**
    * Present only for `recurring` links. Forced to null (and therefore omitted, json `max_uses,omitempty`) for reusable and single_use.
@@ -3034,6 +3071,14 @@ export type UpdateSchedulingLinkRequest = Partial<{
   buffer_before: (number | null);
   buffer_after: (number | null);
   min_notice_minutes: (number | null);
+  /**
+   * PAC-72 revision 2. Absent or null leaves the stored value; outside 1..365 is a 422 "booking_horizon_days must be between 1 and 365". A shorter horizon refuses later starts from then on; bookings already made beyond it are kept.
+   */
+  booking_horizon_days: (number | null);
+  /**
+   * PAC-72 revision 2, see `BookingRefusalMessage`. Absent or null leaves the stored value; any other value is a 422 "refusal_message must be generic or specific".
+   */
+  refusal_message: (("generic" | "specific") | null);
   usage_type: (("reusable" | "recurring" | "single_use") | null);
   /**
    * An explicit null is indistinguishable from an absent key (both leave the stored value), so max_uses cannot be cleared by PATCH except by switching usage_type away from `recurring`.
@@ -4336,7 +4381,7 @@ export type get_GetPublicLinkInfo = {
       
     }
 /**
- * Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422, 500 or 503), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. Host calendars must be readable (owner decision PAC-72 D-6, 2026-11-01): before the booking is saved, each accepted host's calendar is read for the requested time (at most 4 concurrent reads, each limited as on `getPublicBookingSlots`). A host whose calendar cannot be read (not connected, a provider error, or its own time limit) counts as busy and the booking is refused with the 409; nothing is written. A host not read because the request budget ran out is the 503. Whether a readable calendar is busy at that time is still not checked (API-094). The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+ * Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 500 or 503), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Offerable-start rule (PAC-72, fixes API-094): a booking is accepted only when the interval it would store, [start, end), is exactly a slot that `getPublicBookingSlots` would offer for this link and this duration at the moment the request is handled. Listing and booking apply one rule: (1) the duration is one of the link's durations (else 400, checked first); (2) the start falls on one of the link's `days_of_week` and inside its daily window, on the 15-minute grid counted from `window_start_time`, with zero seconds and zero fraction, and start + duration ends no later than `window_end_time` (these are the create/update request and storage names; the owner's `SchedulingLink` read model calls the same fields `days`, `window_start` and `window_end`); (3) every accepted host is free for the whole slot: no non-transparent calendar event (widened by the link's buffers; buffers apply to calendar events only, and events are read only for the daily window), no focus block, and no booking that is not `cancelled` (pending or confirmed) on any link the host owns or co-hosts, this link included; (4) the start is at least `min_notice_minutes` after the request is handled; (5) the start's date in the link's zone is today (in that zone) or one of the next `booking_horizon_days` - 1 days (PAC-72 revision 2, owner decision D-1: a per-link setting, 1..365, default 60); (6) the link has at least one accepted host. The link's zone (PAC-72 revision 2, owner decision D-9) is the link OWNER's profile time zone (`settings.timezone`), whoever the co-hosts are and whatever zone the server process runs in; when the owner has no settings row or the stored name is not a loadable IANA zone, the zone is UTC. A failed READ of the owner's settings (a storage error) is not "no settings row": it is the 500 and nothing is written, never the UTC fallback (PAC-72 revision 3.1, D-7). Days, hours, the grid, "today" and the horizon are all evaluated in that zone, as wall-clock times: a slot start whose wall time does not exist on a daylight-saving change day is not offered, and a wall time that occurs twice is offered once, at its first occurrence. Window edges on such a day: a `window_start_time` or `window_end_time` that does not exist that day is taken at the instant of the change (the first existing instant after the gap), so the window never grows; an edge in a repeated hour is taken at its first occurrence; the 15-minute grid stays counted in wall time from `window_start_time`. The zone used is exposed as `PublicLinkInfo.time_zone`, to anyone who has the link (owner decision D-9 makes it the page's default display). Order of evaluation: the owner's zone is read first; a start refused by the horizon, the days/hours/grid or the notice is refused with that reason without reading any host's busy time, so a storage failure on busy time cannot turn such a start into a 500 (the listing likewise answers a date outside the horizon before any host read). A start on a day before today (link zone) is not `beyond_horizon` (that names the far edge only); it is always inside the notice, so it is `too_soon` unless `outside_link_hours` comes first. `start` is compared as an instant, so any UTC offset denoting a grid instant is the same start; the stored and returned start and end are exactly the slot's, in UTC. A start the rule does not offer answers 409 and nothing is written: no booking row, no calendar event, no email. The 409 body depends on the link's `refusal_message` setting (PAC-72 revision 2, owner decisions D-2/D-5): `generic` (the default) answers the single body `{"error":"slot is no longer available"}` whatever rule failed; `specific` answers one reason, see the 409 response. The 409 check runs after the 429, 404, 410 and 400 checks. Host calendars must be readable (owner decision PAC-72 D-6, 2026-11-01, as implemented by PAC-81 Part A): each accepted host's calendar is read for the slot's day window (at most 4 concurrent reads, each limited as on `getPublicBookingSlots`); a host whose calendar cannot be read (not connected, a provider error, a refused credential, or its own time limit) is busy for the whole window, so the slot is not offered and the booking is refused with the 409 (reason `host_busy`); nothing is written. A host not read because the request budget ran out is the 503, never a 409. A storage failure while reading the link's accepted hosts, a host's focus blocks or the bookings on the hosts' links answers 500 and writes nothing, never 409. Not guaranteed: two concurrent requests for the same or overlapping starts can both pass the check before either is written (no storage-level exclusion; out of scope for PAC-72). Still open (API-051, owned by PAC-40): `uses_count` is recomputed from live bookings, so cancelling a booking re-opens an exhausted single-use link. When the start is accepted, the booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
  */
 export type post_CreatePublicBooking = {
       method: "POST",
@@ -4353,9 +4398,8 @@ export type post_CreatePublicBooking = {
       responses: {201: Schemas.PublicBookingConfirmation,
 400: Schemas.BookingError,
 404: Schemas.BookingError,
-409: Schemas.BookingError,
+409: Schemas.BookingSlotUnavailableError,
 410: Schemas.BookingError,
-422: Schemas.BookingError,
 429: Schemas.BookingRateLimitError,
 500: Schemas.BookingError,
 503: Schemas.RequestBudgetExpiredError,
@@ -4364,7 +4408,7 @@ export type post_CreatePublicBooking = {
 },
     }
 /**
- * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot for that date, and without `date` that day is not listed; the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
+ * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the link's booking horizon, today and the next `booking_horizon_days` - 1 days in the link's zone, and returns in `available_dates` the days that have at least one offered slot, with `slots` always the empty array. Both keys are always present in both modes. A slot is offered by the same rule `createPublicBooking` accepts (PAC-72; see that operation for the six parts and the link's zone): duration, link days and daily window on the 15-minute grid, every accepted host free, minimum notice, horizon, at least one accepted host. Days, hours, "today" and the horizon are evaluated in the link's zone (the link owner's profile time zone, UTC when it has none; the zone used is `PublicLinkInfo.time_zone`), whatever zone the server process runs in; slot instants are returned in UTC. A day not in the link's `days_of_week` offers no slot. An explicit `date` before today or after the horizon's last day answers 200 with `slots: []`, exactly like a fully booked day, never an error; a link with no accepted host answers 200 with no slot and no date in both modes. When busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts), the explicit-date mode answers 500 and the date-less mode omits that day. The date-less mode reads every day of the horizon (up to 365) under the one request budget; with a long horizon or slow calendars it ends in the 503 below, never in a list truncated to the days it reached (PAC-72 revision 3.1). Clients needing a long range should use the explicit-date mode per visible day. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot for that date, and without `date` that day is not listed; the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
  */
 export type get_GetPublicBookingSlots = {
       method: "GET",

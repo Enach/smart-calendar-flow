@@ -325,6 +325,18 @@ export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
  */
 export type LinkUsageType = "reusable" | "recurring" | "single_use";
 
+/**
+ * The link owner's choice of 409 body for refused public bookings (PAC-72,
+ * owner decisions D-2/D-5): one generic message (default) or the specific
+ * reason. The contract's BookingRefusalMessage.
+ */
+export type BookingRefusalMessage = components["schemas"]["BookingRefusalMessage"];
+
+/** PAC-72 D-1: the horizon's bounds and default (contract booking_horizon_days). */
+export const BOOKING_HORIZON_MIN_DAYS = 1;
+export const BOOKING_HORIZON_MAX_DAYS = 365;
+export const BOOKING_HORIZON_DEFAULT_DAYS = 60;
+
 export interface SchedulingLink {
   id: string;
   owner_id: string;
@@ -351,6 +363,15 @@ export interface SchedulingLink {
   is_owner: boolean;
   /** Status of the current user vs this link (for "Shared with me"). */
   my_status?: CoHostStatus;
+  /** PAC-72 D-1: days ahead the link can be booked, counting today (1..365). */
+  booking_horizon_days: number;
+  /** PAC-72 D-2/D-5: the 409 body visitors get when a booking is refused. */
+  refusal_message: BookingRefusalMessage;
+  /**
+   * PAC-72 D-9, read-only: the zone the link's days and hours are in (the
+   * owner's profile time zone, UTC when none). Absent in preview data.
+   */
+  time_zone?: string;
 }
 
 export interface CoHostInvite {
