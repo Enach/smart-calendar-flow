@@ -43,6 +43,8 @@ const DENIAL_TEXT: Record<string, string> = {
   tid_changed: "your organisation is already linked to a different Microsoft 365 organisation.",
   email_mismatch: "the administrator account you used is not the account you are signed in to Paceday with.",
   not_admin: "the account you used is not an administrator of your organisation.",
+  identity_mismatch:
+    "the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
 };
 
 function destinationText(c: OrganizationAIConfiguration): string {

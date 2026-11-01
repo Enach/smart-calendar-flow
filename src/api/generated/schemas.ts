@@ -100,6 +100,9 @@ export const ConferenceMeetingDetails = z.strictObject({ provider: z.enum(["meet
 export type ConferenceProviderStatus = __TypedOpenapi.Schemas.ConferenceProviderStatus;
 export const ConferenceProviderStatus = z.strictObject({ provider: z.enum(["google_meet", "zoom", "teams", "custom"]), connected: z.boolean(), email: z.string().optional(), enabled: z.boolean().optional(), auto_with: z.enum(["google", "outlook"]).optional() });
 
+export type ConnectStartResponse = __TypedOpenapi.Schemas.ConnectStartResponse;
+export const ConnectStartResponse = z.strictObject({ authorize_url: z.url() });
+
 export type CreateConferenceRequest = __TypedOpenapi.Schemas.CreateConferenceRequest;
 export const CreateConferenceRequest = z.strictObject({ title: z.string().min(1).regex(new RegExp("\\S")), start: z.iso.datetime(), end: z.iso.datetime() });
 
@@ -113,7 +116,7 @@ export type OrgSummary = __TypedOpenapi.Schemas.OrgSummary;
 export const OrgSummary = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.string(), createdAt: z.iso.datetime() });
 
 export type CurrentUserResponse = __TypedOpenapi.Schemas.CurrentUserResponse;
-export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
+export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), addressStanding: z.enum(["domain_confirmed", "unconfirmed"]), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
 
 export type DailyRecapPatch = __TypedOpenapi.Schemas.DailyRecapPatch;
 export const DailyRecapPatch = z.strictObject({ enabled: z.boolean(), send_time: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), send_to: z.enum(["dm", "channel"]), channel_id: z.string(), include_briefs: z.boolean(), include_focus_blocks: z.boolean(), include_habits: z.boolean() }).partial();

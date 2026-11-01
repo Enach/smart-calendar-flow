@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/contexts/useAuth";
 import { Spinner } from "@/components/ui/spinner";
+import { toast } from "@/hooks/useToast";
 
 /** The sign-in failure state (PAC-35): the landing page shows it from this URL. */
 const SIGN_IN_FAILED_PATH = "/?error=auth_failed";
@@ -29,6 +30,10 @@ export default function AuthCallback() {
           return;
         }
         const params = new URLSearchParams(search);
+        // PAC-71: a credited connect lands here too
+        // (`?provider=google|microsoft&connect=credited`). The session is the
+        // one that started it, unchanged; say the calendar is connected.
+        if (params.get("connect") === "credited") toast.success("Your calendar is connected.");
         const redirect = sanitizeRedirect(params.get("redirect"));
         navigate(redirect ?? "/app", { replace: true });
       } catch {

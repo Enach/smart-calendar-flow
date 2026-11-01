@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import logo from "@/assets/paceday-logo.png";
 import { AuthDialog } from "@/components/auth/AuthDialog";
 import { SignInFailedNotice } from "@/components/auth/SignInFailedNotice";
+import { SignInRefusedNotice } from "@/components/auth/SignInRefusedNotice";
+import { ConnectNotCreditedNotice } from "@/components/auth/ConnectNotCreditedNotice";
 import { useAuth } from "@/contexts/useAuth";
 
 /* ---------- shared bits ---------- */
@@ -566,17 +568,31 @@ const Index = ({ initialAuth }: IndexProps = {}) => {
   // recognised; nothing from the URL is ever displayed.
   const [searchParams, setSearchParams] = useSearchParams();
   const signInFailed = searchParams.get("error") === "auth_failed";
-  const retrySignIn = () => {
+  // PAC-71: a refused sign-in (one fixed value for every cause) and a connect
+  // credited to nobody. Same rule: only these fixed values, nothing echoed.
+  const signInRefused = searchParams.get("error") === "signin_refused";
+  const connectNotCredited = searchParams.get("connect") === "not_credited";
+  const clearParam = (name: string) => {
     const next = new URLSearchParams(searchParams);
-    next.delete("error");
+    next.delete(name);
     setSearchParams(next, { replace: true });
+  };
+  const retrySignIn = () => {
+    clearParam("error");
     openAuth("signin");
+  };
+  const navigate = useNavigate();
+  const continueToApp = () => {
+    clearParam("connect");
+    navigate("/app");
   };
 
   return (
     <main className="min-h-screen bg-background text-foreground">
       <Nav onOpenAuth={openAuth} />
       {signInFailed && <SignInFailedNotice onRetry={retrySignIn} />}
+      {signInRefused && <SignInRefusedNotice onSignIn={retrySignIn} />}
+      {connectNotCredited && <ConnectNotCreditedNotice onContinue={continueToApp} />}
       <Hero onOpenAuth={openAuth} />
       <Problem />
       <Solution />

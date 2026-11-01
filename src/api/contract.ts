@@ -3,7 +3,6 @@ import type {
   AuditEntry,
   AuthStatus,
   CalendarEvent,
-  CalendarProvider,
   ConferenceLink,
   ConferenceProvider,
   ConferenceProviderStatus,
@@ -66,7 +65,10 @@ export interface ApiPort {
 
   authStatus(): Promise<AuthStatus>;
   integrationAvailability(): Promise<IntegrationAvailability>;
-  authConnectUrl(provider?: CalendarProvider): string;
+  /** PAC-71: POST the connect start; resolves to the provider's authorize_url. */
+  startConnect(provider?: "google" | "outlook"): Promise<string>;
+  /** PAC-71: PATCH /api/settings with only `calendarProvider`, before a connect that changes the work calendar. */
+  saveWorkCalendar(provider: "google" | "outlook"): Promise<Settings>;
   authDisconnect(): Promise<void>;
 
   getSettings(): Promise<Settings>;

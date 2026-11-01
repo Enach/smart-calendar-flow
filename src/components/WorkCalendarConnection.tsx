@@ -11,6 +11,7 @@ import {
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider, Settings } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
+import { useCalendarConnect } from "@/hooks/useCalendarConnect";
 
 const PROVIDERS: Array<{
   value: CalendarProvider;
@@ -18,8 +19,8 @@ const PROVIDERS: Array<{
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { value: "google", label: "Google Calendar", hint: "Sign in with Google", icon: Calendar },
-  { value: "outlook", label: "Microsoft Outlook", hint: "Sign in with Microsoft", icon: Mail },
+  { value: "google", label: "Google Calendar", hint: "Connect with Google", icon: Calendar },
+  { value: "outlook", label: "Microsoft Outlook", hint: "Connect with Microsoft", icon: Mail },
   { value: "webcal", label: "WebCal / iCal URL", hint: "Read-only feed", icon: LinkIcon },
 ];
 
@@ -54,6 +55,8 @@ export function WorkCalendarConnection({
   const [provider, setProvider] = useState<CalendarProvider>(initialProvider);
   const [webcalUrl, setWebcalUrl] = useState(settings.webcal_url ?? "");
   const [busy, setBusy] = useState(false);
+  // PAC-71: a connect is a signed-in POST, never the sign-in start.
+  const { connect, connecting } = useCalendarConnect();
 
   useEffect(() => {
     setProvider(settings.calendar_provider ?? status?.provider ?? "google");
@@ -84,7 +87,9 @@ export function WorkCalendarConnection({
       toast.success("WebCal URL saved — remember to click Save changes");
       return;
     }
-    window.location.href = api.authConnectUrl(provider);
+    // PAC-71: the choice is saved (only calendarProvider) before the connect
+    // starts; the connect never sets it, and the draft is lost on leaving.
+    void connect(provider, { setWorkCalendar: true });
   };
 
   const handleDisconnect = async () => {
@@ -210,10 +215,10 @@ export function WorkCalendarConnection({
 
       <button
         onClick={handleConnect}
-        disabled={availabilityLoading || !!availabilityError || availableProviders.length === 0}
+        disabled={connecting || availabilityLoading || !!availabilityError || availableProviders.length === 0}
         className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
       >
-        <LogIn className="h-3 w-3" />
+        {connecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
         {provider === "webcal" ? "Save WebCal URL" : `Connect ${PROVIDERS.find((p) => p.value === provider)?.label}`}
       </button>
     </div>

@@ -25,6 +25,7 @@ import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 
 import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
+import { useCalendarConnect } from "@/hooks/useCalendarConnect";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { AINotConfigured, CalendarEvent, ParseResult } from "@/api/types";
@@ -112,6 +113,8 @@ export default function Dashboard() {
   // the (empty) week on screen. Same query key as ConnectionStatus.
   const { data: authStatus } = useQuery({ queryKey: ["auth"], queryFn: () => api.authStatus() });
   const calendarNotConnected = !isDemo && authStatus?.connected === false;
+  // PAC-71: the banner starts a connect (a signed-in POST), never a sign-in.
+  const { connect: connectCalendar, connecting: connectingCalendar } = useCalendarConnect();
   const events = useMemo(() => (Array.isArray(eventsRaw) ? eventsRaw : []), [eventsRaw]);
   // Debounce the calendar overlay so very fast responses don't cause flicker.
   const showEventsOverlay = useDebouncedFlag(
@@ -471,10 +474,9 @@ export default function Dashboard() {
                     </div>
                     <button
                       type="button"
-                      onClick={() => {
-                        window.location.href = api.authConnectUrl();
-                      }}
-                      className="shrink-0 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+                      onClick={() => void connectCalendar("google")}
+                      disabled={connectingCalendar}
+                      className="shrink-0 rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 disabled:opacity-50"
                     >
                       Connect calendar
                     </button>
