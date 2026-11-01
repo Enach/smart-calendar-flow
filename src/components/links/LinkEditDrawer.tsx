@@ -17,7 +17,16 @@ import {
 import { api, apiErrorMessage } from "@/api/client";
 
 import { getFreebusy } from "@/api/coverageCache";
-import type { LinkUsageType, ParticipantCoverage, SchedulingLink, Weekday } from "@/api/types";
+import {
+  BOOKING_HORIZON_DEFAULT_DAYS,
+  BOOKING_HORIZON_MAX_DAYS,
+  BOOKING_HORIZON_MIN_DAYS,
+  type BookingRefusalMessage,
+  type LinkUsageType,
+  type ParticipantCoverage,
+  type SchedulingLink,
+  type Weekday,
+} from "@/api/types";
 import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
 
@@ -75,6 +84,25 @@ const USAGE_OPTIONS: Array<{
   },
 ];
 
+/** PAC-72 D-2/D-5: what a visitor reads when a booking is refused. */
+const REFUSAL_OPTIONS: Array<{
+  value: BookingRefusalMessage;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "generic",
+    label: "Same message every time",
+    description: "“This slot is no longer available.” Says nothing about your calendar.",
+  },
+  {
+    value: "specific",
+    label: "Say why",
+    description:
+      "Too soon, outside your hours, too far ahead, already booked, or a host is busy. Can reveal that you or a co-host is busy then.",
+  },
+];
+
 function slugify(s: string) {
   return s
     .toLowerCase()
@@ -104,6 +132,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const [minNotice, setMinNotice] = useState<number>(60);
   const [usageType, setUsageType] = useState<LinkUsageType>("reusable");
   const [maxUses, setMaxUses] = useState<number>(5);
+  const [horizonDays, setHorizonDays] = useState<number>(BOOKING_HORIZON_DEFAULT_DAYS);
+  const [refusalMessage, setRefusalMessage] = useState<BookingRefusalMessage>("generic");
   const [coHostEmail, setCoHostEmail] = useState("");
   const [coHosts, setCoHosts] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +160,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setMinNotice(link.min_notice_minutes ?? 0);
       setUsageType(link.usage_type ?? "reusable");
       setMaxUses(link.max_uses ?? 5);
+      setHorizonDays(link.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS);
+      setRefusalMessage(link.refusal_message ?? "generic");
       setCoHosts(link.hosts.filter((h) => !h.is_owner).map((h) => h.email));
     } else {
       setTitle("");
@@ -144,6 +176,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setMinNotice(60);
       setUsageType("reusable");
       setMaxUses(5);
+      setHorizonDays(BOOKING_HORIZON_DEFAULT_DAYS);
+      setRefusalMessage("generic");
       setCoHosts([]);
     }
   }, [open, link]);
@@ -207,8 +241,10 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       min_notice_minutes: minNotice,
       usage_type: usageType,
       max_uses: usageType === "recurring" ? maxUses : undefined,
+      booking_horizon_days: horizonDays,
+      refusal_message: refusalMessage,
     }),
-    [title, durations, days, windowStart, windowEnd, bufferBefore, bufferAfter, minNotice, usageType, maxUses],
+    [title, durations, days, windowStart, windowEnd, bufferBefore, bufferAfter, minNotice, usageType, maxUses, horizonDays, refusalMessage],
   );
 
   const mutation = useMutation({
@@ -430,6 +466,59 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             <p className="text-xs text-muted-foreground">
               Bookings can't start sooner than this. Useful to give yourself prep time.
             </p>
+          </div>
+
+          {/* Booking horizon (PAC-72 D-1) */}
+          <div className="space-y-2">
+            <Label htmlFor="booking-horizon">How far ahead visitors can book</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="booking-horizon"
+                type="number"
+                inputMode="numeric"
+                min={BOOKING_HORIZON_MIN_DAYS}
+                max={BOOKING_HORIZON_MAX_DAYS}
+                step={1}
+                value={Number.isNaN(horizonDays) ? "" : horizonDays}
+                onChange={(e) => setHorizonDays(parseInt(e.target.value, 10))}
+                className="h-10 w-24"
+                aria-describedby="booking-horizon-help"
+              />
+              <span className="text-sm text-muted-foreground">days, counting today</span>
+            </div>
+            <p id="booking-horizon-help" className="text-xs text-muted-foreground">
+              Between {BOOKING_HORIZON_MIN_DAYS} and {BOOKING_HORIZON_MAX_DAYS}. Days and hours follow your
+              profile time zone{link?.time_zone ? ` (${link.time_zone})` : ""}.
+            </p>
+          </div>
+
+          {/* Refusal message (PAC-72 D-2/D-5) */}
+          <div className="space-y-2">
+            <Label id="refusal-message-label">When a time can't be booked</Label>
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-labelledby="refusal-message-label">
+              {REFUSAL_OPTIONS.map((opt) => {
+                const on = refusalMessage === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    onClick={() => setRefusalMessage(opt.value)}
+                    className={`rounded-lg border p-3 text-left transition ${
+                      on
+                        ? "border-primary bg-primary-muted"
+                        : "border-border bg-background hover:border-primary/40"
+                    }`}
+                  >
+                    <p className={`text-sm font-semibold ${on ? "text-primary" : "text-foreground"}`}>
+                      {opt.label}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">{opt.description}</p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Usage type */}

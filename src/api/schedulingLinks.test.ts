@@ -514,3 +514,93 @@ describe("public booking contract", () => {
     setMockMode(false);
   });
 });
+
+// PAC-72 revision 2: the link's booking horizon (D-1) and refusal message
+// (D-2/D-5) on the owner's link reads and writes.
+describe("PAC-72 booking horizon and refusal message", () => {
+  const base = {
+    title: "Intro",
+    durations: [30],
+    days: ["mon"] as Weekday[],
+    window_start: "09:00",
+    window_end: "17:00",
+    buffer_before: 0,
+    buffer_after: 0,
+    min_notice_minutes: 0,
+    usage_type: "reusable" as const,
+  };
+
+  beforeEach(() => {
+    setMockMode(false);
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("validates the horizon against the contract's 1..365 and the refusal choice", () => {
+    expect(validateLinkForm({ ...base, booking_horizon_days: 1 })).toBeNull();
+    expect(validateLinkForm({ ...base, booking_horizon_days: 365, refusal_message: "specific" })).toBeNull();
+    for (const bad of [0, 366, -3, 2.5, Number.NaN]) {
+      expect(validateLinkForm({ ...base, booking_horizon_days: bad })).toMatch(/between 1 and 365 days/);
+    }
+    expect(validateLinkForm({ ...base, refusal_message: "loud" as never })).toMatch(/refused/i);
+  });
+
+  it("reads the settings and the zone, defaulting to 60 / generic when absent", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (requestPath(input) === "/api/scheduling-links/") {
+        return jsonResponse({
+          owned: [{ ...BACKEND_LINK, booking_horizon_days: 14, refusal_message: "specific", time_zone: "Europe/Paris" }],
+          shared: [{ ...BACKEND_LINK, id: "l2", owner_id: "u9", is_owner: false }],
+        });
+      }
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    const res = await schedulingLinksApi.listLinks();
+    expect(res.owned[0]).toMatchObject({ booking_horizon_days: 14, refusal_message: "specific", time_zone: "Europe/Paris" });
+    expect(res.shared[0]).toMatchObject({ booking_horizon_days: 60, refusal_message: "generic" });
+  });
+
+  it("sends the settings on create, and omits them when not chosen", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/" && init?.method === "POST") {
+        bodies.push(JSON.parse(String(init?.body)));
+        return jsonResponse({ ...BACKEND_LINK, id: "new" });
+      }
+      if (path === "/api/scheduling-links/new") return jsonResponse({ ...BACKEND_LINK, id: "new" });
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    const create = { ...base, slug: "", co_host_emails: [] as string[] };
+    await schedulingLinksApi.createLink({ ...create, booking_horizon_days: 90, refusal_message: "specific" });
+    await schedulingLinksApi.createLink(create);
+    expect(bodies[0]).toMatchObject({ booking_horizon_days: 90, refusal_message: "specific" });
+    expect(bodies[1]).not.toHaveProperty("booking_horizon_days");
+    expect(bodies[1]).not.toHaveProperty("refusal_message");
+  });
+
+  it("an edit of another field sends the stored settings back unchanged; an edit of them sends the new values", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    const stored = { ...BACKEND_LINK, booking_horizon_days: 21, refusal_message: "specific" as const };
+    fetchMock.mockImplementation(async (input, init) => {
+      if (init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init?.body)));
+        return jsonResponse(stored);
+      }
+      if (requestPath(input) === "/api/scheduling-links/l1") return jsonResponse(stored);
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    await schedulingLinksApi.updateLink("l1", { title: "Renamed" });
+    await schedulingLinksApi.updateLink("l1", { booking_horizon_days: 5, refusal_message: "generic" });
+    expect(patches[0]).toMatchObject({ title: "Renamed", booking_horizon_days: 21, refusal_message: "specific" });
+    expect(patches[1]).toMatchObject({ booking_horizon_days: 5, refusal_message: "generic" });
+  });
+
+  it("refuses an out-of-range horizon before the network", () => {
+    expect(() =>
+      schedulingLinksApi.createLink({ ...base, slug: "", co_host_emails: [], booking_horizon_days: 400 }),
+    ).toThrow(/between 1 and 365 days/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

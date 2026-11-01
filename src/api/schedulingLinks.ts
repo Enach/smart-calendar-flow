@@ -8,8 +8,14 @@
  */
 
 import { isDemoSession, requestApi, withFallback } from "./client";
+import {
+  BOOKING_HORIZON_DEFAULT_DAYS,
+  BOOKING_HORIZON_MAX_DAYS,
+  BOOKING_HORIZON_MIN_DAYS,
+} from "./types";
 import type {
   BookingConfirmation,
+  BookingRefusalMessage,
   BookingSlot,
   CoHostInvite,
   LinkUsageType,
@@ -43,6 +49,9 @@ type BackendSchedulingLink = {
   created_at?: string;
   is_owner?: boolean;
   my_status?: "accepted" | "pending" | "declined";
+  booking_horizon_days?: number;
+  refusal_message?: BookingRefusalMessage;
+  time_zone?: string;
   hosts?: Array<{
     user_id?: string;
     email: string;
@@ -112,6 +121,9 @@ function normalizeSchedulingLink(raw: BackendSchedulingLink, user?: BackendUser)
     hosts, created_at: raw.created_at || new Date(0).toISOString(),
     is_owner: raw.is_owner ?? owner != null,
     my_status: raw.my_status ?? (owner ? "accepted" : undefined),
+    booking_horizon_days: raw.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS,
+    refusal_message: raw.refusal_message ?? "generic",
+    time_zone: raw.time_zone,
   };
 }
 
@@ -119,6 +131,7 @@ function backendLinkBody(input: {
   title: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
   buffer_before: number; buffer_after: number; min_notice_minutes?: number; usage_type?: LinkUsageType;
   max_uses?: number; active?: boolean;
+  booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
 }) {
   return {
     title: input.title, duration_options: input.durations, days_of_week: input.days.map((day) => WEEKDAY_TO_NUMBER[day]),
@@ -128,6 +141,9 @@ function backendLinkBody(input: {
     usage_type: input.usage_type ?? "reusable",
     max_uses: input.max_uses,
     ...(input.active === undefined ? {} : { active: input.active }),
+    // PAC-72: sent only when known, so an update never resets them.
+    ...(input.booking_horizon_days === undefined ? {} : { booking_horizon_days: input.booking_horizon_days }),
+    ...(input.refusal_message === undefined ? {} : { refusal_message: input.refusal_message }),
   };
 }
 
@@ -208,6 +224,8 @@ function seedMockLinks() {
     usage_type: "reusable",
     uses_count: 0,
     active: true,
+    booking_horizon_days: BOOKING_HORIZON_DEFAULT_DAYS,
+    refusal_message: "generic",
     hosts: [makeOwnerHost()],
     created_at: new Date(Date.now() - 7 * 86400_000).toISOString(),
     is_owner: true,
@@ -230,6 +248,8 @@ function seedMockLinks() {
     max_uses: 5,
     uses_count: 1,
     active: true,
+    booking_horizon_days: 30,
+    refusal_message: "specific",
     hosts: [
       makeOwnerHost(),
       buildHostFromEmail("sarah@co.com", "accepted"),
@@ -255,6 +275,8 @@ function seedMockLinks() {
     usage_type: "single_use",
     uses_count: 0,
     active: true,
+    booking_horizon_days: BOOKING_HORIZON_DEFAULT_DAYS,
+    refusal_message: "generic",
     hosts: [
       { ...buildHostFromEmail("emma@co.com", "accepted"), is_owner: true },
       { ...makeOwnerHost(), is_owner: false, status: "accepted" },
@@ -374,6 +396,10 @@ export interface LinkFormValues {
   min_notice_minutes: number;
   usage_type: LinkUsageType;
   max_uses?: number;
+  /** PAC-72 D-1: 1..365 days. Absent: the server's default (60) on create, unchanged on update. */
+  booking_horizon_days?: number;
+  /** PAC-72 D-2/D-5. Absent: generic on create, unchanged on update. */
+  refusal_message?: BookingRefusalMessage;
 }
 
 /**
@@ -391,6 +417,17 @@ export function validateLinkForm(v: LinkFormValues): string | null {
   if (sh * 60 + (sm || 0) >= eh * 60 + (em || 0)) return "The start time must be before the end time.";
   if (v.buffer_before < 0 || v.buffer_after < 0) return "Buffers can't be negative.";
   if (v.min_notice_minutes < 0) return "Minimum notice can't be negative.";
+  if (
+    v.booking_horizon_days !== undefined &&
+    (!Number.isInteger(v.booking_horizon_days) ||
+      v.booking_horizon_days < BOOKING_HORIZON_MIN_DAYS ||
+      v.booking_horizon_days > BOOKING_HORIZON_MAX_DAYS)
+  ) {
+    return `Visitors can book between ${BOOKING_HORIZON_MIN_DAYS} and ${BOOKING_HORIZON_MAX_DAYS} days ahead.`;
+  }
+  if (v.refusal_message !== undefined && v.refusal_message !== "generic" && v.refusal_message !== "specific") {
+    return "Pick how refused bookings are explained.";
+  }
   if (v.usage_type === "recurring" && (!v.max_uses || v.max_uses < 1)) {
     return "Recurring links need a maximum number of bookings (1 or more).";
   }
@@ -500,6 +537,7 @@ export const schedulingLinksApi = {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses?: number; co_host_emails: string[];
+    booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
   }) => {
     assertValidLinkBody(input);
     return withFallback<SchedulingLink>(
@@ -524,6 +562,8 @@ export const schedulingLinksApi = {
           durations: input.durations, days: input.days, window_start: input.window_start, window_end: input.window_end,
           buffer_before: input.buffer_before, buffer_after: input.buffer_after, min_notice_minutes: input.min_notice_minutes,
           usage_type: input.usage_type, max_uses: input.usage_type === "recurring" ? input.max_uses : undefined, uses_count: 0,
+          booking_horizon_days: input.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS,
+          refusal_message: input.refusal_message ?? "generic",
           active: true, hosts: [makeOwnerHost(), ...input.co_host_emails.map((e) => buildHostFromEmail(e, "pending"))],
           created_at: new Date().toISOString(), is_owner: true,
         };
@@ -538,6 +578,7 @@ export const schedulingLinksApi = {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses: number | undefined; active: boolean; co_host_emails: string[];
+    booking_horizon_days: number; refusal_message: BookingRefusalMessage;
   }>) =>
     withFallback<SchedulingLink>(
       async () => {
@@ -553,6 +594,10 @@ export const schedulingLinksApi = {
           min_notice_minutes: input.min_notice_minutes ?? current.min_notice_minutes ?? 0,
           usage_type: input.usage_type ?? current.usage_type ?? "reusable",
           max_uses: input.max_uses ?? current.max_uses,
+          // PAC-72: what the server holds unless the editor changed it; never
+          // reset by an edit of another field.
+          booking_horizon_days: input.booking_horizon_days ?? current.booking_horizon_days,
+          refusal_message: input.refusal_message ?? current.refusal_message,
         };
         assertValidLinkBody(merged);
         const body = backendLinkBody({ ...merged, active: input.active });
