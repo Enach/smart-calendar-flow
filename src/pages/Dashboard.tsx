@@ -27,7 +27,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useCalendarEvents } from "@/hooks/useCalendarEvents";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
-import type { CalendarEvent, ParseResult } from "@/api/types";
+import type { AINotConfigured, CalendarEvent, ParseResult } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { eventChipColors } from "@/lib/eventChip";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
@@ -121,6 +121,7 @@ export default function Dashboard() {
   const [nlpInitial, setNlpInitial] = useState<string>("");
   const [nlpLoading, setNlpLoading] = useState(false);
   const [nlpError, setNlpError] = useState<string | null>(null);
+  const [nlpNotConfigured, setNlpNotConfigured] = useState<AINotConfigured | null>(null);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [popoverEvent, setPopoverEvent] = useState<CalendarEvent | null>(null);
@@ -166,9 +167,13 @@ export default function Dashboard() {
   const handleNLP = useCallback(async (text: string) => {
     setNlpLoading(true);
     setNlpError(null);
+    setNlpNotConfigured(null);
     try {
       const res = await api.nlpParse(text);
-      if (res.intent === "schedule_meeting") {
+      if (res.not_configured) {
+        // NEW-llm-bring-your-own AC-21: AI is off for this user; nothing was sent.
+        setNlpNotConfigured(res.not_configured);
+      } else if (res.intent === "schedule_meeting") {
         if (!res.suggested_slots?.length) {
           setNlpError("No available slots found for that request.");
         } else {
@@ -360,6 +365,7 @@ export default function Dashboard() {
           initialValue={nlpInitial}
           loading={nlpLoading}
           error={nlpError}
+          notConfigured={nlpNotConfigured}
           onSubmit={handleNLP}
         />
 

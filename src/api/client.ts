@@ -1,9 +1,19 @@
 import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
 import {
+  AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
+  OrganizationAIConsentConflict as OrganizationAIConsentConflictSchema,
+  OrganizationAIWriteFreshLoginRequired,
+  OrganizationAIWriteStepupRequired,
   ProviderDisconnectResult as ProviderDisconnectResultSchema,
   SettingsUpdate,
+  SsoStepupOptions as SsoStepupOptionsSchema,
+  SsoWriteMembershipRequired,
+  SsoWriteStepupRequired,
 } from "./generated/schemas";
+import type { SsoStepupProvider, SsoStepupPurpose, SsoStepupScopes } from "./generated/schemas";
+import { apiUrl } from "@/lib/api";
 
 import type {
   AuditEntry,
@@ -37,9 +47,13 @@ import type {
   PersonalCalendarType,
   ProviderDisconnectResult,
   Room,
+  OrganizationAIConfiguration,
+  OrganizationAIConfigurationUpdate,
+  AIStatus,
   Settings,
   SuggestedSlot,
 } from "./types";
+import { PROVIDER_LABELS, isKeyProvider } from "@/lib/aiProviders";
 
 // ---------- Mock state ----------
 // Used as a fallback when the Go backend at /api is not reachable
@@ -115,7 +129,6 @@ const DEFAULT_SETTINGS: Settings = {
   calendar_provider: "google",
   webcal_url: "",
   aws_region: "us-east-1",
-  aws_profile: "",
   azure_endpoint: "",
   azure_deployment: "",
   azure_api_version: "2024-02-01",
@@ -385,9 +398,166 @@ if (typeof window !== "undefined") {
   });
 }
 
+// ---------- PAC-50: the optional SSO administrator step-up ----------
+
+/**
+ * What a refused SSO configuration write (403 SsoWriteStepupRequired) or the
+ * Settings entry point (getSsoStepupOptions) says about the optional
+ * administrator step-up (PAC-50 AC-22, AC-25). The client never navigates on
+ * its own: a screen explains `stepupScopes` and `withoutStepup`, lets the user
+ * decline, and only on "go ahead", with a provider chosen, navigates to
+ * `ssoStepupStartUrl(...)`.
+ */
+export interface SsoStepupOffer {
+  /** `stepup_url` resolved against the API base's origin, never the page's (spec §9 D-6). */
+  stepupUrl: string;
+  /** As received: a key only for each provider configured on the deployment. */
+  stepupScopes: SsoStepupScopes;
+  /** As received, unknown codes included (an open list, contract revision 6). */
+  withoutStepup: string[];
+  /** The keys of `stepupScopes`, in a fixed order; empty means no step-up can be started. */
+  providers: SsoStepupProvider[];
+}
+
+/** The step-up-required outcome of a refused SSO configuration write (AC-22). */
+export interface SsoStepupRequired extends SsoStepupOffer {
+  kind: "sso_stepup_required";
+}
+
+const STEPUP_PROVIDERS: SsoStepupProvider[] = ["google", "microsoft"];
+
+function toOffer(raw: { stepup_url: string; stepup_scopes: SsoStepupScopes; without_stepup: string[] }): SsoStepupOffer {
+  return {
+    stepupUrl: apiUrl(raw.stepup_url),
+    stepupScopes: raw.stepup_scopes,
+    withoutStepup: raw.without_stepup,
+    providers: STEPUP_PROVIDERS.filter((p) => raw.stepup_scopes[p] !== undefined),
+  };
+}
+
+/**
+ * The step-up-required outcome carried by an API failure, or null. Only a 403
+ * whose body is SsoWriteStepupRequired (it carries `stepup_url`) qualifies; any
+ * other 403 is rendered as before by apiErrorMessage (AC-22).
+ */
+export function ssoStepupRequired(e: unknown): SsoStepupRequired | null {
+  if (!isApiHttpError(e) || e.status !== 403) return null;
+  const parsed = SsoWriteStepupRequired.safeParse(e.data);
+  if (!parsed.success) return null;
+  return { kind: "sso_stepup_required", ...toOffer(parsed.data) };
+}
+
+/**
+ * Where the browser goes once the user has chosen to go ahead with `provider`.
+ * PAC-73 Part 2: a step-up for another write than SSO names its purpose; an
+ * SSO step-up sends none, exactly as under PAC-50.
+ */
+export function ssoStepupStartUrl(offer: SsoStepupOffer, provider: SsoStepupProvider, purpose?: SsoStepupPurpose): string {
+  const base = `${offer.stepupUrl}?provider=${encodeURIComponent(provider)}`;
+  return purpose && purpose !== "sso_write" ? `${base}&purpose=${encodeURIComponent(purpose)}` : base;
+}
+
+/**
+ * GET /api/admin/sso/stepup/options (getSsoStepupOptions, PAC-50 contract
+ * revision 8): the step-up offer without making an SSO write. Read-only on
+ * the server. A 403 (no organisation) is an ApiHttpError: the caller offers no
+ * entry point. There is no preview fallback: in preview the entry point is not
+ * offered.
+ */
+export async function fetchSsoStepupOptions(purpose?: SsoStepupPurpose): Promise<SsoStepupOffer> {
+  const query = purpose && purpose !== "sso_write" ? { purpose } : undefined;
+  return toOffer(SsoStepupOptionsSchema.parse(await requestApi<unknown>("GET", "/admin/sso/stepup/options", undefined, query)));
+}
+
+// ---------- PAC-73 Part 2: the organisation's AI configuration ----------
+
+/** The step-up purpose of an organisation-AI change (contract SsoStepupPurpose). */
+export const ORG_AI_STEPUP_PURPOSE: SsoStepupPurpose = "llm_org_key_write";
+
+/**
+ * GET /api/organization/ai (getOrganizationAI): every member reads the same
+ * configuration, never the key. A 403 (no organisation) is an ApiHttpError.
+ * No preview fallback: in preview the section is not shown.
+ */
+export async function fetchOrganizationAI(): Promise<OrganizationAIConfiguration> {
+  return OrganizationAIConfigurationSchema.parse(await requestApi<unknown>("GET", "/organization/ai"));
+}
+
+/** What a patchOrganizationAI answered, other than a body error (an ApiHttpError). */
+export type OrganizationAIChangeResult =
+  | { kind: "saved"; configuration: OrganizationAIConfiguration }
+  /** Another administrator changed it first: nothing stored, the proof is kept. */
+  | { kind: "conflict"; configuration: OrganizationAIConfiguration }
+  /** No live proof for this purpose: the step-up for it, as offered. */
+  | { kind: "stepup_required"; offer: SsoStepupOffer }
+  /** A break-glass address whose session is stale or already made a change. */
+  | { kind: "fresh_login_required" }
+  /** No organisation. */
+  | { kind: "no_organization" };
+
+/**
+ * PATCH /api/organization/ai (patchOrganizationAI). The body names the
+ * version the administrator was shown. 200, 403 and 409 are outcomes; a 400
+ * (the change itself is refused) or a 5xx is thrown as an ApiHttpError.
+ */
+export async function patchOrganizationAI(body: OrganizationAIConfigurationUpdate): Promise<OrganizationAIChangeResult> {
+  try {
+    const raw = await requestApi<unknown>("PATCH", "/organization/ai", body);
+    return { kind: "saved", configuration: OrganizationAIConfigurationSchema.parse(raw) };
+  } catch (e) {
+    if (isApiHttpError(e) && e.status === 409) {
+      const c = OrganizationAIConsentConflictSchema.safeParse(e.data);
+      if (c.success) return { kind: "conflict", configuration: c.data.organization };
+    }
+    if (isApiHttpError(e) && e.status === 403) {
+      const stepup = OrganizationAIWriteStepupRequired.safeParse(e.data);
+      if (stepup.success) return { kind: "stepup_required", offer: toOffer(stepup.data) };
+      if (OrganizationAIWriteFreshLoginRequired.safeParse(e.data).success) return { kind: "fresh_login_required" };
+      if (SsoWriteMembershipRequired.safeParse(e.data).success) return { kind: "no_organization" };
+    }
+    throw e;
+  }
+}
+
+/**
+ * The settings write that chooses "Use my organisation's AI" (patchSettings
+ * `llmProvider: organization`). It records no confirmation (P2-AC-38): it is
+ * sent only after confirmOrganizationAI has recorded the user's confirmation.
+ */
+export async function chooseOrganizationAIChoice(): Promise<Settings> {
+  return normalizeSettings(await requestApi<unknown>("PATCH", "/settings", { llmProvider: "organization" }));
+}
+
+/** What confirmOrganizationAI answered. */
+export type OrganizationAIConsentResult =
+  | { kind: "confirmed"; status: AIStatus }
+  /** Nothing recorded: the configuration changed since it was shown, or is not complete. */
+  | { kind: "conflict"; reason: "configuration_changed" | "organization_not_configured"; configuration: OrganizationAIConfiguration };
+
+/**
+ * POST /api/organization/ai/consent (confirmOrganizationAI): the user confirms
+ * the version they were shown (owner O-13). Called only on the user's
+ * explicit confirmation; the only way a confirmation is recorded.
+ */
+export async function confirmOrganizationAI(configurationVersion: number): Promise<OrganizationAIConsentResult> {
+  try {
+    const raw = await requestApi<unknown>("POST", "/organization/ai/consent", { configurationVersion });
+    return { kind: "confirmed", status: AIStatusSchema.parse(raw) };
+  } catch (e) {
+    if (isApiHttpError(e) && e.status === 409) {
+      const c = OrganizationAIConsentConflictSchema.safeParse(e.data);
+      if (c.success) return { kind: "conflict", reason: c.data.reason, configuration: c.data.organization };
+    }
+    throw e;
+  }
+}
+
 /** Human-readable message for an API failure, usable directly in the UI. */
 export function apiErrorMessage(e: unknown): string {
   if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
+  if (ssoStepupRequired(e)) {
+    return "This change needs a confirmation from an administrator account of your organisation (Google Workspace or Microsoft 365).";
+  }
   if (isApiHttpError(e)) {
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
@@ -714,17 +884,19 @@ const SETTINGS_FIELDS: ReadonlyArray<readonly [keyof Settings, string]> = [
   ["llm_model", "llmModel"],
   ["llm_api_key", "llmApiKey"],
   ["llm_api_key_set", "llmApiKeySet"],
+  ["llm_api_keys_set", "llmApiKeysSet"],
+  ["llm_unbound_api_key_set", "llmUnboundApiKeySet"],
+  ["llm_unbound_api_key", "llmUnboundApiKey"],
+  ["ai_status", "aiStatus"],
   ["llm_base_url", "llmBaseUrl"],
   ["calendar_provider", "calendarProvider"],
   ["webcal_url", "webcalUrl"],
   ["aws_region", "awsRegion"],
-  ["aws_profile", "awsProfile"],
+  ["bedrock_model", "bedrockModel"],
   ["azure_endpoint", "azureEndpoint"],
   ["azure_deployment", "azureDeployment"],
   ["azure_api_version", "azureApiVersion"],
   ["time_format", "timeFormat"],
-  ["gcp_project", "gcpProject"],
-  ["gcp_location", "gcpLocation"],
   ["vertex_model", "vertexModel"],
 ];
 
@@ -808,10 +980,14 @@ export function settingsRequestBody(s: Settings): Record<string, unknown> {
 }
 
 
+/**
+ * Read-only members of the settings document: accepted and ignored on write,
+ * so never sent (contract Settings, NEW-llm-bring-your-own adds three).
+ */
+const SETTINGS_READ_ONLY = new Set(["llmApiKeySet", "llmApiKeysSet", "llmUnboundApiKeySet", "aiStatus", "updatedAt"]);
+
 /** Properties PATCH /api/settings accepts (SettingsUpdate), minus the read-only ones. */
-const SETTINGS_PATCH_KEYS = new Set(
-  Object.keys(SettingsUpdate.shape).filter((k) => k !== "llmApiKeySet" && k !== "updatedAt"),
-);
+const SETTINGS_PATCH_KEYS = new Set(Object.keys(SettingsUpdate.shape).filter((k) => !SETTINGS_READ_ONLY.has(k)));
 
 /**
  * Build the PATCH /api/settings body (PAC-24): only contract properties, and
@@ -831,10 +1007,47 @@ export function settingsPatchBody(s: Settings, previous?: Settings): Record<stri
   return out;
 }
 
-/** The probe body: provider, model and an unsaved key only (PAC-24). */
+/**
+ * The preview (mock) probe. It knows exactly the five key-based providers
+ * (NEW-llm-bring-your-own AC-33); any other choice has nothing to test.
+ */
+export function mockLlmTest(s: Settings): LLMTestResult {
+  const provider = String(s.llm_provider ?? "");
+  if (!isKeyProvider(provider)) {
+    return { ok: false, message: "No AI provider is chosen, so there is nothing to test." };
+  }
+  const need = (...keys: Array<keyof Settings>) => keys.find((k) => !s[k] || String(s[k]).trim() === "");
+  let missing: keyof Settings | undefined;
+  if (provider === "bedrock") missing = need("aws_region");
+  else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
+  if (missing) {
+    return { ok: false, message: `Missing required field: ${String(missing)}` };
+  }
+  return {
+    ok: true,
+    message: `Reached ${PROVIDER_LABELS[provider]} (${s.llm_model || "default model"}) — mock response`,
+    latency_ms: 120 + Math.floor(Math.random() * 80),
+  };
+}
+
+/**
+ * The probe body: provider, model and an unsaved key only (PAC-24). The probe
+ * tests the form as it stands, unsaved: a key the user typed is sent, and a
+ * saved key the user removed ("Remove saved key", `llm_api_key` = "") is sent
+ * as an empty key, so the server answers "needs a key" instead of testing the
+ * stored key (contract challenge rev. 2, non-blocking 6). An untouched key
+ * field (`undefined`) sends nothing, so the stored key bound to the provider
+ * is tested.
+ */
 export function llmTestBody(s: Settings): Record<string, string> {
-  const body: Record<string, string> = { llmProvider: String(s.llm_provider ?? ""), llmModel: s.llm_model ?? "" };
+  const provider = String(s.llm_provider ?? "");
+  // PAC-73 Part 2: a model or key is never combined with the organisation's
+  // configuration (the server refuses it), so "organization", off and a
+  // removed provider send the choice alone.
+  if (!isKeyProvider(provider)) return { llmProvider: provider };
+  const body: Record<string, string> = { llmProvider: provider, llmModel: s.llm_model ?? "" };
   if (s.llm_api_key) body.llmApiKey = s.llm_api_key;
+  else if (s.llm_api_key === "" && isKeyProvider(provider)) body.llmApiKey = "";
   return body;
 }
 
@@ -1420,30 +1633,15 @@ export const api = {
   llmTest: (s: Settings) =>
     withFallback(
       async () => {
-        const res = await requestApi<{ ok: boolean; response: string; provider: string }>(
+        const res = await requestApi<{ ok: boolean; response: string; provider: string; configuration?: "own" | "organization" }>(
           "POST",
           "/llm/test",
           llmTestBody(s),
         );
-        return { ok: res.ok, message: `Reached ${res.provider || "the provider"}: ${res.response}` };
+        const whose = res.configuration === "organization" ? "your organisation's " : "";
+        return { ok: res.ok, message: `Reached ${whose}${res.provider || "the provider"}: ${res.response}` };
       },
-      () => {
-        const provider = s.llm_provider;
-        const need = (...keys: Array<keyof Settings>) =>
-          keys.find((k) => !s[k] || String(s[k]).trim() === "");
-        let missing: keyof Settings | undefined;
-        if (provider === "bedrock") missing = need("aws_region");
-        else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
-        else if (provider === "ollama") missing = need("llm_base_url");
-        if (missing) {
-          return { ok: false, message: `Missing required field: ${String(missing)}` };
-        }
-        return {
-          ok: true,
-          message: `Reached ${provider} (${s.llm_model || "default model"}) — mock response`,
-          latency_ms: 120 + Math.floor(Math.random() * 80),
-        };
-      },
+      () => mockLlmTest(s),
     ),
 
   // ----- Events: edit / delete -----
