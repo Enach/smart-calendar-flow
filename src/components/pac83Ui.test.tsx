@@ -22,7 +22,7 @@ import {
   ApiUnreachableError,
   type ApiEffect,
 } from "@/api/client";
-import { ApiErrorNotice } from "./ApiErrorNotice";
+import { ApiErrorNotice, ApiErrorText } from "./ApiErrorNotice";
 import { StillWorking, STILL_WORKING_MESSAGE } from "./StillWorking";
 import { NLPBar } from "./NLPBar";
 import { QuickActions } from "./QuickActions";
@@ -201,6 +201,49 @@ describe("AC-17 / AC-19: a write whose outcome is unknown (run focus engine)", (
     });
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostWrite));
     expect(runs()).toBe(1);
+  });
+});
+
+describe("AC-19: clearing focus blocks (review finding 1)", () => {
+  it("a lost answer says it may or may not have been applied, never 'Failed to clear focus blocks'", async () => {
+    vi.stubGlobal("confirm", () => true);
+    fetchMock.mockImplementation(async (u, init) =>
+      pathOf(u) === "/api/focus/blocks" && init?.method === "DELETE" ? html(504) : json([]),
+    );
+    render(
+      <Shell>
+        <QuickActions weekISO="2026-11-02" />
+      </Shell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /clear focus/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostWrite));
+    expect(toast.error).not.toHaveBeenCalledWith(expect.stringMatching(/^Failed/));
+    expect(fetchMock.mock.calls.filter(([u, init]) => pathOf(u) === "/api/focus/blocks" && init?.method === "DELETE")).toHaveLength(1);
+  });
+});
+
+describe("AC-28 support: read failures carry the api-error tags (review finding 2)", () => {
+  it("ApiErrorText tags a lost read and says 'can't reach'", () => {
+    render(<ApiErrorText error={new ApiUnreachableError("network")} effect="read" />);
+    const t = screen.getByTestId("api-error");
+    expect(t).toHaveAttribute("data-error-kind", "lost");
+    expect(t).toHaveAttribute("data-effect", "read");
+    expect(t).toHaveTextContent(API_MESSAGES.lostRead);
+  });
+
+  it("the audit-log read in Quick actions renders a tagged failure", async () => {
+    fetchMock.mockImplementation(async (u) => {
+      if (pathOf(u) === "/api/audit") throw new TypeError("Failed to fetch");
+      return json([]);
+    });
+    render(
+      <Shell>
+        <QuickActions weekISO="2026-11-02" />
+      </Shell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /audit log/i }));
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "lost");
   });
 });
 

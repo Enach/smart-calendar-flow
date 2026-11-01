@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { managerApi, managerKeys } from "@/api/manager";
 import { apiErrorMessage } from "@/api/client";
 import { TimeFormatProvider } from "@/contexts/TimeFormatContext";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 /** PAC-83: the demo label exists only in a non-production build (contract §4.2). */
 const DemoLabel = __PACEDAY_DEMO_BUILD__ ? lazy(() => import("@/demo/DemoLabel")) : null;
@@ -72,7 +73,7 @@ export function RequireAuth({
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
           <p className="max-w-md text-sm text-muted-foreground">
-            {apiErrorMessage(profileQuery.error)}
+            <ApiErrorText error={profileQuery.error} effect="read" />
           </p>
           <Button onClick={() => profileQuery.refetch()}>Retry</Button>
         </div>

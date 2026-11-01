@@ -17,6 +17,7 @@ import { MeetingLinkRow } from "@/components/MeetingLinkRow";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { Attendee, CalendarEvent, ConferenceLink } from "@/api/types";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-9 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -148,7 +149,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e, "write"));
+      toast.error(apiErrorMessage(e, effectOf("api.updateEvent")));
     } finally {
       setSaving(false);
     }
@@ -163,7 +164,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       setConfirmingDelete(false);
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e, "write"));
+      toast.error(apiErrorMessage(e, effectOf("api.deleteEvent")));
     } finally {
       setDeleting(false);
     }

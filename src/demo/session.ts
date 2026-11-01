@@ -3,6 +3,7 @@
  * entry control is the only caller of startDemoSession (spec AC-15b).
  */
 import type { AuthUser } from "@/contexts/AuthContext";
+import { backupStoresForDemo } from "@/api/demoGate";
 import { clearDemoEvents, seedDemoEvents } from "./demoData";
 
 export const DEMO_USER: AuthUser = {
@@ -18,6 +19,7 @@ export function startDemoSession(): AuthUser {
   } catch {
     /* storage unavailable: the demo lasts for this page only */
   }
+  backupStoresForDemo();
   seedDemoEvents();
   return DEMO_USER;
 }

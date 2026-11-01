@@ -7,6 +7,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { ConnectionStatus } from "./ConnectionStatus";
+import { API_MESSAGES } from "@/api/client";
 import { WorkCalendarConnection } from "./WorkCalendarConnection";
 
 import type { Settings } from "@/api/types";
@@ -92,12 +93,34 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("keeps the generic failure message for any other failure", async () => {
+  it("shows the server's own message for any other HTTP failure (PAC-83: never a bare 'Failed')", async () => {
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "internal error" }, 500));
     render(<Shell>{renderSurface()}</Shell>);
 
     fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to disconnect"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("internal error"));
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // PAC-83 AC-19: a lost answer may or may not have disconnected the calendar.
+  it.each([
+    ["a network failure", () => { throw new TypeError("Failed to fetch"); }],
+    ["nginx's HTML 504", () => new Response("<html>504</html>", { status: 504, headers: { "content-type": "text/html" } })],
+  ])("AC-19: %s says it may or may not have been applied, never 'Failed to disconnect'", async (_l, answer) => {
+    serve({ connected: true, provider: "google", email: "a@x.com" }, answer as () => Response);
+    render(<Shell>{renderSurface()}</Shell>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostWrite));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("AC-17: the budget 503 says 'took too long' and 'refresh to check'", async () => {
+    serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "request timed out" }, 503));
+    render(<Shell>{renderSurface()}</Shell>);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.budgetRead + API_MESSAGES.budgetWriteSuffix));
   });
 });

@@ -31,6 +31,7 @@ import { UI_LOCALE } from "@/lib/locale";
 import { eventChipColors } from "@/lib/eventChip";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { calendarSlotLabelFormat, formatTime } from "@/lib/timeFormat";
+import { effectOf } from "@/api/effects";
 
 type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
 const VIEW_STORAGE_KEY = "calendar.view";
@@ -208,7 +209,7 @@ export default function Dashboard() {
       setNlpInitial("");
       qc.invalidateQueries({ queryKey: ["events"] });
     } catch (e) {
-      toast.error(apiErrorMessage(e, "write"));
+      toast.error(apiErrorMessage(e, effectOf("api.nlpConfirm")));
     } finally {
       setConfirming(false);
     }
@@ -231,7 +232,7 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["events"] });
         setQuickCreate(null);
       } catch (e) {
-        toast.error(apiErrorMessage(e, "write"));
+        toast.error(apiErrorMessage(e, effectOf("api.scheduleCreate")));
       } finally {
         setQuickCreateSaving(false);
       }
@@ -296,7 +297,7 @@ export default function Dashboard() {
         demoWriteToast();
       } catch (e) {
         revert();
-        toast.error(apiErrorMessage(e, "write"));
+        toast.error(apiErrorMessage(e, effectOf("api.updateEvent")));
       }
     },
     [qc, demoWriteToast],

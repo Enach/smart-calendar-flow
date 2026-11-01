@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import TeamInvite from "./TeamInvite";
 import { teamInvitesApi, type TeamInvite as TeamInviteModel } from "@/api/teams";
+import { API_MESSAGES, ApiGatewayError, ApiUnreachableError } from "@/api/client";
+import { fireEvent } from "@testing-library/react";
 
 vi.mock("@/components/Navbar", () => ({ Navbar: () => null }));
 
@@ -68,5 +70,27 @@ describe("TeamInvite page (PAC-34 AC-2)", () => {
     vi.spyOn(teamInvitesApi, "get").mockResolvedValue({ ...invite, expires_at: "2020-01-01T00:00:00Z" });
     renderPage();
     expect(await screen.findByTestId("invite-expiry")).toHaveTextContent(/expired/i);
+  });
+});
+
+describe("TeamInvite failures (PAC-83)", () => {
+  it("AC-19: an accept whose answer is lost says it may or may not have been applied, as a tagged write", async () => {
+    vi.spyOn(teamInvitesApi, "get").mockResolvedValue(invite);
+    const accept = vi.spyOn(teamInvitesApi, "accept").mockRejectedValue(new ApiGatewayError(504));
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /accept/i }));
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "lost");
+    expect(notice).toHaveAttribute("data-effect", "write");
+    expect(notice).toHaveTextContent(API_MESSAGES.lostWrite);
+    expect(accept).toHaveBeenCalledTimes(1);
+  });
+
+  it("a lost invite read is a tagged 'can't reach' read failure", async () => {
+    vi.spyOn(teamInvitesApi, "get").mockRejectedValue(new ApiUnreachableError("network"));
+    renderPage();
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "lost");
+    expect(notice).toHaveAttribute("data-effect", "read");
   });
 });

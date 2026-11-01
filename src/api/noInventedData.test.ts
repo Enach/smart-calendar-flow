@@ -10,8 +10,9 @@ import * as clientModule from "./client";
 import * as schedulingLinksModule from "./schedulingLinks";
 import * as teamsModule from "./teams";
 import * as managerModule from "./manager";
-import { ApiRequestCancelledError, ApiUnreachableError, CLIENT_REQUEST_BOUND_MS, type ApiEffect } from "./client";
+import { ApiRequestCancelledError, ApiUnreachableError, CLIENT_REQUEST_BOUND_MS } from "./client";
 import { API_OPERATIONS, NOT_OPERATIONS } from "./operations";
+import { OPERATION_EFFECTS } from "./effects";
 import { isDemoSession } from "./demoGate";
 import type { Settings, MoveProposal, ParseResult } from "./types";
 
@@ -25,85 +26,85 @@ const LINK = {
 };
 
 /**
- * Sample arguments for every registered operation, with its effect (contract
- * §3.3: per operation, never derived from the HTTP method — e.g. nlpParse is
- * a POST read). A missing sample or a stale one fails the test.
+ * Sample arguments for every registered operation. A missing sample or a
+ * stale one fails the test. Each operation's effect lives in one place,
+ * src/api/effects.ts, which the UI reads through effectOf().
  */
-const OPERATION_SAMPLES: Record<string, { args: unknown[]; effect: ApiEffect }> = {
-  "api.freebusy": { args: [{ emails: ["a@co.com"], start_time: "2026-11-02T00:00:00Z", end_time: "2026-11-03T00:00:00Z" }], effect: "read" },
-  "api.authStatus": { args: [], effect: "read" },
-  "api.integrationAvailability": { args: [], effect: "read" },
-  "api.authDisconnect": { args: [], effect: "write" },
-  "api.getSettings": { args: [], effect: "read" },
-  "api.updateSettings": { args: [SETTINGS], effect: "write" },
-  "api.getEvents": { args: ["2026-11-02T00:00:00Z", "2026-11-09T00:00:00Z"], effect: "read" },
-  "api.runFocus": { args: ["2026-11-02"], effect: "write" },
-  "api.getFocusBlocks": { args: ["2026-11-02"], effect: "read" },
-  "api.clearFocusBlocks": { args: ["2026-11-02"], effect: "write" },
-  "api.scheduleSuggest": { args: [{ duration_minutes: 30, attendees: [], range_start: "2026-11-02T00:00:00Z", range_end: "2026-11-03T00:00:00Z", title: "x" }], effect: "read" },
-  "api.scheduleCreate": { args: [{ title: "x", start: "2026-11-02T09:00:00Z", end: "2026-11-02T09:30:00Z", attendees: [] }], effect: "write" },
-  "api.compressionPreview": { args: [{ date: "2026-11-02" }], effect: "read" },
-  "api.compressionApply": { args: [{ proposals: [PROPOSAL] }], effect: "write" },
-  "api.nlpParse": { args: ["30 min with a@co.com"], effect: "read" },
-  "api.nlpConfirm": { args: [PARSE, 0], effect: "write" },
-  "api.getAudit": { args: [], effect: "read" },
-  "api.listPersonalCalendars": { args: [], effect: "read" },
-  "api.addPersonalCalendar": { args: [{ type: "webcal", label: "x", url: "https://x.test/a.ics" }], effect: "write" },
-  "api.updatePersonalCalendar": { args: ["1", { enabled: false }], effect: "write" },
-  "api.deletePersonalCalendar": { args: ["1"], effect: "write" },
-  "api.syncPersonalCalendar": { args: ["1"], effect: "write" },
-  "api.llmTest": { args: [SETTINGS], effect: "read" },
-  "api.updateEvent": { args: ["e1", { title: "x" }], effect: "write" },
-  "api.deleteEvent": { args: ["e1"], effect: "write" },
-  "api.searchRooms": { args: ["hel"], effect: "read" },
-  "api.suggestAttendees": { args: ["al"], effect: "read" },
-  "api.addConference": { args: ["e1", { provider: "google_meet" }], effect: "write" },
-  "api.removeConference": { args: ["e1"], effect: "write" },
-  "api.conferenceProviders": { args: [], effect: "read" },
-  "api.zoomDisconnect": { args: [], effect: "write" },
-  "api.microsoftDisconnect": { args: [], effect: "write" },
-  "schedulingLinksApi.listLinks": { args: [], effect: "read" },
-  "schedulingLinksApi.listInvites": { args: [], effect: "read" },
-  "schedulingLinksApi.acceptInvite": { args: ["l1"], effect: "write" },
-  "schedulingLinksApi.declineInvite": { args: ["l1"], effect: "write" },
-  "schedulingLinksApi.createLink": { args: [LINK], effect: "write" },
-  "schedulingLinksApi.updateLink": { args: ["l1", { title: "x" }], effect: "write" },
-  "schedulingLinksApi.deleteLink": { args: ["l1"], effect: "write" },
-  "schedulingLinksApi.leaveLink": { args: ["l1"], effect: "write" },
-  "schedulingLinksApi.listBookings": { args: ["l1"], effect: "read" },
-  "schedulingLinksApi.getPublicLink": { args: ["intro-chat"], effect: "read" },
-  "schedulingLinksApi.getPublicSlots": { args: ["intro-chat", { date: "2030-03-04", duration: 30 }], effect: "read" },
-  "schedulingLinksApi.bookSlot": { args: ["intro-chat", { start: "2030-03-04T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" }], effect: "booking" },
-  "teamInvitesApi.get": { args: ["tok"], effect: "read" },
-  "teamInvitesApi.accept": { args: ["tok"], effect: "write" },
-  "teams.list": { args: [], effect: "read" },
-  "teams.get": { args: ["t1"], effect: "read" },
-  "teams.createTeam": { args: ["Team"], effect: "write" },
-  "teams.renameTeam": { args: ["t1", "Team 2"], effect: "write" },
-  "teams.deleteTeam": { args: ["t1"], effect: "write" },
-  "teams.inviteMember": { args: ["t1", "b@co.com"], effect: "write" },
-  "teams.removeMember": { args: ["t1", "b@co.com"], effect: "write" },
-  "teams.addZone": { args: ["t1", { day_of_week: 1, start_min: 540, end_min: 600, label: "x" }], effect: "write" },
-  "teams.updateZone": { args: ["t1", "z1", { label: "y" }], effect: "write" },
-  "teams.removeZone": { args: ["t1", "z1"], effect: "write" },
-  "teams.findSlots": { args: ["t1", "2030-03-04", 30], effect: "read" },
-  "teams.teamAnalytics": { args: ["t1"], effect: "read" },
-  "manager.getProfile": { args: [], effect: "read" },
-  "manager.setProfile": { args: [{ is_manager: true }], effect: "write" },
-  "manager.listTeam": { args: [TEAM], effect: "read" },
-  "manager.addMember": { args: [{ email: "b@co.com", cadence: "weekly" }, TEAM], effect: "write" },
-  "manager.updateMember": { args: ["b@co.com", { cadence: "weekly" }, TEAM], effect: "write" },
-  "manager.removeMember": { args: ["b@co.com", TEAM], effect: "write" },
-  "manager.detect": { args: [TEAM], effect: "read" },
-  "manager.confirmDetect": { args: [TEAM, ["b@co.com"]], effect: "write" },
-  "manager.gaps": { args: [TEAM], effect: "read" },
-  "manager.analytics": { args: ["2026-11-02", TEAM], effect: "read" },
-  "manager.schedulePrefillUrl": { args: ["b@co.com", undefined, TEAM], effect: "write" },
-  "standalone.fetchSsoStepupOptions": { args: [], effect: "read" },
-  "standalone.fetchOrganizationAI": { args: [], effect: "read" },
-  "standalone.patchOrganizationAI": { args: [{ provider: "openai", configurationVersion: 1 }], effect: "write" },
-  "standalone.chooseOrganizationAIChoice": { args: [], effect: "write" },
-  "standalone.confirmOrganizationAI": { args: [1], effect: "write" },
+const OPERATION_SAMPLES: Record<string, { args: unknown[] }> = {
+  "api.freebusy": { args: [{ emails: ["a@co.com"], start_time: "2026-11-02T00:00:00Z", end_time: "2026-11-03T00:00:00Z" }] },
+  "api.authStatus": { args: [] },
+  "api.integrationAvailability": { args: [] },
+  "api.authDisconnect": { args: [] },
+  "api.getSettings": { args: [] },
+  "api.updateSettings": { args: [SETTINGS] },
+  "api.getEvents": { args: ["2026-11-02T00:00:00Z", "2026-11-09T00:00:00Z"] },
+  "api.runFocus": { args: ["2026-11-02"] },
+  "api.getFocusBlocks": { args: ["2026-11-02"] },
+  "api.clearFocusBlocks": { args: ["2026-11-02"] },
+  "api.scheduleSuggest": { args: [{ duration_minutes: 30, attendees: [], range_start: "2026-11-02T00:00:00Z", range_end: "2026-11-03T00:00:00Z", title: "x" }] },
+  "api.scheduleCreate": { args: [{ title: "x", start: "2026-11-02T09:00:00Z", end: "2026-11-02T09:30:00Z", attendees: [] }] },
+  "api.compressionPreview": { args: [{ date: "2026-11-02" }] },
+  "api.compressionApply": { args: [{ proposals: [PROPOSAL] }] },
+  "api.nlpParse": { args: ["30 min with a@co.com"] },
+  "api.nlpConfirm": { args: [PARSE, 0] },
+  "api.getAudit": { args: [] },
+  "api.listPersonalCalendars": { args: [] },
+  "api.addPersonalCalendar": { args: [{ type: "webcal", label: "x", url: "https://x.test/a.ics" }] },
+  "api.updatePersonalCalendar": { args: ["1", { enabled: false }] },
+  "api.deletePersonalCalendar": { args: ["1"] },
+  "api.syncPersonalCalendar": { args: ["1"] },
+  "api.llmTest": { args: [SETTINGS] },
+  "api.updateEvent": { args: ["e1", { title: "x" }] },
+  "api.deleteEvent": { args: ["e1"] },
+  "api.searchRooms": { args: ["hel"] },
+  "api.suggestAttendees": { args: ["al"] },
+  "api.addConference": { args: ["e1", { provider: "google_meet" }] },
+  "api.removeConference": { args: ["e1"] },
+  "api.conferenceProviders": { args: [] },
+  "api.zoomDisconnect": { args: [] },
+  "api.microsoftDisconnect": { args: [] },
+  "schedulingLinksApi.listLinks": { args: [] },
+  "schedulingLinksApi.listInvites": { args: [] },
+  "schedulingLinksApi.acceptInvite": { args: ["l1"] },
+  "schedulingLinksApi.declineInvite": { args: ["l1"] },
+  "schedulingLinksApi.createLink": { args: [LINK] },
+  "schedulingLinksApi.updateLink": { args: ["l1", { title: "x" }] },
+  "schedulingLinksApi.deleteLink": { args: ["l1"] },
+  "schedulingLinksApi.leaveLink": { args: ["l1"] },
+  "schedulingLinksApi.listBookings": { args: ["l1"] },
+  "schedulingLinksApi.getPublicLink": { args: ["intro-chat"] },
+  "schedulingLinksApi.getPublicSlots": { args: ["intro-chat", { date: "2030-03-04", duration: 30 }] },
+  "schedulingLinksApi.bookSlot": { args: ["intro-chat", { start: "2030-03-04T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" }] },
+  "teamInvitesApi.get": { args: ["tok"] },
+  "teamInvitesApi.accept": { args: ["tok"] },
+  "teams.list": { args: [] },
+  "teams.get": { args: ["t1"] },
+  "teams.createTeam": { args: ["Team"] },
+  "teams.renameTeam": { args: ["t1", "Team 2"] },
+  "teams.deleteTeam": { args: ["t1"] },
+  "teams.inviteMember": { args: ["t1", "b@co.com"] },
+  "teams.removeMember": { args: ["t1", "b@co.com"] },
+  "teams.addZone": { args: ["t1", { day_of_week: 1, start_min: 540, end_min: 600, label: "x" }] },
+  "teams.updateZone": { args: ["t1", "z1", { label: "y" }] },
+  "teams.removeZone": { args: ["t1", "z1"] },
+  "teams.findSlots": { args: ["t1", "2030-03-04", 30] },
+  "teams.teamAnalytics": { args: ["t1"] },
+  "manager.getProfile": { args: [] },
+  "manager.setProfile": { args: [{ is_manager: true }] },
+  "manager.listTeam": { args: [TEAM] },
+  "manager.addMember": { args: [{ email: "b@co.com", cadence: "weekly" }, TEAM] },
+  "manager.updateMember": { args: ["b@co.com", { cadence: "weekly" }, TEAM] },
+  "manager.removeMember": { args: ["b@co.com", TEAM] },
+  "manager.detect": { args: [TEAM] },
+  "manager.confirmDetect": { args: [TEAM, ["b@co.com"]] },
+  "manager.gaps": { args: [TEAM] },
+  "manager.analytics": { args: ["2026-11-02", TEAM] },
+  "manager.schedulePrefillUrl": { args: ["b@co.com", undefined, TEAM] },
+  "standalone.fetchSsoStepupOptions": { args: [] },
+  "standalone.fetchOrganizationAI": { args: [] },
+  "standalone.patchOrganizationAI": { args: [{ provider: "openai", configurationVersion: 1 }] },
+  "standalone.chooseOrganizationAIChoice": { args: [] },
+  "standalone.confirmOrganizationAI": { args: [1] },
 };
 
 type Fn = (...args: unknown[]) => Promise<unknown>;
@@ -132,6 +133,16 @@ describe("AC-7: the operation registry covers every request-making export", () =
     const keys = registered().map(([k]) => k).sort();
     expect(keys.filter((k) => !OPERATION_SAMPLES[k])).toEqual([]);
     expect(Object.keys(OPERATION_SAMPLES).filter((k) => !keys.includes(k))).toEqual([]);
+  });
+
+  it("has exactly one effect per registered operation in OPERATION_EFFECTS (the UI's source), and no stale one", () => {
+    const keys = registered().map(([k]) => k).sort();
+    expect(Object.keys(OPERATION_EFFECTS).sort()).toEqual(keys);
+    // contract §3.3: POST reads are reads, booking create is the only booking.
+    for (const k of ["api.freebusy", "api.scheduleSuggest", "api.compressionPreview", "api.nlpParse", "api.llmTest"]) {
+      expect(OPERATION_EFFECTS[k as keyof typeof OPERATION_EFFECTS], k).toBe("read");
+    }
+    expect(Object.entries(OPERATION_EFFECTS).filter(([, e]) => e === "booking").map(([k]) => k)).toEqual(["schedulingLinksApi.bookSlot"]);
   });
 
   it("registers or explicitly excludes every exported function and api member of the API modules", () => {

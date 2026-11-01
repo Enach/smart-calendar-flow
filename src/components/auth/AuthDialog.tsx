@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Mail, ArrowRight, ArrowLeft, AlertCircle } from "lucide-react";
 import { z } from "zod";
@@ -78,6 +78,12 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
    * retry; nothing starts or offers the demo from here.
    */
   const [failure, setFailure] = useState<SignInFailure | null>(null);
+  // The step that held focus is hidden while the failure shows: move focus to
+  // the failure heading so keyboard and screen-reader users land on it.
+  const failureHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (failure) failureHeading.current?.focus();
+  }, [failure]);
 
   const onDemoStarted = (demoUser: AuthUser) => {
     enterDemo(demoUser);
@@ -149,7 +155,14 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
 
       {failure && (
         <div className="mt-6 space-y-3">
-          <h2 className="font-serif text-2xl leading-tight tracking-tight text-foreground">Can't sign in right now</h2>
+          <h2
+            ref={failureHeading}
+            tabIndex={-1}
+            data-testid="sign-in-failure-heading"
+            className="font-serif text-2xl leading-tight tracking-tight text-foreground focus:outline-none"
+          >
+            Can't sign in right now
+          </h2>
           <ApiErrorNotice error={failure.error} effect="read" onRetry={failure.retry} />
           <Button type="button" variant="ghost" size="sm" onClick={() => setFailure(null)}>
             <ArrowLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" />

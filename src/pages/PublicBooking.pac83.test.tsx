@@ -157,11 +157,18 @@ describe("PAC-83 public booking", () => {
     expect(notice).toHaveTextContent(API_MESSAGES.lostBooking);
     expect(within(notice).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/you are confirmed/i)).not.toBeInTheDocument();
+    // §3.5: no one-click resend — the booker is back on the refreshed list,
+    // told which time they had chosen, and must pick a time again.
+    expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
+    expect(screen.getByTestId("unconfirmed-booking-time")).toHaveTextContent(/you had chosen/i);
+    expect(calls("POST", "/api/book/intro")).toBe(1);
+    await vi.waitFor(() => expect(calls("GET", "/api/book/intro/slots")).toBe(2));
+    // Re-picking keeps the typed details.
+    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
     expect(screen.getByLabelText("Name", { exact: true })).toHaveValue("Booker");
     expect(screen.getByLabelText("Email", { exact: true })).toHaveValue("booker@co.com");
     expect(screen.getByLabelText(/notes/i)).toHaveValue("Agenda");
     expect(calls("POST", "/api/book/intro")).toBe(1);
-    await vi.waitFor(() => expect(calls("GET", "/api/book/intro/slots")).toBe(2));
     window.dispatchEvent(new Event("online"));
     window.dispatchEvent(new Event("focus"));
     await new Promise((r) => setTimeout(r, 50));

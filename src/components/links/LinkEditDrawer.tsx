@@ -29,6 +29,7 @@ import {
 } from "@/api/types";
 import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
+import { effectOf } from "@/api/effects";
 
 interface LinkEditDrawerProps {
   open: boolean;
@@ -287,7 +288,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
 
     onError: (e) => {
       // 409 / 422 and friends keep the drawer open with an actionable message.
-      const message = apiErrorMessage(e, "write");
+      const message = apiErrorMessage(e, effectOf("schedulingLinksApi.updateLink"));
       setError(message);
       toast.error(message);
     },

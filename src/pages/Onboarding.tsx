@@ -9,6 +9,7 @@ import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
+import { effectOf } from "@/api/effects";
 
 type Step = "connect" | "profile";
 
@@ -103,7 +104,7 @@ export default function Onboarding() {
         onboarding_profile_selected: true,
       });
     } catch (e) {
-      setProfileError(apiErrorMessage(e, "write")); // keep the selected role
+      setProfileError(apiErrorMessage(e, effectOf("manager.setProfile"))); // keep the selected role
       setBusy(false);
       return;
     }

@@ -23,6 +23,8 @@ import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { PersonalCalendar, PersonalCalendarType } from "@/api/types";
 import { isValidWebcalUrl } from "@/lib/personalCalendarValidation";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -90,7 +92,7 @@ export function PersonalCalendarsSection() {
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <div className="flex-1">
               <p className="font-medium">Couldn't load personal calendars</p>
-              <p className="mt-0.5 text-destructive/80">{apiErrorMessage(error)}</p>
+              <p className="mt-0.5 text-destructive/80"><ApiErrorText error={error} effect="read" /></p>
               {hasCachedData && (
                 <p className="mt-0.5 text-destructive/70">Showing the last loaded list.</p>
               )}
@@ -164,7 +166,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
           setEditing(false);
           toast.success("Calendar renamed");
         },
-        onError: (e) => toast.error(apiErrorMessage(e, "write")),
+        onError: (e) => toast.error(apiErrorMessage(e, effectOf("api.updatePersonalCalendar"))),
       },
     );
   };
@@ -241,7 +243,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
             { id: cal.id, patch: { enabled: v } },
             {
               onSuccess: () => toast.success(v ? "Calendar enabled" : "Calendar disabled"),
-              onError: (e) => toast.error(apiErrorMessage(e, "write")),
+              onError: (e) => toast.error(apiErrorMessage(e, effectOf("api.updatePersonalCalendar"))),
             },
           )
         }
@@ -250,7 +252,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
         onClick={() =>
           sync.mutate(cal.id, {
             onSuccess: () => toast.success(`Synced ${cal.label}`),
-            onError: (e) => toast.error(apiErrorMessage(e, "write")),
+            onError: (e) => toast.error(apiErrorMessage(e, effectOf("api.syncPersonalCalendar"))),
           })
         }
         disabled={busy}
@@ -265,7 +267,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
           if (confirm(`Remove "${cal.label}"?`)) {
             remove.mutate(cal.id, {
               onSuccess: () => toast.success("Removed"),
-              onError: (e) => toast.error(apiErrorMessage(e, "write")),
+              onError: (e) => toast.error(apiErrorMessage(e, effectOf("api.deletePersonalCalendar"))),
             });
           }
         }}
@@ -308,7 +310,7 @@ function AddPersonalCalendarModal({ onClose }: { onClose: () => void }) {
       toast.success("Personal calendar added");
       onClose();
     } catch (e) {
-      setFormError(apiErrorMessage(e, "write"));
+      setFormError(apiErrorMessage(e, effectOf("api.addPersonalCalendar")));
     }
   };
 

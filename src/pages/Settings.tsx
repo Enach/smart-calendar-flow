@@ -43,6 +43,7 @@ import {
   workingHoursCapacity,
   type SchedulingTemplateId,
 } from "@/lib/schedulingPresets";
+import { effectOf } from "@/api/effects";
 
 
 const TIMEZONES = [
@@ -218,7 +219,7 @@ export default function SettingsPage() {
       setDraft({ ...saved });
       toast.success("Settings saved");
     } catch (e) {
-      toast.error(apiErrorMessage(e, "write"));
+      toast.error(apiErrorMessage(e, effectOf("api.updateSettings")));
     }
   };
 

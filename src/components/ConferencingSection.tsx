@@ -5,6 +5,8 @@ import { api, apiErrorMessage, disconnectNotice } from "@/api/client";
 import { isDemoSession } from "@/api/demoGate";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceProvider, ConferenceProviderStatus, ProviderDisconnectResult, Settings } from "@/api/types";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -93,7 +95,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       refresh();
       qc.invalidateQueries({ queryKey: ["auth"] });
     } catch (e) {
-      toast.error(apiErrorMessage(e, "write"));
+      toast.error(apiErrorMessage(e, effectOf("api.microsoftDisconnect")));
     } finally {
       setOutlookBusy(false);
     }
@@ -125,7 +127,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       announce(await api.zoomDisconnect());
       refresh();
     } catch (e) {
-      const message = apiErrorMessage(e, "write");
+      const message = apiErrorMessage(e, effectOf("api.zoomDisconnect"));
       toast.error(message);
       setZoomError({ message, retry: handleZoomDisconnect });
     } finally {
@@ -163,7 +165,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold text-destructive">Couldn't load conferencing providers</p>
-            <p className="text-[11px] text-destructive/90">{loadError}</p>
+            <p className="text-[11px] text-destructive/90">
+              <ApiErrorText error={error} effect="read" />
+            </p>
           </div>
           <button
             type="button"

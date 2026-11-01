@@ -49,6 +49,54 @@ export async function demoOrReal<T>(op: string, args: readonly unknown[], real: 
   return real();
 }
 
+/**
+ * The local stores the demo writes through (the teams and manager stores are
+ * shared with real sessions, where they cache the server's last answer). A
+ * demo starts on empty stores and leaving it restores what was there, so no
+ * demo write is left behind (PAC-83 AC-15) and no real cache is lost.
+ */
+const SHARED_STORES = ["paceday:teams:v1", "paceday:manager:v1"] as const;
+const STORES_BEFORE_DEMO = "paceday:stores-before-demo";
+
+/** Called by the demo entry when the demo starts. */
+export function backupStoresForDemo(): void {
+  if (!__PACEDAY_DEMO_BUILD__) return;
+  try {
+    if (localStorage.getItem(STORES_BEFORE_DEMO) === null) {
+      const before: Record<string, string | null> = {};
+      for (const key of SHARED_STORES) before[key] = localStorage.getItem(key);
+      localStorage.setItem(STORES_BEFORE_DEMO, JSON.stringify(before));
+    }
+    for (const key of SHARED_STORES) localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** Drop the demo's writes and put back the stores as they were before the demo. */
+export function restoreStoresAfterDemo(): void {
+  if (!__PACEDAY_DEMO_BUILD__) return;
+  try {
+    const raw = localStorage.getItem(STORES_BEFORE_DEMO);
+    if (raw === null) return;
+    const before = JSON.parse(raw) as Record<string, string | null>;
+    for (const key of SHARED_STORES) {
+      const value = before[key];
+      if (typeof value === "string") localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+    }
+    localStorage.removeItem(STORES_BEFORE_DEMO);
+  } catch {
+    /* storage unavailable or a corrupt backup: leave the stores as they are */
+  }
+}
+
+// A demo that ended without "Exit demo" (the tab was closed) leaves its writes
+// in the shared stores: restore them before anything reads the stores.
+if (__PACEDAY_DEMO_BUILD__) {
+  if (!isDemoSession()) restoreStoresAfterDemo();
+}
+
 /** The session-storage key of the removed automatic preview mode (PAC-83 AC-9). */
 const LEGACY_MOCK_MODE_KEY = "clockwise:mock-mode";
 

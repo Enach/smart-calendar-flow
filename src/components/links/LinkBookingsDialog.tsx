@@ -9,6 +9,7 @@ import type { SchedulingLink } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 interface LinkBookingsDialogProps {
   open: boolean;
@@ -51,7 +52,7 @@ export function LinkBookingsDialog({ open, onOpenChange, link }: LinkBookingsDia
         {error && (
           <div role="alert" className="flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-            <p className="min-w-0 flex-1 text-sm text-destructive/90">{apiErrorMessage(error)}</p>
+            <p className="min-w-0 flex-1 text-sm text-destructive/90"><ApiErrorText error={error} effect="read" /></p>
             <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching} className="shrink-0">
               <RotateCcw className="h-3.5 w-3.5" /> Retry
             </Button>

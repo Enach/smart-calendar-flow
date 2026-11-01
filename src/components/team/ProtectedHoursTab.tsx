@@ -31,6 +31,7 @@ import {
 } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
+import { effectOf } from "@/api/effects";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -61,7 +62,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
     qc.invalidateQueries({ queryKey: teamKeys.all });
     onChanged();
   };
-  const onMutationError = (e: unknown) => toast.error(apiErrorMessage(e, "write"));
+  const onMutationError = (e: unknown) => toast.error(apiErrorMessage(e, effectOf("teams.updateZone")));
 
   const addMut = useMutation({
     mutationFn: (input: Omit<NoMeetingZone, "id" | "created_at">) =>
@@ -584,7 +585,7 @@ function InviteDialog({
   const inviteMut = useMutation({
     mutationFn: () => teamsApi.remote.inviteMember(teamId, email, name),
     // Typed values are preserved on failure.
-    onError: (e) => setError(apiErrorMessage(e, "write")),
+    onError: (e) => setError(apiErrorMessage(e, effectOf("teams.inviteMember"))),
     onSuccess: () => {
       toast.success(`Invite sent to ${email}.`);
       setEmail("");
@@ -665,7 +666,7 @@ function ManageMembersSheet({
   const isOwner = team.owner_email === me;
   const removeMemberMut = useMutation({
     mutationFn: (email: string) => teamsApi.remote.removeMember(team.id, email),
-    onError: (e) => toast.error(apiErrorMessage(e, "write")),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("teams.removeMember"))),
     onSuccess: () => {
       toast.success("Member removed.");
       onChanged();

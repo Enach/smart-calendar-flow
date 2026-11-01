@@ -132,6 +132,12 @@ export default function PublicBooking() {
    * Shown with the booking wording; never re-sent by code.
    */
   const [submitFailure, setSubmitFailure] = useState<unknown>(null);
+  /**
+   * The time of a booking whose outcome is unknown. The booker is sent back
+   * to the refreshed list and must pick a time again: nothing re-sends the
+   * booking in one click (spec §3.5).
+   */
+  const [unconfirmedSlot, setUnconfirmedSlot] = useState<BookingSlot | null>(null);
   const [confirmation, setConfirmation] = useState<BookingConfirmation | null>(null);
 
   // Default duration once link loads.
@@ -166,6 +172,7 @@ export default function PublicBooking() {
     setSelectedSlot(null);
     setSubmitError(null);
     setSubmitFailure(null);
+    setUnconfirmedSlot(null);
   }, [dateStr, duration]);
 
   const bookMutation = useMutation({
@@ -210,6 +217,8 @@ export default function PublicBooking() {
         // the typed details stay; the day's times are re-read so the booker
         // can see whether the slot is gone. Nothing re-sends the booking.
         setSubmitFailure(e);
+        setUnconfirmedSlot(selectedSlot);
+        setSelectedSlot(null);
         void slotsQuery.refetch();
       } else {
         setSubmitError(apiErrorMessage(e));
@@ -470,6 +479,15 @@ export default function PublicBooking() {
                       {submitError}
                     </p>
                   )}
+                  {submitFailure !== null && unconfirmedSlot && (
+                    <div className="mb-3 space-y-2">
+                      <ApiErrorNotice error={submitFailure} effect="booking" />
+                      <p className="text-sm text-muted-foreground" data-testid="unconfirmed-booking-time">
+                        You had chosen {fmtDateLong(unconfirmedSlot.start)}, {fmtTime(unconfirmedSlot.start)}. If you still want a
+                        time, pick one again below — your details are kept.
+                      </p>
+                    </div>
+                  )}
                   {slotsFailed && (
                     <ApiErrorNotice
                       className="mb-3"
@@ -545,6 +563,7 @@ export default function PublicBooking() {
                     e.preventDefault();
                     setSubmitError(null);
                     setSubmitFailure(null);
+                    setUnconfirmedSlot(null);
                     if (!name.trim() || !email.trim()) {
                       setSubmitError("Please enter your name and email.");
                       return;

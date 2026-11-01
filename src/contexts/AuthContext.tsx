@@ -8,7 +8,7 @@ import {
 } from "react";
 
 import { apiFetch, type ApiError } from "@/lib/api";
-import { clearDemoSession, isDemoSession } from "@/api/demoGate";
+import { clearDemoSession, isDemoSession, restoreStoresAfterDemo } from "@/api/demoGate";
 import { AuthContext } from "./auth-context";
 import type { AuthContextValue } from "./auth-context";
 
@@ -92,6 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const exitDemo = useCallback(() => {
     clearDemoSession();
+    restoreStoresAfterDemo();
     if (__PACEDAY_DEMO_BUILD__) {
       void import("@/demo/session").then((m) => m.endDemoSession());
     }

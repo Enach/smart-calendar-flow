@@ -7,6 +7,7 @@ import { useAudit } from "@/hooks/useAudit";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { DATE_TIME, formatDateTime, type TimeFormat } from "@/lib/timeFormat";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 function formatTimestamp(iso: string, tf: TimeFormat) {
   if (!iso) return "Unknown date";
@@ -52,7 +53,7 @@ export default function AuditPage() {
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Couldn’t load the audit log</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{apiErrorMessage(error)}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground"><ApiErrorText error={error} effect="read" /></p>
               {hasCached && (
                 <p className="mt-1 text-xs text-muted-foreground">Showing the last entries loaded successfully.</p>
               )}

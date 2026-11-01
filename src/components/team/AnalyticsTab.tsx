@@ -8,6 +8,7 @@ import { apiErrorMessage } from "@/api/client";
 import { managerApi, managerKeys } from "@/api/manager";
 import { localISODate, mondayOf } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 interface Props {
   activeTeam: FormalTeam | null;
@@ -84,7 +85,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
       {activeTeam && teamAnalyticsQ.isError && (
         <div className="flex flex-wrap items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/8 px-4 py-3">
           <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">
-            {apiErrorMessage(teamAnalyticsQ.error)}
+            <ApiErrorText error={teamAnalyticsQ.error} effect="read" />
           </p>
           <Button size="sm" variant="outline" onClick={() => teamAnalyticsQ.refetch()} disabled={teamAnalyticsQ.isFetching}>
             Retry
@@ -432,7 +433,7 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
         ) : analyticsQ.isError ? (
           <div className="flex flex-wrap items-start gap-3">
             <p className="min-w-0 flex-1 text-sm text-foreground" role="alert">
-              {apiErrorMessage(analyticsQ.error)}
+              <ApiErrorText error={analyticsQ.error} effect="read" />
             </p>
             <Button size="sm" variant="outline" onClick={() => analyticsQ.refetch()} disabled={analyticsQ.isFetching}>
               Retry

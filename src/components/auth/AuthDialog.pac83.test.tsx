@@ -121,6 +121,14 @@ describe("PAC-83 sign-in dialog", () => {
     await waitFor(() => expect(assigned).toEqual(["https://api.paceday.test/api/auth/google"]));
   });
 
+  it("a11y: the failure view takes the focus (the step that held it is hidden)", async () => {
+    serve({ "/api/health": down });
+    renderDialog();
+    fireEvent.click(await screen.findByRole("button", { name: /continue with google/i }));
+    const heading = await screen.findByTestId("sign-in-failure-heading");
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
   it("AC-14: a failed sign-in discovery shows an error with a retry, never the demo", async () => {
     serve({ "/api/auth/detect": down });
     renderDialog();
@@ -167,12 +175,17 @@ describe("PAC-83 sign-in dialog", () => {
   });
 
   it("AC-15d: with the production value of the flag, no demo entry in the initial or the error view", async () => {
-    vi.stubGlobal("__PACEDAY_DEMO_BUILD__", false);
-    vi.stubGlobal("fetch", fetchMock);
+    // Positive control first, in this test: with the flag on, the (lazy) entry
+    // does appear — so its absence below is the flag's doing, whatever ran before.
     serve({ "/api/health": down });
+    const control = renderDialog();
+    expect(await screen.findByTestId("demo-entry")).toBeInTheDocument();
+    control.unmount();
+
+    vi.stubGlobal("__PACEDAY_DEMO_BUILD__", false);
     renderDialog();
     await screen.findByRole("button", { name: /continue with google/i });
-    expect(screen.queryByTestId("demo-entry")).not.toBeInTheDocument();
+    await expect(screen.findByTestId("demo-entry", {}, { timeout: 300 })).rejects.toThrow();
     fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
     await screen.findByTestId("api-error");
     expect(screen.queryByTestId("demo-entry")).not.toBeInTheDocument();

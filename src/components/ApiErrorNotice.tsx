@@ -61,3 +61,19 @@ export function ApiErrorNotice({
     </div>
   );
 }
+
+/**
+ * PAC-83: the message of an API failure as inline text, for surfaces that
+ * already have their own layout and retry control. Carries the same e2e
+ * contract (`api-error`, `data-error-kind`, `data-effect`) as ApiErrorNotice.
+ */
+export function ApiErrorText({ error, effect, className }: { error: unknown; effect: ApiEffect; className?: string }) {
+  const kind = classifyApiFailure(error);
+  if (kind === "cancelled") return null;
+  return (
+    <span data-testid="api-error" data-error-kind={kind} data-effect={effect} className={className}>
+      {apiFailureMessage(error, effect).message}
+    </span>
+  );
+}
+
