@@ -1210,8 +1210,18 @@ export interface paths {
          *     Since PAC-71 this is the SIGN-IN start only: a flow it starts is
          *     always a sign-in, whether or not the browser holds a session. The
          *     signed-in "connect a calendar" controls use `startMicrosoftConnect`.
-         *     The scope set is unchanged (exactly `Calendars.ReadWrite`,
-         *     `User.Read`, `offline_access`; PAC-50 AC-24, spec AC-11).
+         *     Since PAC-71 contract revision 3.1 (owner, 2026-11-01, spec OQ-8,
+         *     OQ-9, D-14, AC-11) the scope parameter is exactly
+         *     `openid profile Calendars.ReadWrite User.Read offline_access`, in
+         *     that order: today's three scopes preceded by the basic `openid` and
+         *     `profile` (both user-level consent, never an admin consent), so
+         *     Microsoft returns a signed ID token carrying `tid` and `oid`. No
+         *     other scope is added (no `email`). PAC-50 AC-24's scope-pinning test
+         *     compares the joined string in order and is amended to allow exactly
+         *     this string. The request also carries
+         *     `nonce=<N>`, where N is the lowercase hex SHA-256 of the state value
+         *     in the `ms_oauth_state` cookie, so the callback can bind the ID
+         *     token to this browser's sign-in without a new cookie.
          *
          */
         get: operations["startMicrosoftOAuth"];
@@ -1245,34 +1255,94 @@ export interface paths {
          *     started (PAC-47 D-18, spec AC-14). An unconfigured client is the 503
          *     on both branches, checked after the state as today.
          *
-         *     SIGN-IN branch. Steps 1 and 2 are today's (PAC-24, PAC-35); the rest
-         *     is PAC-71's.
+         *     SIGN-IN branch. Step 1 and the `/me` read are today's (PAC-24,
+         *     PAC-35); the rest is PAC-71's. Since contract revision 3 (owner,
+         *     2026-11-01, spec OQ-8) the tenant comes from the signed ID token and
+         *     the organisation lookup is evidence only; since revision 3.1 (owner,
+         *     OQ-9) the object id comes from the same signed ID token and `/me`
+         *     is a mandatory cross-check (PAC-71.md §3).
          *     1. `ms_oauth_state` checked (400) and expired; the code is exchanged
-         *        (500 on failure). Sign-in still requests exactly
-         *        `Calendars.ReadWrite`, `User.Read`, `offline_access` (spec AC-11,
-         *        PAC-50 AC-24); no `openid`, so no ID token.
-         *     2. Graph `GET /v1.0/me?$select=id,mail,displayName` with the access
+         *        (500 on failure). Sign-in requests exactly
+         *        `openid profile Calendars.ReadWrite User.Read offline_access`
+         *        (`startMicrosoftOAuth`), so the token response carries an
+         *        `id_token`.
+         *     2. ID TOKEN, TENANT AND OBJECT ID (spec §3 "The Microsoft tenant
+         *        fails closed", D-23, AC-11b). The `id_token` of the token response
+         *        is accepted only when ALL of these hold; otherwise REFUSED, before
+         *        anything is looked up or written. Sign-in uses its OWN
+         *        tenant-pinned verifier; it does NOT reuse the PAC-50 step-up
+         *        verifier (`backend/auth/stepup.go:103`, `:245`), which reads the
+         *        `/common` keys and rejects a `tid` only when it contains `/?#`
+         *        (revision 3.1):
+         *        - it is present, a compact JWS, header `alg` `RS256`, with a
+         *          `kid`;
+         *        - its payload `tid` is a GUID (canonical 8-4-4-4-12 hex, compared
+         *          case-insensitively), checked BEFORE any key is fetched, so no
+         *          other value ever reaches a URL;
+         *        - its signature verifies with the key named by `kid` in
+         *          Microsoft's published keys for that tenant,
+         *          `https://login.microsoftonline.com/{tid}/discovery/v2.0/keys`
+         *          (revision 3.1: each fetch has a 10-second limit, the
+         *          identity-provider class of PAC-81 Part A; keys are cached per
+         *          tenant for up to 24 hours; an unknown `kid` triggers at most one
+         *          refetch per tenant per minute; at most 1000 tenants are cached,
+         *          the least recently used evicted first. The first fetch for a
+         *          tenant that is not cached (new, expired after 24 hours, or
+         *          evicted) is not subject to the per-minute refetch limit. Fetches
+         *          are single-flight per tenant: a request that needs a tenant's
+         *          keys while a fetch of them is in flight waits for that fetch
+         *          (within its own request) instead of starting another or being
+         *          refused as rate-limited. A fetch that errors or exceeds the
+         *          limit, or a `kid` still unknown after the refetch or while that
+         *          tenant's refetch is rate-limited, is REFUSED);
+         *        - `iss` is `https://login.microsoftonline.com/{tid}/v2.0` with the
+         *          token's own `tid`: scheme, host and path compared exactly, the
+         *          `{tid}` part compared case-insensitively (a GUID's hex digits
+         *          may come in either case); and `ver` is `2.0`;
+         *        - `aud` is either the string `MICROSOFT_CLIENT_ID`, or a JSON
+         *          array of exactly one element that is that string; any other
+         *          shape or value (another client, an extra audience, an empty
+         *          array) is REFUSED (revision 3.1);
+         *        - `oid` is present and a GUID (canonical 8-4-4-4-12 hex); absent
+         *          or malformed is REFUSED (revision 3.1, owner OQ-9: the object
+         *          id comes from the signed token);
+         *        - `exp` is in the future and `nbf`, when present, is not
+         *          (60 seconds of clock skew allowed);
+         *        - `nonce` equals the lowercase hex SHA-256 of the `state` that
+         *          matched `ms_oauth_state` (step 1), binding the token to this
+         *          browser's sign-in request.
+         *        The tenant is the token's `tid`. CLASSIFICATION: a `tid` equal to
+         *        `9188040d-6c67-4c5b-b112-36a304b66dad` (Microsoft's documented
+         *        tenant for every personal Microsoft account) is a PERSONAL
+         *        account and is REFUSED here, before `/me` or `/organization` is
+         *        read (owner, 2026-11-01: personal Microsoft sign-in waits for
+         *        follow-up PAC-77; spec AC-5, AC-11c). Any other GUID `tid` is a
+         *        WORK account in that tenant, with object id = the token's `oid`.
+         *        The ID token's `sub`, `email`, `preferred_username` and `name`
+         *        are not used.
+         *     3. Graph `GET /v1.0/me?$select=id,mail,displayName` with the access
          *        token. Unreadable, or no `mail`: the sign-in failure state (a)
-         *        below, nothing saved (PAC-35, unchanged).
-         *     3. TENANT AND CLASSIFICATION (spec §3 "The Microsoft tenant fails
-         *        closed", D-23, OQ-3 items 1 and 2; source chosen in PAC-71.md
-         *        §3): Graph `GET /v1.0/organization?$select=id,verifiedDomains`
-         *        with the same access token (documented least-privileged delegated
-         *        permission: `User.Read`, already granted). The account is a WORK
-         *        account, with tenant = that entry's `id` and object id = `/me`'s
-         *        `id`, only when the answer is a 200 whose `value` holds exactly
-         *        one entry, that entry's `id` is a GUID, and `/me`'s `id` is a
-         *        GUID. Anything else (an error, a timeout, a 4xx including the
-         *        refusal Graph gives personal Microsoft accounts, an empty or
-         *        multi-entry `value`, a non-GUID id): REFUSED, before anything is
-         *        looked up or written. No answer under today's scopes is adopted as
-         *        a positive personal-account signal, so a personal Microsoft
-         *        account cannot sign in (spec AC-5, AC-11b, AC-11c; follow-up PAC-77).
-         *        The identity is authority (`microsoft`, tenant) + object id.
-         *     4. Evidence for `mail`: AUTHORITATIVE when an entry of
+         *        below, nothing saved (PAC-35, unchanged). OBJECT-ID CROSS-CHECK
+         *        (revision 3.1, owner OQ-9, mandatory): `/me`'s `id`, read with the
+         *        access token of the same token response as the verified ID token,
+         *        must equal the token's `oid` (case-insensitive GUID); anything
+         *        else is REFUSED (spec AC-11b). The identity is authority
+         *        (`microsoft`, tenant from step 2) + object id (`oid` from step 2).
+         *     4. EVIDENCE for `mail` (spec §3 evidence table, AC-51): Graph
+         *        `GET /v1.0/organization?$select=id,verifiedDomains` with the same
+         *        access token (documented least-privileged delegated permission:
+         *        `User.Read`, already granted). AUTHORITATIVE only when the answer
+         *        is a 200 whose `value` holds exactly one entry, that entry's `id`
+         *        equals the step-2 tenant (case-insensitive), and an entry of its
          *        `verifiedDomains` has `name` equal to the address's domain (exact,
-         *        case-insensitive); otherwise NONE. A Microsoft work account never
-         *        has MAILBOX evidence.
+         *        case-insensitive). Anything else (an error, a timeout, a 4xx, an
+         *        empty or multi-entry `value`, another tenant's id, the domain not
+         *        listed) is NONE evidence and is logged: it is NEVER a refusal by
+         *        itself and never "tenant unobtainable". A bound identity still
+         *        signs in (and PAC-68 evaluates membership as not joined); an
+         *        unknown identity or a migration binding is decided by step 5 with
+         *        NONE evidence (rule 5 and rules (a)/(b) then refuse). A Microsoft
+         *        work account never has MAILBOX evidence.
          *     5. The account is chosen exactly as `googleOAuthCallback`'s SIGN-IN
          *        step 4 (bound identity first; case collision, bound carrier or
          *        unknown identity on a carried address REFUSED; unbound
@@ -1300,10 +1370,12 @@ export interface paths {
          *     with the same guarantees as `googleOAuthCallback` (nothing created,
          *     bound or stored; no organisation, work calendar, standing or
          *     generation change; `auth_token` neither set nor expired; cause in the
-         *     server log only). The same redirect for every cause, including a
-         *     tenant that cannot be obtained, so a Graph outage of
-         *     `/organization` refuses every Microsoft sign-in (spec §5 "Microsoft
-         *     availability"; owner question OQ-8, factory default: accept).
+         *     server log only). The same redirect for every cause, including an ID
+         *     token that does not check, Microsoft's keys being unreadable (so an
+         *     outage of Microsoft's key endpoint refuses every Microsoft sign-in),
+         *     and a personal Microsoft account (spec §5 "Microsoft availability";
+         *     owner OQ-8, 2026-11-01). A Graph `/organization` outage is not a
+         *     refusal cause (step 4).
          *
          *     CONNECT branch: the checks, order and outcomes of
          *     `googleOAuthCallback`'s CONNECT branch, with the `ms_connect_state`
@@ -1311,8 +1383,9 @@ export interface paths {
          *     the user cancels at Microsoft: NOT CREDITED, a redirect to the web
          *     app, never a JSON page) and the expiry of `ms_connect_state` on
          *     every connect-branch response, the 500 included. Neither `/me` nor `/organization` is
-         *     read, so any Microsoft account (work or personal, any tenant, any
-         *     address) can be connected and nothing about it is bound. The
+         *     read and no ID token is requested or read (the connect start
+         *     requests neither `openid` nor `profile`), so any Microsoft account (work or personal, any
+         *     tenant, any address) can be connected and nothing about it is bound. The
          *     credential is stored on U as PAC-67 stores it (refresh token kept
          *     when none is returned; a recorded Outlook loss ends), in the
          *     transaction that re-checks U's generation (spec AC-47), and the
@@ -1349,11 +1422,13 @@ export interface paths {
          *     `ms_connect_state` cookie. Nothing else is written; in particular
          *     the work calendar is not changed (spec D-15).
          *
-         *     `authorize_url` is the URL `startMicrosoftOAuth` builds (same client,
-         *     `/common` authority, redirect URI `MICROSOFT_REDIRECT_URL` = this
-         *     server's `/api/auth/microsoft/callback`, exactly the scopes
-         *     `Calendars.ReadWrite`, `User.Read`, `offline_access`) with this
-         *     state and no `login_hint`. Configuration is read from env at request
+         *     `authorize_url` uses the same client, `/common` authority and
+         *     redirect URI `MICROSOFT_REDIRECT_URL` (= this server's
+         *     `/api/auth/microsoft/callback`) as `startMicrosoftOAuth`, with this
+         *     state and no `login_hint`, but exactly the scopes
+         *     `Calendars.ReadWrite User.Read offline_access` and no `nonce`:
+         *     unlike sign-in (contract revisions 3 and 3.1), a connect identifies
+         *     nobody, so it requests no `openid`, no `profile` and no ID token. Configuration is read from env at request
          *     time, as `startMicrosoftOAuth` does. The callback recognises the
          *     connect by the state alone (`microsoftOAuthCallback`, CONNECT
          *     branch).
@@ -1598,7 +1673,7 @@ export interface paths {
         put?: never;
         /**
          * Book a slot on a public scheduling link.
-         * @description Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422 or 500), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+         * @description Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 422, 500 or 503), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Not checked (API-094, open): the requested time is never checked against the hosts' availability, the link's days or hours, or any upper date bound. The only time checks are the minimum notice (422) and overlap with this link's own non-cancelled bookings (409); any other start is accepted. Host calendars must be readable (owner decision PAC-72 D-6, 2026-11-01): before the booking is saved, each accepted host's calendar is read for the requested time (at most 4 concurrent reads, each limited as on `getPublicBookingSlots`). A host whose calendar cannot be read (not connected, a provider error, or its own time limit) counts as busy and the booking is refused with the 409; nothing is written. A host not read because the request budget ran out is the 503. Whether a readable calendar is busy at that time is still not checked (API-094). The booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
          */
         post: operations["createPublicBooking"];
         delete?: never;
@@ -1616,7 +1691,7 @@ export interface paths {
         };
         /**
          * Available slots for a date, or the list of dates that have any slot.
-         * @description Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
+         * @description Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the next 60 calendar days from `time.Now()` and returns those day strings in `available_dates`, with `slots` always the empty array. Both keys are always present in both modes. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot for that date, and without `date` that day is not listed; the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
          */
         get: operations["getPublicBookingSlots"];
         put?: never;
@@ -2999,6 +3074,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness probe
+         * @description Added by PAC-81 (spec AC-A11, AC-A6 step 1). Says whether this
+         *     backend process should receive traffic now. It is the probe for the
+         *     container health check (through the backend binary's health mode on
+         *     the local port, spec AC-A16, AC-C3) and for the operator's proxy
+         *     (through nginx, spec AC-D1). It is not authenticated and is outside
+         *     every abuse limit (it is not counted by any rate limiter).
+         *
+         *     The answer is 200 `{"status":"ready"}` when both hold:
+         *     - the process has not begun shutting down; and
+         *     - the database answers a ping within the readiness timeout (2 s).
+         *
+         *     Otherwise it is 503 `{"error":"not ready"}` (the PAC-21 JSON error
+         *     envelope, like every 5xx in this contract), answered within the
+         *     readiness timeout + 1 s: the database did not answer in time or
+         *     answered with an error, or shutdown has begun. From SIGTERM or SIGINT
+         *     the process answers this 503 for the whole unready notice (5 s) while
+         *     it still serves every other request normally; after the notice the
+         *     listener closes and connections are refused, so no later answer
+         *     exists from the backend itself.
+         *
+         *     Migrations run before the listener opens, so while they run the
+         *     backend is unreachable (connection refused), never 200: any answer
+         *     from the backend means migrations have finished. Through nginx (the
+         *     operator's proxy probe, spec AC-D1), the refused connection during
+         *     migrations or after the unready notice is nginx's own 502, not an
+         *     answer of this operation; a probe treats any non-200 as not ready.
+         *
+         *     **One database ping at a time (contract revision 2).** Concurrent
+         *     readiness calls share one database ping: at most one ping is in
+         *     flight per process, and a call that arrives while it runs waits for
+         *     and gets that ping's result (single flight). Readiness therefore
+         *     never holds more than one pooled connection, however many calls
+         *     arrive. The 2 s readiness timeout covers the whole check, including
+         *     the wait for a pooled connection: a ping that cannot get a
+         *     connection within 2 s counts as "did not answer in time" (503). A
+         *     call made after shutdown has begun answers 503 without pinging.
+         *
+         *     The body never names the cause. The cause (database error or timeout,
+         *     shutting down) goes to the server log only, never the database
+         *     error text in the response (PAC-21). No other property is ever
+         *     present.
+         *
+         *     Readiness is public: its answer and its latency reveal database
+         *     health and deploy timing to anyone who can reach it. That is
+         *     accepted for a probe; operators may restrict `/api/ready` to their
+         *     health checker at their proxy (`docs/security.md`).
+         *
+         *     How this differs from `getHealth` (/api/health), which is unchanged:
+         *     `getHealth` is liveness. It never touches the database, keeps its
+         *     status and body byte for byte, and answers 200 during the unready
+         *     notice too. Its consumers (e2e/global-setup.ts polling through
+         *     nginx before any test; the web app's `checkApiAvailability`, which
+         *     decides preview mode from `res.ok`) keep calling it, so a database
+         *     outage or a deploy does not switch the web app into preview mode.
+         *
+         */
+        get: operations["getReadiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/rooms": {
         parameters: {
             query?: never;
@@ -3637,7 +3786,7 @@ export interface paths {
         };
         /**
          * Slots on one day where every team member is free.
-         * @description Membership required. The engine searches a fixed 09:00-18:00 UTC window on `date`, steps the cursor in 15-minute increments, treats no-meeting zones and busy calendar events as hard blocks, and scores each slot 0-100 by how few members' focus blocks it disrupts. A member whose calendar token is missing or whose calendar call fails contributes no busy intervals and is silently treated as fully free. `slots` is always an array, never null.
+         * @description Membership required. The engine searches a fixed 09:00-18:00 UTC window on `date`, steps the cursor in 15-minute increments, treats no-meeting zones and busy calendar events as hard blocks, and scores each slot 0-100 by how few members' focus blocks it disrupts. A member whose calendar token is missing or whose calendar call fails contributes no busy intervals and is silently treated as fully free. `slots` is always an array, never null. Members (PAC-81, spec AC-A18): each member's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). "Fails" includes, new with PAC-81, a read that fails on its own time limit: a member whose calendar answers too slowly now looks free, where before the request waited for it. A member who was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is never treated as free; a read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that member. There is no partial shape.
          *
          */
         get: operations["getTeamAvailability"];
@@ -5573,6 +5722,26 @@ export interface components {
         RawGoogleFreeBusyMap: {
             [key: string]: components["schemas"]["RawGoogleBusyWindow"][];
         };
+        /** @description The PAC-21 JSON error envelope (`{"error": ...}`) with its one
+         *     possible readiness message pinned. The cause is never in the body;
+         *     it is in the server log. Probes read only the status code.
+         *      */
+        ReadinessNotReady: {
+            /** @enum {string} */
+            error: "not ready";
+        };
+        ReadinessReady: {
+            /** @constant */
+            status: "ready";
+        };
+        /** @description The shared JSON error envelope (`{"error": ...}`, written by
+         *     writeError) with its one possible message for a request-budget
+         *     expiry pinned.
+         *      */
+        RequestBudgetExpiredError: {
+            /** @enum {string} */
+            error: "request timed out";
+        };
         ScanCandidate: {
             /** Format: email */
             email: string;
@@ -6796,6 +6965,37 @@ export interface components {
             };
             content: {
                 "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
+        /** @description The request budget expired (PAC-81, spec AC-A2, AC-A9, AC-A17,
+         *     AC-A18, AC-A19). Every request has a server-side handler budget
+         *     (90 s, a server setting). When the handler has not finished by then,
+         *     including while it waits for a pooled database connection, or when a
+         *     per-item loop stops starting calendar calls at the stop margin (10 s
+         *     before the budget ends) with items left, or when a per-item read
+         *     hits a deadline the budget shortened, the answer is this 503 with
+         *     the exact body `{"error":"request timed out"}`. Exception:
+         *     `createPublicBooking` is never answered with this 503 once its
+         *     booking insert has been sent (see that operation). It is sent before
+         *     the server's write backstop (120 s), so through nginx (130 s) and a
+         *     correctly configured proxy (over 130 s) the client receives it, not
+         *     a 504 or a dropped connection. Never a 2xx with partial data in its
+         *     place.
+         *
+         *     The body names no step, host, member or item; the server log does.
+         *     No `Retry-After` header. What was done before the budget ran out is
+         *     stated per operation: a read (slot listing, team availability, parse)
+         *     stored nothing; `syncPersonalCalendar` keeps the blockers already
+         *     created and does not stamp `last_synced_at`; `createPublicBooking`
+         *     answers this 503 only before its booking insert is sent, so there
+         *     this 503 proves that no booking was saved for the request.
+         *      */
+        RequestBudgetExpired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["RequestBudgetExpiredError"];
             };
         };
         /** @description Validation failure from validateSchedulingLink / parseClock. Messages: "title is required"; "at least one duration is required"; "durations must be positive integers"; "at least one day is required"; "days_of_week must contain values between 0 and 6"; "window times must use HH:MM"; "window_start must be before window_end"; "buffers must be zero or positive"; "min_notice_minutes must be zero or positive"; "usage_type must be reusable, recurring, or single_use"; "max_uses must be set to a positive integer for recurring links"; "slug cannot be empty" (PATCH only). */
@@ -8243,7 +8443,12 @@ export interface operations {
              *      */
             302: {
                 headers: {
-                    /** @description auth.GetMicrosoftAuthURL(cfg, state), plus `login_hint=<hint>`
+                    /** @description auth.GetMicrosoftAuthURL(cfg, state): Microsoft's `/common`
+                     *     authorize endpoint with `scope=openid profile
+                     *     Calendars.ReadWrite User.Read offline_access` (space-separated,
+                     *     URL-encoded, exactly in that order), `state`,
+                     *     `nonce=<lowercase hex SHA-256 of state>` (PAC-71 revisions 3
+                     *     and 3.1), plus `login_hint=<hint>`
                      *     (URL-encoded) when the request's `login_hint` passed the
                      *     LoginHint rule. No other query parameter of this request is
                      *     copied into it.
@@ -8345,7 +8550,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange or token save failed, or (connect) the generation could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). On the CONNECT branch this 500 also expires `ms_connect_state`. A failed account creation or binding is not a 500 but the failure redirect (b) under `302`; an unreadable Graph profile is (a). A failed or refused `/organization` read is neither: it is the refusal. */
+            /** @description Token exchange or token save failed, or (connect) the generation could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). On the CONNECT branch this 500 also expires `ms_connect_state`. A failed account creation or binding is not a 500 but the failure redirect (b) under `302`; an unreadable Graph profile is (a). A failed or refused `/organization` read is neither: it is NONE evidence (SIGN-IN step 4); an ID token that does not check, or unreadable Microsoft keys, is the refusal. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8739,7 +8944,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Booking confirmed and host calendar events written. */
+            /** @description Booking saved (PAC-81, spec AC-A19). Once the booking row is saved, the host calendar events (best effort, as described above) and the confirmation email are completed as one unit that does not depend on this request: it has its own per-call time limits, and a deploy waits for it within the drain (an abandoned unit is logged with the booking id and the hosts done and not done). The server waits for that unit only until the request budget runs out, then answers this 201 anyway, so a host's calendar event may be written after the response. The body is the same either way and carries no event data. With responsive calendars every host event exists when the 201 is sent, as before. A retry behaves as before PAC-81: 409 on overlap, 410 when the link is exhausted; no request returns another request's booking. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -8766,7 +8971,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description An overlapping non-cancelled booking already exists. Body: {"error":"slot is no longer available"} */
+            /** @description An overlapping non-cancelled booking already exists, or (owner decision PAC-72 D-6) an accepted host's calendar could not be read. Nothing is written. Body: {"error":"slot is no longer available"} */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -8794,13 +8999,22 @@ export interface operations {
                 };
             };
             429: components["responses"]["BookingCreateRateLimited"];
-            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". The detail is written to the server log and Sentry only (PAC-21). A 500 from this operation does NOT prove that no booking was saved: when the insert was sent and its result is lost (for example the database connection drops), the outcome is unknown and the answer is this 500 (PAC-81 contract revision 2). Only the 503 proves that nothing was saved. */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["BookingError"];
+                };
+            };
+            /** @description The request budget ran out BEFORE the booking insert was sent (PAC-81, spec AC-A2, AC-A19; contract revision 2). From the moment the insert is sent this request is never answered with this 503: the server waits for the insert's own result (bounded by the insert's own duration, not by the budget) and answers 201 if the row was saved, or the 500 if the insert failed. So this 503 proves that no booking was saved for this request (no calendar event, no email), and a client may retry it. Shared body `{"error":"request timed out"}`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestBudgetExpiredError"];
                 };
             };
         };
@@ -8867,6 +9081,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
+            503: components["responses"]["RequestBudgetExpired"];
         };
     };
     listCalendarEvents: {
@@ -10818,13 +11033,22 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description Parse() returned an error, including (NEW-llm-bring-your-own) when the caller's settings could not be loaded or the caller's organisation membership could not be read, so which AI configuration applies could not be decided; in that case nothing was sent. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). "AI not configured" is never a 500; it is the 200 with `not_configured`. */
+            /** @description Parse() returned an error, including (NEW-llm-bring-your-own) when the caller's settings could not be loaded or the caller's organisation membership could not be read, so which AI configuration applies could not be decided; in that case nothing was sent. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). "AI not configured" is never a 500; it is the 200 with `not_configured`. Since PAC-81 (spec AC-A3) each LLM call has its own 30 s limit; a call that fails on that limit is a provider failure and answers as one does today, not the 503. */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
+                };
+            };
+            /** @description The request budget ran out (PAC-81, spec AC-A2), for example while waiting for a pooled database connection. A parse stores nothing, so a retry is safe. Shared body `{"error":"request timed out"}`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestBudgetExpiredError"];
                 };
             };
         };
@@ -11369,13 +11593,54 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The blocker's Sync returned an error other than "no stored Google credential" (for example the personal feed could not be read, or reading the credential store failed), or the last_synced_at update failed. Body `{"error":"internal error"}`. Verified by TestPersonalCalendarSyncPropagatesBlockerError. */
+            /** @description The blocker's Sync returned an error other than "no stored Google credential" (for example the personal feed could not be read, or reading the credential store failed), or the last_synced_at update failed. Body `{"error":"internal error"}`. Verified by TestPersonalCalendarSyncPropagatesBlockerError. "The personal feed could not be read" includes, since PAC-81 (spec AC-A17), a feed fetch over its 15 s limit or a feed over 10 MiB: no blocker is created from a partial feed and `last_synced_at` is not stamped; the log names which limit was hit. */
             500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request budget ran out before every blocker was created (PAC-81, spec AC-A2, AC-A17). Creates run on at most 4 concurrent workers, and a create starts only while its full 15 s limit plus the 10 s stop margin remain, so no create is cut short. Every create whose provider answer arrived is recorded and kept; `last_synced_at` is NOT stamped. Running the sync again (or the next scheduled run) creates the remaining blockers without duplicating recorded ones. Residual: a create that fails on its own 15 s limit after the provider accepted it is not recorded, so a re-run creates that blocker again. Shared body `{"error":"request timed out"}`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestBudgetExpiredError"];
+                };
+            };
+        };
+    };
+    getReadiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ready. Not shutting down, and the database answered within 2 s. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadinessReady"];
+                };
+            };
+            /** @description Not ready: the database did not answer within 2 s or answered with
+             *     an error, or shutdown has begun (the unready notice). Sent within
+             *     the readiness timeout + 1 s. Exact body `{"error":"not ready"}`.
+             *      */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReadinessNotReady"];
                 };
             };
         };
@@ -12867,6 +13132,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
+            503: components["responses"]["RequestBudgetExpired"];
         };
     };
     inviteTeamMember: {
