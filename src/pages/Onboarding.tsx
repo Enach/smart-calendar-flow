@@ -103,7 +103,7 @@ export default function Onboarding() {
         onboarding_profile_selected: true,
       });
     } catch (e) {
-      setProfileError(apiErrorMessage(e)); // keep the selected role
+      setProfileError(apiErrorMessage(e, "write")); // keep the selected role
       setBusy(false);
       return;
     }

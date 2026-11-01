@@ -1,7 +1,7 @@
 import { AlertCircle, Loader2, RefreshCw, ScrollText } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
-import { MockBanner } from "@/components/MockBanner";
+import { ServerStatusBanner } from "@/components/ServerStatusBanner";
 import { apiErrorMessage, DEFAULT_AUDIT_LIMIT, describeAuditEntry } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { UI_LOCALE } from "@/lib/locale";
@@ -23,7 +23,7 @@ export default function AuditPage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <MockBanner />
+      <ServerStatusBanner />
       <Navbar />
       <main className="mx-auto w-full max-w-3xl space-y-4 p-4 sm:p-6">
         <div className="mb-2 flex items-end justify-between gap-3">

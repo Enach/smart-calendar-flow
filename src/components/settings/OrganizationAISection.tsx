@@ -203,7 +203,7 @@ function EditForm({ shown, onDone }: { shown: OrganizationAIConfiguration; onDon
           setMessage({ kind: "error", text: "You are not in an organisation." });
       }
     } catch (e) {
-      setMessage({ kind: "error", text: apiErrorMessage(e) });
+      setMessage({ kind: "error", text: apiErrorMessage(e, "write") });
     }
   };
 

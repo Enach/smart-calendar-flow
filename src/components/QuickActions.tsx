@@ -37,7 +37,7 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
       toast.success(`Created ${n} focus block${n === 1 ? "" : "s"}`);
       refreshAll();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, "write"));
     } finally {
       setRunning(false);
     }

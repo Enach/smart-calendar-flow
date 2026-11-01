@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
-import { DemoBanner } from "@/components/DemoBanner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
@@ -315,7 +314,7 @@ export default function LinksPage() {
       toast.success("Invite accepted");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const declineInvite = useMutation({
@@ -324,7 +323,7 @@ export default function LinksPage() {
       toast.info("Invite declined");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const deleteLink = useMutation({
@@ -333,7 +332,7 @@ export default function LinksPage() {
       toast.info("Link deleted");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const leaveLink = useMutation({
@@ -342,7 +341,7 @@ export default function LinksPage() {
       toast.info("You left the link");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const updateLink = useMutation({
@@ -352,7 +351,7 @@ export default function LinksPage() {
       toast.success(link.active ? "Link activated" : "Link paused");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const pendingInviteId =
@@ -384,7 +383,6 @@ export default function LinksPage() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <DemoBanner />
 
       <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
         <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

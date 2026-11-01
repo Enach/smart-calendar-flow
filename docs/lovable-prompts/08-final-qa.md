@@ -27,7 +27,7 @@ Verify or add focused tests for:
 
 ## Online and preview behavior
 
-Check both explicit mock/preview mode and a reachable backend. In online mode, server responses must be rendered and API errors must remain visible. In preview mode, existing fallback data may be used but must be clearly labeled. No flow may claim a remote mutation succeeded when it only changed local state.
+Check both the explicit demo (non-production builds, entered from the sign-in screen) and a reachable backend. Server responses must be rendered and API errors must remain visible; an unreachable backend shows "Can't reach Paceday", never demo data (PAC-83). In the demo, every page shows the demo label. No flow may claim a remote mutation succeeded when it only changed local state.
 
 ## Required final report
 

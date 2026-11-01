@@ -1,13 +1,13 @@
 /**
  * Scheduling links + public booking API (T-28).
  *
- * Wraps the backend endpoints from T-27. When the backend is unreachable
- * (the typical case in the Lovable preview / demo mode), every call falls
- * back to an in-memory mock that mirrors the real surface so the UI stays
- * fully exercisable.
+ * Wraps the backend endpoints from T-27. A failed call is the caller's error,
+ * never invented data (PAC-83); the demo's links live in src/demo and answer
+ * only in an explicit demo session of a non-production build.
  */
 
-import { isDemoSession, requestApi, withFallback } from "./client";
+import { requestApi } from "./client";
+import { demoOrReal } from "./demoGate";
 import {
   BOOKING_HORIZON_DEFAULT_DAYS,
   BOOKING_HORIZON_MAX_DAYS,
@@ -150,231 +150,12 @@ function backendLinkBody(input: {
 
 const publicLinkCache = new Map<string, PublicLinkInfo>();
 
-// ---------- Mock state ----------
-
-const KNOWN_DIRECTORY: Record<string, { name: string; avatar_url?: string }> = {
-  "alice@co.com": { name: "Alice Martin" },
-  "bob@co.com": { name: "Bob Chen" },
-  "carol@co.com": { name: "Carol Diaz" },
-  "david@co.com": { name: "David Okonkwo" },
-  "emma@co.com": { name: "Emma Laurent" },
-  "felix@co.com": { name: "Felix Weber" },
-  "sarah@co.com": { name: "Sarah Liu" },
-  "nicolas@co.com": { name: "Nicolas Rey" },
-};
-
-const ME_USER = { id: "me", email: "alex@demo.paceday.com", name: "Alex Demo" };
-
-function makeOwnerHost(): SchedulingHost {
-  return {
-    user_id: ME_USER.id,
-    email: ME_USER.email,
-    name: ME_USER.name,
-    is_owner: true,
-    status: "accepted",
-  };
-}
-
-function buildHostFromEmail(email: string, status: SchedulingHost["status"] = "pending"): SchedulingHost {
-  const known = KNOWN_DIRECTORY[email.toLowerCase()];
-  return {
-    user_id: known ? `u_${email}` : undefined,
-    email,
-    name: known?.name,
-    avatar_url: known?.avatar_url,
-    is_owner: false,
-    status,
-  };
-}
-
-const ALL_DAYS: Weekday[] = ["mon", "tue", "wed", "thu", "fri"];
-
-interface MockState {
-  links: SchedulingLink[];
-  invites: CoHostInvite[];
-  bookings: BookingConfirmation[];
-  takenSlots: Set<string>; // key: `${slug}|${startIso}`
-  nextId: number;
-}
-
-const mockState: MockState = {
-  links: [],
-  invites: [],
-  bookings: [],
-  takenSlots: new Set(),
-  nextId: 1,
-};
-
-function seedMockLinks() {
-  if (mockState.links.length) return;
-
-  // Owned solo link.
-  mockState.links.push({
-    id: "lnk_1",
-    owner_id: ME_USER.id,
-    title: "Intro chat",
-    slug: "intro-chat",
-    durations: [15, 30],
-    days: ALL_DAYS,
-    window_start: "09:00",
-    window_end: "18:00",
-    buffer_before: 5,
-    buffer_after: 5,
-    min_notice_minutes: 60,
-    usage_type: "reusable",
-    uses_count: 0,
-    active: true,
-    booking_horizon_days: BOOKING_HORIZON_DEFAULT_DAYS,
-    refusal_message: "generic",
-    hosts: [makeOwnerHost()],
-    created_at: new Date(Date.now() - 7 * 86400_000).toISOString(),
-    is_owner: true,
-  });
-
-  // Owned collective link with one accepted + one pending co-host.
-  mockState.links.push({
-    id: "lnk_2",
-    owner_id: ME_USER.id,
-    title: "Product deep-dive",
-    slug: "product-deepdive",
-    durations: [30, 60],
-    days: ["mon", "tue", "wed", "thu"],
-    window_start: "10:00",
-    window_end: "17:00",
-    buffer_before: 10,
-    buffer_after: 5,
-    min_notice_minutes: 240,
-    usage_type: "recurring",
-    max_uses: 5,
-    uses_count: 1,
-    active: true,
-    booking_horizon_days: 30,
-    refusal_message: "specific",
-    hosts: [
-      makeOwnerHost(),
-      buildHostFromEmail("sarah@co.com", "accepted"),
-      buildHostFromEmail("nicolas@co.com", "pending"),
-    ],
-    created_at: new Date(Date.now() - 2 * 86400_000).toISOString(),
-    is_owner: true,
-  });
-
-  // Shared-with-me link (someone else owns it; I'm an accepted co-host).
-  mockState.links.push({
-    id: "lnk_3",
-    owner_id: "u_owner",
-    title: "Design review",
-    slug: "design-review",
-    durations: [45],
-    days: ["tue", "wed", "thu"],
-    window_start: "13:00",
-    window_end: "17:00",
-    buffer_before: 0,
-    buffer_after: 10,
-    min_notice_minutes: 1440,
-    usage_type: "single_use",
-    uses_count: 0,
-    active: true,
-    booking_horizon_days: BOOKING_HORIZON_DEFAULT_DAYS,
-    refusal_message: "generic",
-    hosts: [
-      { ...buildHostFromEmail("emma@co.com", "accepted"), is_owner: true },
-      { ...makeOwnerHost(), is_owner: false, status: "accepted" },
-    ],
-    created_at: new Date(Date.now() - 14 * 86400_000).toISOString(),
-    is_owner: false,
-    my_status: "accepted",
-  });
-
-  // Pending invite from another user.
-  mockState.invites.push({
-    link_id: "lnk_invite_1",
-    link_title: "Quarterly planning",
-    owner_name: "Felix Weber",
-    owner_email: "felix@co.com",
-    invited_at: new Date(Date.now() - 3600_000).toISOString(),
-  });
-}
-seedMockLinks();
-
-const WEEKDAY_INDEX: Record<Weekday, number> = {
-  mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6, sun: 0,
-};
-
-function pad(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-
-function dateOnly(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function parseHM(hm: string): [number, number] {
-  const [h, m] = hm.split(":").map((x) => parseInt(x, 10));
-  return [h || 0, m || 0];
-}
-
-function findLinkBySlug(slug: string): SchedulingLink | undefined {
-  return mockState.links.find((l) => l.slug === slug);
-}
-
-function publicLinkBySlug(slug: string): SchedulingLink | undefined {
-  // A demo "public" link people might land on without auth.
-  const found = findLinkBySlug(slug);
-  if (found) return found;
-  if (slug === "intro-chat" || slug === "product-deepdive" || slug === "design-review") return findLinkBySlug(slug);
-  return undefined;
-}
-
-/** Generate plausible slots for a given date based on link configuration. */
-function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin: number): BookingSlot[] {
-  const target = new Date(`${dateStr}T00:00:00`);
-  const dow = target.getDay();
-  const allowed = link.days.some((d) => WEEKDAY_INDEX[d] === dow);
-  if (!allowed) return [];
-
-  const [sh, sm] = parseHM(link.window_start);
-  const [eh, em] = parseHM(link.window_end);
-  const dayStart = new Date(target);
-  dayStart.setHours(sh, sm, 0, 0);
-  const dayEnd = new Date(target);
-  dayEnd.setHours(eh, em, 0, 0);
-
-  const step = 30; // 30-min increments
-  const out: BookingSlot[] = [];
-  let cursor = new Date(dayStart);
-
-  // Earliest bookable instant given the link's minimum-notice setting.
-  const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
-  const earliest = new Date(Date.now() + minNoticeMs);
-
-  while (cursor.getTime() + durationMin * 60_000 <= dayEnd.getTime()) {
-    const startIso = cursor.toISOString();
-    const endIso = new Date(cursor.getTime() + durationMin * 60_000).toISOString();
-    const taken = mockState.takenSlots.has(`${link.slug}|${startIso}`);
-    const tooSoon = cursor.getTime() < earliest.getTime();
-
-    // Simulate "all hosts must be free": chop a few slots out for collective links
-    let collectiveBlocked = false;
-    if (link.hosts.length > 1) {
-      const hour = cursor.getHours();
-      // Pretend lunch + early afternoon are usually crowded for everyone
-      if (hour === 12 || hour === 14) collectiveBlocked = true;
-    }
-
-    if (!taken && !collectiveBlocked && !tooSoon) {
-      out.push({ start: startIso, end: endIso });
-    }
-    cursor = new Date(cursor.getTime() + step * 60_000);
-  }
-  return out;
-}
-
-/** True when the link has used up its allowed bookings. */
-function isLinkExhausted(link: SchedulingLink): boolean {
-  if (link.usage_type === "single_use") return link.uses_count >= 1;
-  if (link.usage_type === "recurring" && link.max_uses) return link.uses_count >= link.max_uses;
-  return false;
+/**
+ * A co-host the server has not listed yet (its invite is still being sent):
+ * shown by address only — never with a name from anywhere else.
+ */
+function pendingHost(email: string): SchedulingHost {
+  return { email, is_owner: false, status: "pending" };
 }
 
 /** Query keys shared by every scheduling-link consumer. */
@@ -473,36 +254,21 @@ function assertValidLinkBody(v: LinkFormValues): void {
 
 // ---------- Public API ----------
 
-/** Run `demo` in an explicit demo session, `real` otherwise. Never falls back. */
-function demoOrReal<T>(real: () => Promise<T>, demo: () => T | Promise<T>): Promise<T> {
-  return isDemoSession() ? Promise.resolve().then(demo) : real();
-}
-
-
-
-
 export const schedulingLinksApi = {
   // ----- authenticated: links management -----
 
   listLinks: () =>
-    withFallback<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(
-      async () => {
+    demoOrReal<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>("schedulingLinksApi.listLinks", [], async () => {
         const [raw, user] = await Promise.all([
           requestApi<{ owned?: BackendSchedulingLink[]; shared?: BackendSchedulingLink[] }>("GET", "/scheduling-links/"),
           requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
         ]);
         const links = [...(raw.owned ?? []), ...(raw.shared ?? [])].map((link) => normalizeSchedulingLink(link, user));
         return { owned: links.filter((link) => link.is_owner), shared: links.filter((link) => !link.is_owner) };
-      },
-      () => ({
-        owned: mockState.links.filter((l) => l.is_owner).map((l) => ({ ...l, hosts: [...l.hosts] })),
-        shared: mockState.links.filter((l) => !l.is_owner).map((l) => ({ ...l, hosts: [...l.hosts] })),
       }),
-    ),
 
   listInvites: () =>
-    withFallback<CoHostInvite[]>(
-      async () => {
+    demoOrReal<CoHostInvite[]>("schedulingLinksApi.listInvites", [], async () => {
         const [rawInvites] = await Promise.all([
           requestApi<BackendHostInvite[]>("GET", "/scheduling-links/host-invites"),
         ]);
@@ -513,25 +279,13 @@ export const schedulingLinksApi = {
           owner_email: invite.owner_email,
           invited_at: invite.invited_at,
         }));
-      },
-      () => [...mockState.invites],
-    ),
+      }),
 
   acceptInvite: (linkId: string) =>
-    withFallback<void>(
-      () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/accept`),
-      () => {
-        mockState.invites = mockState.invites.filter((i) => i.link_id !== linkId);
-      },
-    ),
+    demoOrReal<void>("schedulingLinksApi.acceptInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/accept`)),
 
   declineInvite: (linkId: string) =>
-    withFallback<void>(
-      () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/decline`),
-      () => {
-        mockState.invites = mockState.invites.filter((i) => i.link_id !== linkId);
-      },
-    ),
+    demoOrReal<void>("schedulingLinksApi.declineInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/decline`)),
 
   createLink: (input: {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
@@ -540,8 +294,7 @@ export const schedulingLinksApi = {
     booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
   }) => {
     assertValidLinkBody(input);
-    return withFallback<SchedulingLink>(
-      async () => {
+    return demoOrReal<SchedulingLink>("schedulingLinksApi.createLink", [input], async () => {
         const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", backendLinkBody(input));
 
         await Promise.allSettled(input.co_host_emails.map((email) =>
@@ -553,24 +306,9 @@ export const schedulingLinksApi = {
         ]);
         const link = normalizeSchedulingLink(detail, user);
         const existing = new Set(link.hosts.map((host) => host.email.toLowerCase()));
-        link.hosts.push(...input.co_host_emails.filter((email) => !existing.has(email.toLowerCase())).map((email) => buildHostFromEmail(email)));
+        link.hosts.push(...input.co_host_emails.filter((email) => !existing.has(email.toLowerCase())).map((email) => pendingHost(email)));
         return link;
-      },
-      () => {
-        const link: SchedulingLink = {
-          id: `lnk_${++mockState.nextId}`, owner_id: ME_USER.id, title: input.title, slug: input.slug,
-          durations: input.durations, days: input.days, window_start: input.window_start, window_end: input.window_end,
-          buffer_before: input.buffer_before, buffer_after: input.buffer_after, min_notice_minutes: input.min_notice_minutes,
-          usage_type: input.usage_type, max_uses: input.usage_type === "recurring" ? input.max_uses : undefined, uses_count: 0,
-          booking_horizon_days: input.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS,
-          refusal_message: input.refusal_message ?? "generic",
-          active: true, hosts: [makeOwnerHost(), ...input.co_host_emails.map((e) => buildHostFromEmail(e, "pending"))],
-          created_at: new Date().toISOString(), is_owner: true,
-        };
-        mockState.links.unshift(link);
-        return { ...link, hosts: [...link.hosts] };
-      },
-    );
+      });
   },
 
 
@@ -580,8 +318,7 @@ export const schedulingLinksApi = {
     max_uses: number | undefined; active: boolean; co_host_emails: string[];
     booking_horizon_days: number; refusal_message: BookingRefusalMessage;
   }>) =>
-    withFallback<SchedulingLink>(
-      async () => {
+    demoOrReal<SchedulingLink>("schedulingLinksApi.updateLink", [id, input], async () => {
         const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
         const merged: LinkFormValues = {
           title: input.title ?? current.title,
@@ -620,46 +357,20 @@ export const schedulingLinksApi = {
         ]);
         const link = normalizeSchedulingLink(detail, user);
         for (const email of input.co_host_emails ?? []) {
-          if (!link.hosts.some((host) => host.email.toLowerCase() === email.toLowerCase())) link.hosts.push(buildHostFromEmail(email));
+          if (!link.hosts.some((host) => host.email.toLowerCase() === email.toLowerCase())) link.hosts.push(pendingHost(email));
         }
         return link;
-      },
-      () => {
-        const idx = mockState.links.findIndex((l) => l.id === id);
-        if (idx < 0) throw new Error("not found");
-        const current = mockState.links[idx];
-        const updated: SchedulingLink = { ...current, ...input } as SchedulingLink;
-        if (input.usage_type && input.usage_type !== "recurring") updated.max_uses = undefined;
-        if (input.co_host_emails) {
-          const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
-          const byEmail = new Map(current.hosts.filter((h) => !h.is_owner).map((h) => [h.email.toLowerCase(), h]));
-          updated.hosts = [owner, ...input.co_host_emails.map((e) => byEmail.get(e.toLowerCase()) ?? buildHostFromEmail(e, "pending"))];
-        }
-        mockState.links[idx] = updated;
-        return { ...updated, hosts: [...updated.hosts] };
-      },
-    ),
+      }),
 
   deleteLink: (id: string) =>
-    withFallback<void>(
-      () => requestApi("DELETE", `/scheduling-links/${id}`),
-      () => {
-        mockState.links = mockState.links.filter((l) => l.id !== id);
-      },
-    ),
+    demoOrReal<void>("schedulingLinksApi.deleteLink", [id], () => requestApi("DELETE", `/scheduling-links/${id}`)),
 
   leaveLink: (id: string) =>
-    withFallback<void>(
-      () => requestApi("POST", `/scheduling-links/${id}/leave`),
-      () => {
-        mockState.links = mockState.links.filter((l) => l.id !== id);
-      },
-    ),
+    demoOrReal<void>("schedulingLinksApi.leaveLink", [id], () => requestApi("POST", `/scheduling-links/${id}/leave`)),
 
   /** GET /scheduling-links/:id/bookings — bookings already made on a link. */
   listBookings: (id: string) =>
-    withFallback<BookingConfirmation[]>(
-      async () => {
+    demoOrReal<BookingConfirmation[]>("schedulingLinksApi.listBookings", [id], async () => {
         const raw = await requestApi<BackendBooking[] | { bookings?: BackendBooking[] }>(
           "GET",
           `/scheduling-links/${id}/bookings`,
@@ -682,20 +393,13 @@ export const schedulingLinksApi = {
           notes: b.notes,
           };
         });
-      },
-      () => {
-        const link = mockState.links.find((l) => l.id === id);
-        if (!link) return [];
-        return mockState.bookings.filter((b) => b.link_slug === link.slug);
-      },
-    ),
+      }),
 
 
   // ----- public: booking flow -----
 
   getPublicLink: (slug: string) =>
-    withFallback<PublicLinkInfo>(
-      async () => {
+    demoOrReal<PublicLinkInfo>("schedulingLinksApi.getPublicLink", [slug], async () => {
         const raw = await requestApi<BackendPublicLink>("GET", `/book/${slug}`);
         const info: PublicLinkInfo = {
           slug: raw.slug, title: raw.title,
@@ -707,36 +411,13 @@ export const schedulingLinksApi = {
         };
         publicLinkCache.set(slug, info);
         return info;
-      },
-      () => {
-        const link = publicLinkBySlug(slug);
-        if (!link) throw new Error("not_found");
-        if (!link.active || isLinkExhausted(link)) {
-          const err = new Error("gone") as Error & { status: number };
-          err.status = 410;
-          throw err;
-        }
-        const checked = link.hosts.filter((h) => {
-          const d = h.email.toLowerCase().split("@")[1] ?? "";
-          return /^(co\.com|paceday\.com|demo\.paceday\.com|acme\.com)$/.test(d) || d.endsWith(".com") && !/^(gmail|yahoo|hotmail|outlook|icloud|proton)/.test(d.split(".")[0]);
-        }).length;
-        const info: PublicLinkInfo = {
-          slug: link.slug, title: link.title, durations: link.durations,
-          hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
-          min_notice_minutes: link.min_notice_minutes, usage_type: link.usage_type,
-          coverage: { total: link.hosts.length, checked },
-        };
-        publicLinkCache.set(slug, info);
-        return info;
-      },
-    ),
+      }),
 
   getPublicSlots: (slug: string, params: { date?: string; duration?: number }) => {
     // The backend requires a date and may answer with either a bare array of
     // slots or an envelope. Without a date there is nothing to ask for.
     if (!params.date) return Promise.resolve({ available_dates: [] as string[], slots: [] as BookingSlot[] });
-    return withFallback<{ available_dates: string[]; slots: BookingSlot[] }>(
-      async () => {
+    return demoOrReal<{ available_dates: string[]; slots: BookingSlot[] }>("schedulingLinksApi.getPublicSlots", [slug, params], async () => {
         const raw = await requestApi<BookingSlot[] | { slots?: BookingSlot[]; available_dates?: string[] }>(
           "GET",
           `/book/${slug}/slots`,
@@ -745,13 +426,7 @@ export const schedulingLinksApi = {
         );
         if (Array.isArray(raw)) return { slots: raw, available_dates: [] };
         return { slots: raw.slots ?? [], available_dates: raw.available_dates ?? [] };
-      },
-      () => {
-        const link = publicLinkBySlug(slug);
-        if (!link || !link.active || isLinkExhausted(link)) return { available_dates: [], slots: [] };
-        return { available_dates: [], slots: generateSlotsForDate(link, params.date!, params.duration ?? link.durations[0] ?? 30) };
-      },
-    );
+      });
   },
 
 
@@ -764,8 +439,7 @@ export const schedulingLinksApi = {
     slug: string,
     input: { start: string; duration_minutes: number; name: string; email: string; notes?: string },
   ) =>
-    demoOrReal<BookingConfirmation>(
-      async () => {
+    demoOrReal<BookingConfirmation>("schedulingLinksApi.bookSlot", [slug, input], async () => {
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
         const raw = await requestApi<BackendBooking>("POST", `/book/${slug}`, {
           name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes,
@@ -777,47 +451,5 @@ export const schedulingLinksApi = {
           duration_minutes: raw.duration_minutes ?? Math.round((new Date(raw.end).getTime() - new Date(raw.start).getTime()) / 60_000),
           hosts: raw.hosts ?? link?.hosts ?? [], booker_name: raw.booker_name, booker_email: raw.booker_email, notes: raw.notes,
         };
-      },
-      () => {
-        const link = publicLinkBySlug(slug);
-        if (!link) throw new Error("not_found");
-        if (!link.active || isLinkExhausted(link)) {
-          const err = new Error("gone") as Error & { status: number };
-          err.status = 410;
-          throw err;
-        }
-        // Enforce minimum notice on the booking attempt itself.
-        const minNoticeMs = Math.max(0, link.min_notice_minutes ?? 0) * 60_000;
-        if (new Date(input.start).getTime() < Date.now() + minNoticeMs) {
-          const err = new Error("too_soon") as Error & { status: number };
-          err.status = 422;
-          throw err;
-        }
-        const key = `${slug}|${input.start}`;
-        if (mockState.takenSlots.has(key)) {
-          const err = new Error("conflict") as Error & { status: number };
-          err.status = 409;
-          throw err;
-        }
-        mockState.takenSlots.add(key);
-        // Bump usage counter and auto-disable if needed.
-        link.uses_count += 1;
-        if (isLinkExhausted(link)) link.active = false;
-        const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
-        const conf: BookingConfirmation = {
-          id: `bk_${++mockState.nextId}`,
-          link_slug: slug,
-          title: link.title,
-          start: input.start,
-          end,
-          duration_minutes: input.duration_minutes,
-          hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
-          booker_name: input.name,
-          booker_email: input.email,
-          notes: input.notes,
-        };
-        mockState.bookings.push(conf);
-        return conf;
-      },
-    ),
+      }),
 };

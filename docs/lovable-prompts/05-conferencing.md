@@ -16,7 +16,7 @@ Supported providers are google_meet, zoom, teams and custom. Inspect `Conferenci
 
 - Query provider status through the API client and render connected, disconnected, connecting, disconnecting and error states.
 - In real API mode, clicking Connect Zoom must navigate to `api.zoomConnectUrl()`; it must not call a mock success helper or claim OAuth succeeded locally.
-- Preserve mock behavior only when the existing explicit mock mode is active.
+- Keep the local Zoom connect only inside an explicit demo session (`src/demo/zoom.ts`, non-production builds).
 - Let the user disconnect Zoom through the 204 endpoint and invalidate provider status afterward.
 - For event conferencing, allow adding a connected provider or a validated custom URL, and allow removal.
 - Disable providers that are unavailable and explain why. Do not send a custom URL for providers that do not require one.

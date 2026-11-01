@@ -4,10 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
 vi.mock("@/components/Navbar", () => ({ Navbar: () => null }));
-vi.mock("@/components/MockBanner", () => ({ MockBanner: () => null }));
+vi.mock("@/components/ServerStatusBanner", () => ({ ServerStatusBanner: () => null }));
 
 import AuditPage from "./Audit";
-import { setMockMode } from "@/api/client";
+
 
 // PAC-67: the activity log words the three connection kinds instead of
 // showing their identifiers; every other kind is shown as before.
@@ -20,7 +20,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("Audit page connection entries (PAC-67)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });

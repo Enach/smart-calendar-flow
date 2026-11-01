@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "@/contexts/useAuth";
@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { managerApi, managerKeys } from "@/api/manager";
 import { apiErrorMessage } from "@/api/client";
 import { TimeFormatProvider } from "@/contexts/TimeFormatContext";
+
+/** PAC-83: the demo label exists only in a non-production build (contract §4.2). */
+const DemoLabel = __PACEDAY_DEMO_BUILD__ ? lazy(() => import("@/demo/DemoLabel")) : null;
 
 /**
  * Gate that wraps any route requiring an authenticated user (or a demo
@@ -81,5 +84,14 @@ export function RequireAuth({
     }
   }
 
-  return <TimeFormatProvider>{children}</TimeFormatProvider>;
+  return (
+    <TimeFormatProvider>
+      {__PACEDAY_DEMO_BUILD__ && isDemo && DemoLabel && (
+        <Suspense fallback={null}>
+          <DemoLabel />
+        </Suspense>
+      )}
+      {children}
+    </TimeFormatProvider>
+  );
 }

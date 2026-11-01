@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setMockMode } from "./client";
+import { api } from "./client";
 import {
   CompressionApplyRequest,
   CompressionResult as CompressionResultSchema,
@@ -44,14 +44,12 @@ const PROPOSAL: MoveProposal = {
 
 describe("focus and compression wire shapes (PAC-32)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterAll(() => {
     vi.unstubAllGlobals();
-    setMockMode(false);
   });
 
   it("the run fixture is the backend's FocusRunResult", () => {
@@ -71,8 +69,8 @@ describe("focus and compression wire shapes (PAC-32)", () => {
     expect(res.weekStart).toBe("2026-11-02T00:00:00Z");
   });
 
-  it("the preview run in mock mode has the same shape as the backend's", async () => {
-    setMockMode(true);
+  it("the demo run has the same shape as the backend's", async () => {
+    sessionStorage.setItem("paceday:demo", "1"); // PAC-83: demo answers only in an explicit demo session
     const res = await api.runFocus("2026-11-02");
     expect(() => FocusRunResultSchema.parse(res)).not.toThrow();
     expect(res.totalMinutes).toBe(res.createdBlocks.length * 90);
@@ -103,8 +101,8 @@ describe("focus and compression wire shapes (PAC-32)", () => {
     expect(() => CompressionApplyRequest.parse(sent)).not.toThrow();
   });
 
-  it("the preview apply in mock mode reports the event ids it was given", async () => {
-    setMockMode(true);
+  it("the demo apply reports the event ids it was given", async () => {
+    sessionStorage.setItem("paceday:demo", "1"); // PAC-83: demo answers only in an explicit demo session
     await expect(api.compressionApply({ proposals: [PROPOSAL] })).resolves.toEqual({ applied: ["evt-1"], failed: [] });
   });
 });

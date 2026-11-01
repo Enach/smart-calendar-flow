@@ -1,15 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  api,
-  ApiHttpError,
-  apiErrorMessage,
-  DEFAULT_AUDIT_LIMIT,
-  formatAuditDetails,
-  isUsingMocks,
-  normalizeAuditEntries,
-  setMockMode,
-} from "./client";
+import { api, ApiHttpError, ApiUnreachableError, apiErrorMessage, DEFAULT_AUDIT_LIMIT, formatAuditDetails, normalizeAuditEntries } from "./client";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -26,7 +17,6 @@ function requestUrl(input: unknown): URL {
 
 describe("audit log contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -59,7 +49,6 @@ describe("audit log contract", () => {
   it("returns an empty list for an empty response", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse([]));
     await expect(api.getAudit()).resolves.toEqual([]);
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("renders structured or missing details safely", () => {
@@ -77,14 +66,12 @@ describe("audit log contract", () => {
     const err = await api.getAudit().catch((e) => e);
     expect(err).toBeInstanceOf(ApiHttpError);
     expect(apiErrorMessage(err)).toBe("audit unavailable");
-    expect(isUsingMocks()).toBe(false);
   });
 
-  it("falls back to preview entries only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5): an unreachable backend is an error, never preview entries.
+  it("rejects with ApiUnreachableError when the backend is unreachable (no preview entries)", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    const entries = await api.getAudit();
-    expect(Array.isArray(entries)).toBe(true);
-    expect(isUsingMocks()).toBe(true);
+    await expect(api.getAudit()).rejects.toBeInstanceOf(ApiUnreachableError);
   });
 
   it("recovers on retry after a failed refetch", async () => {
@@ -95,6 +82,5 @@ describe("audit log contract", () => {
       jsonResponse([{ id: 1, action: "seed", details: "ok", created_at: "2026-05-04T09:00:00Z" }]),
     );
     await expect(api.getAudit()).resolves.toHaveLength(1);
-    expect(isUsingMocks()).toBe(false);
   });
 });

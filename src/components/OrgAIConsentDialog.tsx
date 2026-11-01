@@ -61,7 +61,7 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
         setChanged(true);
       }
     } catch (e) {
-      setProblem(apiErrorMessage(e));
+      setProblem(apiErrorMessage(e, "write"));
     }
   };
 

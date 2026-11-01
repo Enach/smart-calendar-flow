@@ -27,7 +27,7 @@ Normalize list and template responses defensively without changing the contract.
 Use stable habit query keys for habits, templates, and occurrences by habit and date range.
 Keep cached habits and occurrences visible when a refetch fails, and show an actionable error banner with Retry.
 Invalidate the relevant queries after create, update, deactivate, occurrence status update, and reoptimization. Preserve unsaved form values when a mutation fails.
-Keep the explicit preview fallback behavior if the repository already supports it, but never replace an HTTP 4xx or 5xx with demo habits or a fake success.
+Never replace an HTTP 4xx or 5xx, a timeout or a network error with demo habits or a fake success (PAC-83); demo data belongs only to the explicit demo under `src/demo/`.
 
 ## UI behavior
 
@@ -47,7 +47,7 @@ Do not fabricate calendar event IDs, slots, success messages, or occurrence date
 
 ## Tests and acceptance criteria
 
-Add focused adapter and UI tests for request body names, template draft behavior, validation, 204 deactivation, occurrence status mapping, cached data on refetch failure, and HTTP errors without preview fallback.
+Add focused adapter and UI tests for request body names, template draft behavior, validation, 204 deactivation, occurrence status mapping, cached data on refetch failure, and HTTP errors shown as errors.
 
 Verify:
 
@@ -55,7 +55,7 @@ Verify:
 - An invalid interval is rejected before submission and the draft is preserved.
 - A completed occurrence remains completed after a refetch or reoptimization-triggered refresh.
 - A 409, 422, or 500 remains an actionable error.
-- A network failure may show the explicit preview state only if the existing fallback policy allows it.
+- A network failure shows "Can't reach Paceday" with a retry, never a preview state (PAC-83).
 
 Run npm run lint
 Run npm test

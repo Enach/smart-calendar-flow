@@ -164,7 +164,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
           setEditing(false);
           toast.success("Calendar renamed");
         },
-        onError: (e) => toast.error(apiErrorMessage(e)),
+        onError: (e) => toast.error(apiErrorMessage(e, "write")),
       },
     );
   };
@@ -241,7 +241,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
             { id: cal.id, patch: { enabled: v } },
             {
               onSuccess: () => toast.success(v ? "Calendar enabled" : "Calendar disabled"),
-              onError: (e) => toast.error(apiErrorMessage(e)),
+              onError: (e) => toast.error(apiErrorMessage(e, "write")),
             },
           )
         }
@@ -250,7 +250,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
         onClick={() =>
           sync.mutate(cal.id, {
             onSuccess: () => toast.success(`Synced ${cal.label}`),
-            onError: (e) => toast.error(apiErrorMessage(e)),
+            onError: (e) => toast.error(apiErrorMessage(e, "write")),
           })
         }
         disabled={busy}
@@ -265,7 +265,7 @@ function CalendarRow({ cal }: { cal: PersonalCalendar }) {
           if (confirm(`Remove "${cal.label}"?`)) {
             remove.mutate(cal.id, {
               onSuccess: () => toast.success("Removed"),
-              onError: (e) => toast.error(apiErrorMessage(e)),
+              onError: (e) => toast.error(apiErrorMessage(e, "write")),
             });
           }
         }}
@@ -308,7 +308,7 @@ function AddPersonalCalendarModal({ onClose }: { onClose: () => void }) {
       toast.success("Personal calendar added");
       onClose();
     } catch (e) {
-      setFormError(apiErrorMessage(e));
+      setFormError(apiErrorMessage(e, "write"));
     }
   };
 

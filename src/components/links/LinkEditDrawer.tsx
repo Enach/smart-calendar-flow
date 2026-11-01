@@ -287,7 +287,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
 
     onError: (e) => {
       // 409 / 422 and friends keep the drawer open with an actionable message.
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, "write");
       setError(message);
       toast.error(message);
     },

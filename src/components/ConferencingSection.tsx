@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
-import { api, apiErrorMessage, disconnectNotice, isUsingMocks, mockZoomConnect } from "@/api/client";
+import { api, apiErrorMessage, disconnectNotice } from "@/api/client";
+import { isDemoSession } from "@/api/demoGate";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceProvider, ConferenceProviderStatus, ProviderDisconnectResult, Settings } from "@/api/types";
 
@@ -92,21 +93,24 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       refresh();
       qc.invalidateQueries({ queryKey: ["auth"] });
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, "write"));
     } finally {
       setOutlookBusy(false);
     }
   };
 
-  const handleZoomConnect = () => {
+  const handleZoomConnect = async () => {
     if (zoomBusy !== null) return;
     setZoomError(null);
-    // Demo/offline mode only: no OAuth round-trip is possible.
-    if (isUsingMocks()) {
-      mockZoomConnect();
-      toast.success("Zoom connected (demo)");
-      refresh();
-      return;
+    // PAC-83: only an explicit demo session (non-production builds) stays
+    // local; every other "Connect Zoom" starts the real OAuth hand-off.
+    if (__PACEDAY_DEMO_BUILD__) {
+      if (isDemoSession()) {
+        const { demoZoomConnect } = await import("@/demo/zoom");
+        toast.success(demoZoomConnect());
+        refresh();
+        return;
+      }
     }
     // Real API mode: hand off to the backend OAuth entry point.
     setZoomBusy("connect");
@@ -121,7 +125,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       announce(await api.zoomDisconnect());
       refresh();
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, "write");
       toast.error(message);
       setZoomError({ message, retry: handleZoomDisconnect });
     } finally {

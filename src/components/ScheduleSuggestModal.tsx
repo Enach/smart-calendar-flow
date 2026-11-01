@@ -127,7 +127,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, "write"));
     } finally {
       setApplying(false);
     }

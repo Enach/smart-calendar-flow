@@ -63,7 +63,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`${PROVIDER_META[provider].label} link added`);
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, "write");
       toast.error(message);
       setLinkError({ message, retry: () => add(provider, url) });
     } finally {
@@ -82,7 +82,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success("Meeting link removed");
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, "write");
       toast.error(message);
       setLinkError({ message, retry: remove });
     } finally {

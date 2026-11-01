@@ -7,6 +7,7 @@ import {
   OrganizationAIWriteFreshLoginRequired,
   OrganizationAIWriteStepupRequired,
   ProviderDisconnectResult as ProviderDisconnectResultSchema,
+  RequestBudgetExpiredError,
   SettingsUpdate,
   SsoStepupOptions as SsoStepupOptionsSchema,
   SsoWriteMembershipRequired,
@@ -14,6 +15,7 @@ import {
 } from "./generated/schemas";
 import type { SsoStepupProvider, SsoStepupPurpose, SsoStepupScopes } from "./generated/schemas";
 import { apiUrl } from "@/lib/api";
+import { demoOrReal } from "./demoGate";
 
 import type {
   AuditEntry,
@@ -53,151 +55,8 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
-import { PROVIDER_LABELS, isKeyProvider } from "@/lib/aiProviders";
+import { isKeyProvider } from "@/lib/aiProviders";
 
-// ---------- Mock state ----------
-// Used as a fallback when the Go backend at /api is not reachable
-// (e.g. inside the Lovable preview). Mocks are mutated in-memory so
-// the UI feels alive across interactions.
-
-const PROVIDER_KEY = "clockwise:mock-mode";
-
-let usingMocks = false;
-const mockListeners = new Set<(v: boolean) => void>();
-
-export function isUsingMocks() {
-  return usingMocks;
-}
-export function subscribeMockMode(cb: (v: boolean) => void) {
-  mockListeners.add(cb);
-  cb(usingMocks);
-  return () => {
-    mockListeners.delete(cb);
-  };
-}
-export function setMockMode(v: boolean) {
-  if (usingMocks === v) return;
-  usingMocks = v;
-  try {
-    sessionStorage.setItem(PROVIDER_KEY, v ? "1" : "0");
-  } catch { /* storage unavailable */ }
-  mockListeners.forEach((cb) => cb(v));
-}
-try {
-  usingMocks = sessionStorage.getItem(PROVIDER_KEY) === "1";
-} catch { /* storage unavailable */ }
-
-/** sessionStorage flag set when the user explicitly starts the demo. */
-export const DEMO_SESSION_KEY = "paceday:demo";
-
-/**
- * True only in an explicit demo session. Unlike isUsingMocks(), this is never
- * switched on by an unreachable backend.
- */
-export function isDemoSession(): boolean {
-  try {
-    return sessionStorage.getItem(DEMO_SESSION_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-const DEFAULT_SETTINGS: Settings = {
-  work_start: "09:00",
-  work_end: "18:00",
-  timezone: "Europe/Paris",
-  focus_min_block_minutes: 60,
-  focus_max_block_minutes: 180,
-  focus_daily_target_minutes: 180,
-  out_of_hours_meetings_per_week: 0,
-  auto_decline_outside_working_hours: false,
-  focus_label: "Focus Time",
-  focus_color: "#7C3AED",
-  lunch_start: "12:30",
-  lunch_end: "13:30",
-  protect_lunch: true,
-  buffer_before_minutes: 5,
-  buffer_after_minutes: 5,
-  compression_enabled: true,
-  auto_schedule_enabled: true,
-  auto_schedule_cron: "0 7 * * 1-5",
-  llm_provider: "openai",
-  llm_model: "gpt-4o-mini",
-  llm_api_key: "",
-  llm_base_url: "",
-  calendar_id: "primary",
-  calendar_provider: "google",
-  webcal_url: "",
-  aws_region: "us-east-1",
-  azure_endpoint: "",
-  azure_deployment: "",
-  azure_api_version: "2024-02-01",
-  default_conference_provider: "google_meet",
-  teams_enabled: false,
-  // Preview-only defaults so the day-by-day editor is explorable offline.
-  working_hours: {
-    mode: "all_days",
-    default: { enabled: true, start: "09:00", end: "18:00" },
-    days: {
-      monday: { enabled: true, start: "09:00", end: "18:00" },
-      tuesday: { enabled: true, start: "09:00", end: "18:00" },
-      wednesday: { enabled: true, start: "09:00", end: "18:00" },
-      thursday: { enabled: true, start: "09:00", end: "18:00" },
-      friday: { enabled: true, start: "09:00", end: "18:00" },
-      saturday: { enabled: false, start: "09:00", end: "13:00" },
-      sunday: { enabled: false, start: "09:00", end: "13:00" },
-    },
-  },
-};
-
-
-const MOCK_ROOMS: Room[] = [
-  { id: "r1", name: "Helsinki", email: "room.helsinki@co.com", building: "HQ", floor: "3", capacity: 6 },
-  { id: "r2", name: "Reykjavik", email: "room.reykjavik@co.com", building: "HQ", floor: "3", capacity: 4 },
-  { id: "r3", name: "Oslo", email: "room.oslo@co.com", building: "HQ", floor: "2", capacity: 12 },
-  { id: "r4", name: "Stockholm", email: "room.stockholm@co.com", building: "HQ", floor: "2", capacity: 8 },
-  { id: "r5", name: "Copenhagen", email: "room.copenhagen@co.com", building: "Annex", floor: "1", capacity: 20 },
-  { id: "r6", name: "Phone Booth A", email: "room.booth-a@co.com", building: "HQ", floor: "1", capacity: 1 },
-  { id: "r7", name: "Phone Booth B", email: "room.booth-b@co.com", building: "HQ", floor: "1", capacity: 1 },
-];
-
-const MOCK_DIRECTORY: Attendee[] = [
-  { email: "alice@co.com", name: "Alice Martin" },
-  { email: "bob@co.com", name: "Bob Chen" },
-  { email: "carol@co.com", name: "Carol Diaz" },
-  { email: "david@co.com", name: "David Okonkwo" },
-  { email: "emma@co.com", name: "Emma Laurent" },
-  { email: "felix@co.com", name: "Felix Weber" },
-  { email: "grace@co.com", name: "Grace Park" },
-  { email: "client@acme.com", name: "Acme Client" },
-  { email: "pm@co.com", name: "Pat Morgan" },
-  { email: "team@co.com", name: "All Hands" },
-];
-
-const mockState = {
-  settings: { ...DEFAULT_SETTINGS },
-  auth: { connected: true, email: "you@example.com", provider: "google" as CalendarProvider } as AuthStatus,
-  events: [] as CalendarEvent[],
-  focusBlocks: [] as FocusBlock[],
-  audit: [] as AuditEntry[],
-  personalCalendars: [] as PersonalCalendar[],
-  conference: {
-    zoom: { connected: false, email: undefined as string | undefined },
-  },
-  nextEventId: 1000,
-  nextFocusId: 1,
-  nextAuditId: 1,
-  nextPersonalId: 1,
-};
-
-function pad(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-function isoAt(date: Date, h: number, m: number) {
-  const d = new Date(date);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
-}
 /**
  * The apply request's proposal (snake_case, three fields) for a proposal the
  * preview returned (camelCase). Only the event and its proposed times are
@@ -207,119 +66,29 @@ function toApplyProposal(p: MoveProposal): CompressionApplyProposal {
   return { event_id: p.eventId, proposed_start: p.proposedStart, proposed_end: p.proposedEnd };
 }
 
-function dateOnly(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-function startOfWeek(d: Date) {
-  const x = new Date(d);
-  const day = x.getDay();
-  const diff = day === 0 ? -6 : 1 - day; // Monday
-  x.setDate(x.getDate() + diff);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function addMinutes(iso: string, m: number) {
-  return new Date(new Date(iso).getTime() + m * 60_000).toISOString();
-}
-function logAudit(action: string, details: string) {
-  mockState.audit.unshift({
-    id: mockState.nextAuditId++,
-    action,
-    details,
-    created_at: new Date().toISOString(),
-  });
-  mockState.audit = mockState.audit.slice(0, 50);
-}
-
-function seedMocks() {
-  if (mockState.events.length > 0) return;
-  const monday = startOfWeek(new Date());
-  const sample: Array<{ day: number; sh: number; sm: number; eh: number; em: number; title: string; color: string; att?: string[] }> = [
-    { day: 0, sh: 9, sm: 30, eh: 10, em: 0, title: "Standup", color: "#3B82F6", att: ["alice@co.com", "bob@co.com"] },
-    { day: 0, sh: 14, sm: 0, eh: 15, em: 0, title: "1:1 with Alice", color: "#10B981", att: ["alice@co.com"] },
-    { day: 1, sh: 11, sm: 0, eh: 12, em: 0, title: "Product review", color: "#F59E0B", att: ["pm@co.com"] },
-    { day: 1, sh: 16, sm: 0, eh: 17, em: 0, title: "Design sync", color: "#EC4899" },
-    { day: 2, sh: 10, sm: 0, eh: 10, em: 30, title: "Standup", color: "#3B82F6" },
-    { day: 2, sh: 15, sm: 30, eh: 16, em: 30, title: "Customer call", color: "#06B6D4", att: ["client@gmail.com", "alice@co.com"] },
-    { day: 3, sh: 9, sm: 30, eh: 10, em: 30, title: "Sprint planning", color: "#8B5CF6", att: ["team@co.com"] },
-    { day: 3, sh: 14, sm: 0, eh: 14, em: 30, title: "Coffee with Sam", color: "#10B981" },
-    { day: 4, sh: 11, sm: 0, eh: 12, em: 0, title: "Demo prep", color: "#F59E0B" },
-  ];
-  sample.forEach((s) => {
-    const d = new Date(monday);
-    d.setDate(d.getDate() + s.day);
-    mockState.events.push({
-      id: String(mockState.nextEventId++),
-      title: s.title,
-      start: isoAt(d, s.sh, s.sm),
-      end: isoAt(d, s.eh, s.em),
-      color: s.color,
-      attendees: s.att,
-      coverage: s.att && s.att.length > 0 ? coverageFromAttendees(s.att) : undefined,
-    });
-  });
-
-  // A couple of pre-existing focus blocks
-  const focusDays = [1, 3];
-  focusDays.forEach((day) => {
-    const d = new Date(monday);
-    d.setDate(d.getDate() + day);
-    const start = isoAt(d, 8, 0);
-    const end = isoAt(d, 9, 0);
-    const id = mockState.nextFocusId++;
-    mockState.focusBlocks.push({
-      id,
-      google_event_id: `gcal-focus-${id}`,
-      start_time: start,
-      end_time: end,
-      date: dateOnly(d),
-      created_at: new Date().toISOString(),
-    });
-    mockState.events.push({
-      id: `focus-${id}`,
-      title: mockState.settings.focus_label,
-      start,
-      end,
-      color: mockState.settings.focus_color,
-      is_focus_block: true,
-    });
-  });
-
-  logAudit("seed", "Initialised mock workspace");
-
-  // Seed two personal calendars
-  mockState.personalCalendars.push(
-    {
-      id: String(mockState.nextPersonalId++),
-      label: "Personal",
-      type: "google",
-      email: "me.personal@gmail.com",
-      enabled: true,
-      last_synced_at: new Date(Date.now() - 12 * 60_000).toISOString(),
-    },
-    {
-      id: String(mockState.nextPersonalId++),
-      label: "Family (iCloud)",
-      type: "webcal",
-      url: "webcal://example.com/family.ics",
-      enabled: false,
-      last_synced_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
-    },
-  );
-}
-
-
-// ---------- Tiny fetch wrapper with mock fallback ----------
+// ---------- Transport: bounds, error taxonomy, requestApi (PAC-83) ----------
 
 const API_BASE =
   (window as Window & { __API_BASE_URL__?: string }).__API_BASE_URL__ ??
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
   "/api";
-const NETWORK_TIMEOUT_MS = 4000;
 
 /**
- * The backend answered with a non-success status (401/403/409/410/422/500…).
- * This is NEVER replaced with demo data — the UI must surface it.
+ * PAC-83 (contract §2.5, §3.1). The server bounds every request at 90 s and
+ * answers its own 503; its write backstop cuts at 120 s; nginx answers 502/504
+ * at 130 s. The client waits longer than all of them, so whatever the stack
+ * says reaches the user. Only past this bound is the connection called lost.
+ * Never shortened per operation.
+ */
+export const CLIENT_REQUEST_BOUND_MS = 135_000;
+/** The background health probe and the pre-sign-in check: not a user action. */
+export const HEALTH_PROBE_BOUND_MS = 10_000;
+/** After this long a user-started call says it is still working (spec D-3). */
+export const STILL_WORKING_AFTER_MS = 8_000;
+
+/**
+ * The backend answered with a status >= 400 and a JSON body (or a 4xx
+ * without one). Never replaced with invented data — the UI must surface it.
  */
 export class ApiHttpError extends Error {
   readonly status: number;
@@ -333,14 +102,34 @@ export class ApiHttpError extends Error {
 }
 
 /**
- * The backend could not be reached at all (network error, timeout, or a
- * non-JSON response such as the SPA index.html when no backend is mounted).
- * Only this class triggers the preview/offline mock fallback.
+ * A 5xx whose body is not JSON: nginx's 502/504 page, an operator proxy's
+ * 502/503/504/52x page, the dev proxy's text/plain 500 (contract §2.3). It
+ * proves nothing about what the server did.
+ */
+export class ApiGatewayError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Gateway error (HTTP ${status})`);
+    this.name = "ApiGatewayError";
+    this.status = status;
+  }
+}
+
+export type UnreachableReason = "network" | "timeout" | "non-json";
+
+/**
+ * No usable answer: the request failed at the network level, nothing came
+ * back within CLIENT_REQUEST_BOUND_MS, or a 2xx was not JSON. It switches
+ * nothing and is never answered with invented data (PAC-83).
  */
 export class ApiUnreachableError extends Error {
-  constructor(message = "Backend unreachable") {
-    super(message);
+  readonly reason: UnreachableReason;
+  readonly status?: number;
+  constructor(reason: UnreachableReason = "network", status?: number) {
+    super(reason === "timeout" ? "No answer from Paceday in time" : reason === "non-json" ? "Unexpected answer from Paceday" : "Can't reach Paceday");
     this.name = "ApiUnreachableError";
+    this.reason = reason;
+    this.status = status;
   }
 }
 
@@ -349,6 +138,21 @@ export function isApiHttpError(e: unknown): e is ApiHttpError {
 }
 export function isApiUnreachableError(e: unknown): e is ApiUnreachableError {
   return e instanceof ApiUnreachableError;
+}
+export function isGatewayError(e: unknown): e is ApiGatewayError {
+  return e instanceof ApiGatewayError;
+}
+/** The answer is lost: nothing (or nothing usable) came back. */
+export function isAnswerLost(e: unknown): boolean {
+  return isApiUnreachableError(e) || isGatewayError(e);
+}
+/** The server's own budget answer: 503 AND a RequestBudgetExpiredError body (contract §2.1). Never status alone. */
+export function isBudgetExpired(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 503 && RequestBudgetExpiredError.safeParse(e.data).success;
+}
+/** 413, recognised by status alone (contract §2.2). */
+export function isRequestTooLarge(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 413;
 }
 
 /** What both calendar-disconnect surfaces say when disconnect is not offered (PAC-35). */
@@ -376,9 +180,8 @@ export function isCalendarDisconnectUnsupported(e: unknown): boolean {
  * The request was aborted because the page is being left (a full navigation
  * or a closed tab): the browser cancels in-flight requests and delivers the
  * rejection to the page being left, after "pagehide". That says nothing about
- * the backend, so it must never switch the session to preview data — the flag
- * is kept in sessionStorage, and the next page would show demo data
- * (NEW-e2e-pac55-ac10).
+ * the backend: nothing is shown, nothing is recorded (NEW-e2e-pac55-ac10,
+ * PAC-83 AC-20).
  */
 export class ApiRequestCancelledError extends Error {
   constructor(message = "Request cancelled: the page is being left") {
@@ -552,9 +355,60 @@ export async function confirmOrganizationAI(configurationVersion: number): Promi
   }
 }
 
-/** Human-readable message for an API failure, usable directly in the UI. */
-export function apiErrorMessage(e: unknown): string {
-  if (isApiUnreachableError(e)) return "Backend unreachable — showing preview data.";
+// ---------- PAC-83: classification and the user-facing wording ----------
+
+export type ApiFailureKind = "cancelled" | "budget" | "too-large" | "lost" | "http";
+/** Per operation, never derived from the HTTP method (contract §3.3). */
+export type ApiEffect = "read" | "write" | "booking";
+
+/** The spec's strings (§3.4, §3.5), exported so tests and e2e read them from one place. */
+export const API_MESSAGES = {
+  budgetRead: "This took too long and was stopped. Try again.",
+  budgetWriteSuffix: " Refresh to check whether it was applied.",
+  budgetBooking: "Your booking was not made because the service was too slow. You can try again.",
+  tooLarge: "This is too large to send.",
+  lostRead: "Can't reach Paceday right now. Check your connection and try again.",
+  lostWrite: "Paceday didn't confirm this. It may or may not have been applied — refresh to check before trying again.",
+  lostBooking: "We couldn't confirm your booking. It may have been saved — check your email for a confirmation before booking again.",
+} as const;
+
+/** In precedence order: cancelled, budget, too-large, lost, http. */
+export function classifyApiFailure(e: unknown): ApiFailureKind {
+  if (e instanceof ApiRequestCancelledError) return "cancelled";
+  if (isBudgetExpired(e)) return "budget";
+  if (isRequestTooLarge(e)) return "too-large";
+  if (isAnswerLost(e)) return "lost";
+  return "http";
+}
+
+/**
+ * What the user is told about a failed call, and whether a manual retry is
+ * offered (contract §3.3). `shorten` names what to shorten for a 413.
+ */
+export function apiFailureMessage(e: unknown, effect: ApiEffect, shorten?: string): { message: string; retry: boolean } {
+  const kind = classifyApiFailure(e);
+  switch (kind) {
+    case "cancelled":
+      return { message: "", retry: false };
+    case "budget":
+      if (effect === "booking") return { message: API_MESSAGES.budgetBooking, retry: false };
+      if (effect === "write") return { message: API_MESSAGES.budgetRead + API_MESSAGES.budgetWriteSuffix, retry: false };
+      return { message: API_MESSAGES.budgetRead, retry: true };
+    case "too-large":
+      return { message: shorten ? `${API_MESSAGES.tooLarge} Shorten ${shorten}.` : API_MESSAGES.tooLarge, retry: false };
+    case "lost":
+      if (effect === "booking") return { message: API_MESSAGES.lostBooking, retry: false };
+      if (effect === "write") return { message: API_MESSAGES.lostWrite, retry: false };
+      return { message: API_MESSAGES.lostRead, retry: true };
+    default:
+      // Booking create: every 5xx other than the budget 503 is "may have been saved" (contract §2.4).
+      if (effect === "booking" && isApiHttpError(e) && e.status >= 500) return { message: API_MESSAGES.lostBooking, retry: false };
+      return { message: httpErrorMessage(e), retry: effect === "read" };
+  }
+}
+
+/** Today's mapping for an HTTP error answer (unchanged by PAC-83). */
+function httpErrorMessage(e: unknown): string {
   if (ssoStepupRequired(e)) {
     return "This change needs a confirmation from an administrator account of your organisation (Google Workspace or Microsoft 365).";
   }
@@ -580,49 +434,105 @@ export function apiErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : "Unexpected error.";
 }
 
-export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>): Promise<T> {
+/**
+ * Human-readable message for an API failure, usable directly in the UI.
+ * `effect` defaults to a read; a write's caller passes "write" so a lost
+ * answer says it may or may not have been applied (PAC-83 §3.4).
+ */
+export function apiErrorMessage(e: unknown, effect: ApiEffect = "read"): string {
+  return apiFailureMessage(e, effect).message;
+}
+
+/**
+ * One bounded exchange: the timer (a setTimeout, so fake timers and
+ * Playwright's page.clock drive it) covers the headers AND the body, and is
+ * cleared only once the body has been read (contract §3.1).
+ */
+export async function boundedExchange(
+  url: string,
+  init: RequestInit,
+  boundMs: number,
+): Promise<{ res: Response; text: string }> {
+  const ctrl = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      ctrl.abort();
+      reject(new ApiUnreachableError("timeout"));
+    }, boundMs);
+  });
+  expired.catch(() => {
+    /* observed through the race below */
+  });
+  const lost = (): Error => {
+    if (pageLeaving) return new ApiRequestCancelledError();
+    return new ApiUnreachableError(timedOut ? "timeout" : "network");
+  };
+  try {
+    let res: Response;
+    try {
+      res = await Promise.race([fetch(url, { ...init, signal: ctrl.signal }), expired]);
+    } catch {
+      throw lost();
+    }
+    let text: string;
+    try {
+      text = await Promise.race([res.text(), expired]);
+    } catch {
+      throw lost();
+    }
+    return { res, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Turn a bounded exchange into a value or one of the four error classes
+ * (contract §3.2). Shared by requestApi and apiFetch.
+ */
+export function interpretResponse<T>(res: Response, text: string): T {
+  const ct = res.headers.get("content-type") || "";
+  let data: unknown;
+  let parsed = false;
+  if (text.trim() !== "") {
+    try {
+      data = JSON.parse(text);
+      parsed = true;
+    } catch {
+      /* not JSON */
+    }
+  }
+  if (!res.ok) {
+    if (res.status >= 500 && (!ct.includes("application/json") || !parsed)) throw new ApiGatewayError(res.status);
+    throw new ApiHttpError(res.status, parsed ? data : undefined);
+  }
+  if (res.status === 204) return undefined as T;
+  // A 2xx that is not JSON (e.g. the SPA index.html) did not come from the API.
+  if (!ct.includes("application/json") || !parsed) throw new ApiUnreachableError("non-json", res.status);
+  return data as T;
+}
+
+export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>, boundMs: number = CLIENT_REQUEST_BOUND_MS): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v != null && v !== "") url.searchParams.set(k, v);
     }
   }
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), NETWORK_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), {
+  const { res, text } = await boundedExchange(
+    url.toString(),
+    {
       method,
-      signal: ctrl.signal,
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include",
-    });
-  } catch {
-    if (pageLeaving) throw new ApiRequestCancelledError();
-    throw new ApiUnreachableError();
-  } finally {
-    clearTimeout(t);
-  }
-
-  if (!res.ok) {
-    let data: unknown;
-    try {
-      data = await res.json();
-    } catch {
-      /* body is not JSON — keep undefined */
-    }
-    throw new ApiHttpError(res.status, data);
-  }
-  if (res.status === 204) return undefined as T;
-  const ct = res.headers.get("content-type") || "";
-  // Strict: only accept JSON. If the dev server returns HTML
-  // (e.g. SPA index.html when no real backend exists), the backend is not
-  // actually mounted → treat as unreachable so the preview fallback engages.
-  if (!ct.includes("application/json")) {
-    throw new ApiUnreachableError("Non-JSON response");
-  }
-  return (await res.json()) as T;
+    },
+    boundMs,
+  );
+  return interpretResponse<T>(res, text);
 }
 
 
@@ -751,50 +661,6 @@ export function normalizeAuditEntries(raw: unknown): AuditEntry[] {
   });
 }
 
-
-/**
- * Run the real network call, falling back to local preview data ONLY when the
- * backend is unreachable. Real HTTP failures (401/403/409/410/422/500…) are
- * rethrown so the UI can surface an actionable error instead of fake success.
- */
-/**
- * The preview (mock) answer of the three event mutations, in the shape the
- * server sends (the generated CalendarEvent DTO, PAC-29): only the declared
- * keys, and colour only when it is one of the server's palette.
- */
-const DTO_COLORS: ReadonlyArray<string> = ["#7986CB", "#33B679", "#8E24AA", "#E67C73", "#F6BF26", "#F4511E", "#039BE5", "#3F51B5", "#0B8043", "#D50000", "#616161"];
-function mockEventDTO(ev: CalendarEvent): CalendarEventDTO {
-  const dto: CalendarEventDTO = { id: ev.id, title: ev.title, start: ev.start, end: ev.end };
-  if (ev.color && DTO_COLORS.includes(ev.color)) dto.color = ev.color as CalendarEventDTO["color"];
-  if (ev.attendees?.length) dto.attendees = [...ev.attendees];
-  if (ev.attendee_details?.length) {
-    dto.attendee_details = ev.attendee_details.map(({ email, name, rsvp, organizer }) => ({
-      email,
-      ...(name ? { name } : {}),
-      ...(rsvp ? { rsvp } : {}),
-      ...(organizer ? { organizer } : {}),
-    }));
-  }
-  if (ev.description) dto.description = ev.description;
-  if (ev.location) dto.location = ev.location;
-  if (ev.conference) dto.conference = { ...ev.conference };
-  return dto;
-}
-
-export async function withFallback<T>(real: () => Promise<T>, mock: () => T | Promise<T>): Promise<T> {
-  if (usingMocks) return mock();
-  try {
-    const out = await real();
-    setMockMode(false);
-    return out;
-  } catch (e) {
-    if (isApiUnreachableError(e)) {
-      setMockMode(true);
-      return mock();
-    }
-    throw e;
-  }
-}
 
 // ---------- Settings adapter ----------
 
@@ -1008,29 +874,6 @@ export function settingsPatchBody(s: Settings, previous?: Settings): Record<stri
 }
 
 /**
- * The preview (mock) probe. It knows exactly the five key-based providers
- * (NEW-llm-bring-your-own AC-33); any other choice has nothing to test.
- */
-export function mockLlmTest(s: Settings): LLMTestResult {
-  const provider = String(s.llm_provider ?? "");
-  if (!isKeyProvider(provider)) {
-    return { ok: false, message: "No AI provider is chosen, so there is nothing to test." };
-  }
-  const need = (...keys: Array<keyof Settings>) => keys.find((k) => !s[k] || String(s[k]).trim() === "");
-  let missing: keyof Settings | undefined;
-  if (provider === "bedrock") missing = need("aws_region");
-  else if (provider === "azure_openai") missing = need("azure_endpoint", "azure_deployment");
-  if (missing) {
-    return { ok: false, message: `Missing required field: ${String(missing)}` };
-  }
-  return {
-    ok: true,
-    message: `Reached ${PROVIDER_LABELS[provider]} (${s.llm_model || "default model"}) — mock response`,
-    latency_ms: 120 + Math.floor(Math.random() * 80),
-  };
-}
-
-/**
  * The probe body: provider, model and an unsaved key only (PAC-24). The probe
  * tests the form as it stands, unsaved: a key the user typed is sent, and a
  * saved key the user removed ("Remove saved key", `llm_api_key` = "") is sent
@@ -1050,119 +893,6 @@ export function llmTestBody(s: Settings): Record<string, string> {
   else if (s.llm_api_key === "" && isKeyProvider(provider)) body.llmApiKey = "";
   return body;
 }
-
-// ---------- Mock implementations ----------
-
-function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?: string): SuggestedSlot[] {
-  const start = rangeStart ? new Date(rangeStart) : new Date();
-  const out: SuggestedSlot[] = [];
-  let cursor = new Date(start);
-  cursor.setMinutes(0, 0, 0);
-  if (cursor.getHours() < 9) cursor.setHours(10, 0, 0, 0);
-  const end = rangeEnd ? new Date(rangeEnd) : new Date(cursor.getTime() + 5 * 24 * 3600_000);
-  let attempts = 0;
-  while (out.length < 3 && cursor < end && attempts < 60) {
-    attempts++;
-    const day = cursor.getDay();
-    const hour = cursor.getHours();
-    if (day !== 0 && day !== 6 && hour >= 9 && hour < 17) {
-      const s = new Date(cursor);
-      const e = new Date(cursor.getTime() + durationMin * 60_000);
-      // Mirror Google's behavior: events the current user has DECLINED
-      // should not block a new candidate slot, even if other invitees still
-      // hold the meeting on their calendars.
-      const conflict = mockState.events.some((ev) => {
-        if (new Date(ev.start) >= e || new Date(ev.end) <= s) return false;
-        const me = ev.attendee_details?.find(
-          (a) => a.organizer || a.email === mockState.auth.email,
-        );
-        if (me?.rsvp === "declined") return false;
-        return true;
-      });
-      if (!conflict) {
-        out.push({
-          start: s.toISOString(),
-          end: e.toISOString(),
-          score: 0.95 - out.length * 0.15,
-          reasons: out.length === 0 ? ["Best fit", "No conflicts", "Inside working hours"] : ["No conflicts", "Inside working hours"],
-        });
-      }
-    }
-    cursor = new Date(cursor.getTime() + 60 * 60_000);
-    if (cursor.getHours() >= 18) {
-      cursor.setDate(cursor.getDate() + 1);
-      cursor.setHours(10, 0, 0, 0);
-    }
-  }
-  return out;
-}
-
-// ---------- Free/busy mock helper ----------
-
-const PACEDAY_DOMAINS = new Set(["paceday.com", "demo.paceday.com"]);
-const KNOWN_GOOGLE_DOMAINS = new Set(["co.com", "acme.com", "paceday.com", "demo.paceday.com"]);
-const KNOWN_OUTLOOK_DOMAINS = new Set([
-  "microsoft.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-]);
-const PERSONAL_DOMAINS = new Set([
-  "gmail.com",
-  "yahoo.com",
-  "yahoo.co.uk",
-  "proton.me",
-  "protonmail.com",
-  "icloud.com",
-  "me.com",
-  "aol.com",
-  "fastmail.com",
-  "gmx.com",
-]);
-
-function classifyEmail(email: string): { status: CoverageStatus; provider?: CoverageProvider } {
-  const domain = email.toLowerCase().split("@")[1] ?? "";
-  if (PACEDAY_DOMAINS.has(domain)) return { status: "paceday_user", provider: "paceday" };
-  if (KNOWN_GOOGLE_DOMAINS.has(domain)) return { status: "known", provider: "google" };
-  if (KNOWN_OUTLOOK_DOMAINS.has(domain)) return { status: "known", provider: "outlook" };
-  if (PERSONAL_DOMAINS.has(domain)) return { status: "unknown" };
-  // Heuristic: any non-personal corporate domain → assume Google Workspace
-  if (domain && !domain.startsWith("@")) return { status: "known", provider: "google" };
-  return { status: "unknown" };
-}
-
-function mockFreebusy(input: { emails: string[]; start_time: string; end_time: string }): FreeBusyResponse {
-  const participants: ParticipantCoverage[] = input.emails.map((email) => {
-    const { status, provider } = classifyEmail(email);
-    return { email: email.toLowerCase(), status, provider };
-  });
-  return {
-    start_time: input.start_time,
-    end_time: input.end_time,
-    participants,
-  };
-}
-
-/**
- * Compute the coverage summary the UI shows next to suggestions / events.
- * `total` includes the organizer (assumed connected — otherwise we'd flag
- * organizer_disconnected). Mirrors what the backend returns for T-39.
- */
-function coverageFromAttendees(attendees: string[] | undefined): { total: number; checked: number; organizer_disconnected?: boolean } {
-  const list = (attendees ?? []).filter(Boolean);
-  // Count organizer (always known via Paceday) + each attendee whose mail we can read.
-  const organizerCounted = 1;
-  let checked = organizerCounted;
-  for (const e of list) {
-    const c = classifyEmail(e);
-    if (c.status === "paceday_user" || c.status === "known") checked += 1;
-  }
-  return { total: list.length + organizerCounted, checked };
-}
-
-
-seedMocks();
 
 // ---------- Public API ----------
 
@@ -1222,28 +952,21 @@ export function normalizeEvents(raw: unknown): CalendarEvent[] {
 }
 
 export const api = {
-
-  // Health — used by the polling probe. We don't go through withFallback
-  // because we want to control the mock-mode flag directly here.
-  //
-  // Semantics:
-  //  - network failure / timeout / SPA HTML body → unreachable, switch to preview data.
-  //  - any HTTP status (500, 502, 503, ...) → backend IS reachable but unhealthy:
-  //    we throw the ApiHttpError so the UI can show an actionable error and keep
-  //    whatever real data is already cached. We never fake a healthy response.
+  /**
+   * Health — the background probe (PAC-83 D-2). Bounded by
+   * HEALTH_PROBE_BOUND_MS; its result only drives the "can't reach Paceday"
+   * banner and never changes what data calls return.
+   *  - 2xx JSON → reachable.
+   *  - an HTTP error answer (JSON body) → reachable but unhealthy: thrown.
+   *  - no answer, network failure, non-JSON or gateway answer → unreachable.
+   */
   health: async (): Promise<{ status: string; version: string; reachable: boolean }> => {
     try {
-      const r = await requestApi<{ status: string; version: string }>("GET", "/health");
-      setMockMode(false);
+      const r = await requestApi<{ status: string; version: string }>("GET", "/health", undefined, undefined, HEALTH_PROBE_BOUND_MS);
       return { ...r, reachable: true };
     } catch (e) {
-      if (isApiHttpError(e)) {
-        setMockMode(false);
-        throw e;
-      }
-      if (e instanceof ApiRequestCancelledError) throw e;
-      setMockMode(true);
-      return { status: "ok", version: "mock-1.0.0", reachable: false };
+      if (isAnswerLost(e)) return { status: "unreachable", version: "", reachable: false };
+      throw e;
     }
   },
 
@@ -1259,175 +982,43 @@ export const api = {
    * The real backend overrides all of this when reachable.
    */
   freebusy: (input: { emails: string[]; start_time: string; end_time: string }) =>
-    withFallback<FreeBusyResponse>(
-      () => requestApi<FreeBusyResponse>("POST", "/freebusy", input),
-      () => mockFreebusy(input),
-    ),
+    demoOrReal<FreeBusyResponse>("api.freebusy", [input], () => requestApi<FreeBusyResponse>("POST", "/freebusy", input)),
+
   authStatus: () =>
-    withFallback(
-      () => requestApi<AuthStatus>("GET", "/auth/status"),
-      () => ({ ...mockState.auth }),
-    ),
+    demoOrReal("api.authStatus", [], () => requestApi<AuthStatus>("GET", "/auth/status")),
+
   integrationAvailability: () =>
-    withFallback<IntegrationAvailability>(
-      () => requestApi<IntegrationAvailability>("GET", "/integrations/availability"),
-      () => ({
-        google: { available: true, reason: "demo" },
-        microsoft: { available: true, reason: "demo" },
-        zoom: { available: true, reason: "demo" },
-        slack: { available: true, reason: "demo" },
-        notion: { available: true, reason: "demo" },
-        webcal: { available: true, reason: "built_in" },
-      }),
-    ),
+    demoOrReal<IntegrationAvailability>("api.integrationAvailability", [], () => requestApi<IntegrationAvailability>("GET", "/integrations/availability")),
+
   authConnectUrl: (provider: CalendarProvider = "google") =>
     `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
+
   authDisconnect: () =>
-    withFallback(
-      () => requestApi<void>("DELETE", "/auth/disconnect"),
-      () => {
-        mockState.auth = { connected: false, email: "", provider: undefined };
-        logAudit("auth.disconnect", "Disconnected calendar (mock)");
-      },
-    ),
+    demoOrReal("api.authDisconnect", [], () => requestApi<void>("DELETE", "/auth/disconnect")),
 
   // Settings
   getSettings: () =>
-    withFallback(
-      async () => normalizeSettings(await requestApi<unknown>("GET", "/settings")),
-      () => ({ ...mockState.settings }),
-    ),
-  updateSettings: (s: Settings, previous?: Settings) =>
-    withFallback(
-      async () => normalizeSettings(await requestApi<unknown>("PATCH", "/settings", settingsPatchBody(s, previous))),
+    demoOrReal("api.getSettings", [], async () => normalizeSettings(await requestApi<unknown>("GET", "/settings"))),
 
-      () => {
-        mockState.settings = { ...s };
-        // keep focus block colors in sync
-        mockState.events.forEach((e) => {
-          if (e.is_focus_block) {
-            e.color = s.focus_color;
-            e.title = s.focus_label;
-          }
-        });
-        logAudit("settings.update", "Updated settings (mock)");
-        return { ...mockState.settings };
-      },
-    ),
+  updateSettings: (s: Settings, previous?: Settings) =>
+    demoOrReal("api.updateSettings", [s, previous], async () => normalizeSettings(await requestApi<unknown>("PATCH", "/settings", settingsPatchBody(s, previous)))),
 
   // Calendar
   getEvents: (start: string, end: string) =>
-    withFallback(
-      async () =>
+    demoOrReal("api.getEvents", [start, end], async () =>
         normalizeEvents(
           await requestApi<CalendarEvent[]>("GET", "/calendar/events", undefined, { start, end }),
-        ),
-      () => {
-        const s = new Date(start).getTime();
-        const e = new Date(end).getTime();
-        return mockState.events.filter((ev) => {
-          const es = new Date(ev.start).getTime();
-          const ee = new Date(ev.end).getTime();
-          return ee >= s && es <= e;
-        });
-      },
-    ),
-
+        )),
 
   // Focus
   runFocus: (week?: string) =>
-    withFallback(
-      () => requestApi<FocusRunResult>("POST", "/focus/run", { week }),
-      () => {
-        const monday = week ? new Date(week) : startOfWeek(new Date());
-        const created: FocusRunBlock[] = [];
-        const skipped: string[] = [];
-        for (let i = 0; i < 5; i++) {
-          const d = new Date(monday);
-          d.setDate(d.getDate() + i);
-          const date = dateOnly(d);
-          // pick an empty 90-min morning slot
-          const slotStart = isoAt(d, 8, 0);
-          const slotEnd = isoAt(d, 9, 30);
-          const conflict = mockState.events.some(
-            (ev) =>
-              new Date(ev.start) < new Date(slotEnd) &&
-              new Date(ev.end) > new Date(slotStart) &&
-              !ev.is_focus_block,
-          );
-          if (conflict) {
-            skipped.push(date);
-            continue;
-          }
-          const exists = mockState.focusBlocks.some(
-            (b) => b.start_time === slotStart && b.end_time === slotEnd,
-          );
-          if (exists) continue;
-          const id = mockState.nextFocusId++;
-          const block: FocusRunBlock = {
-            google_event_id: `gcal-focus-${id}`,
-            start_time: slotStart,
-            end_time: slotEnd,
-            date,
-          };
-          mockState.focusBlocks.push({ id, ...block, created_at: new Date().toISOString() });
-          mockState.events.push({
-            id: `focus-${id}`,
-            title: mockState.settings.focus_label,
-            start: slotStart,
-            end: slotEnd,
-            color: mockState.settings.focus_color,
-            is_focus_block: true,
-          });
-          created.push(block);
-        }
-        logAudit("focus.run", `Created ${created.length} focus blocks (mock)`);
-        const result: FocusRunResult = {
-          weekStart: new Date(monday).toISOString(),
-          createdBlocks: created,
-          skippedDays: skipped,
-          totalMinutes: created.length * 90,
-          errors: [],
-        };
-        return result;
-      },
-    ),
+    demoOrReal("api.runFocus", [week], () => requestApi<FocusRunResult>("POST", "/focus/run", { week })),
+
   getFocusBlocks: (week: string) =>
-    withFallback(
-      () => requestApi<FocusBlock[]>("GET", "/focus/blocks", undefined, { week }),
-      () => {
-        const monday = startOfWeek(new Date(week));
-        const sunday = new Date(monday);
-        sunday.setDate(sunday.getDate() + 7);
-        return mockState.focusBlocks.filter((b) => {
-          const t = new Date(b.start_time);
-          return t >= monday && t < sunday;
-        });
-      },
-    ),
+    demoOrReal("api.getFocusBlocks", [week], () => requestApi<FocusBlock[]>("GET", "/focus/blocks", undefined, { week })),
+
   clearFocusBlocks: (week: string) =>
-    withFallback(
-      () => requestApi<{ deleted: number }>("DELETE", "/focus/blocks", undefined, { week }),
-      () => {
-        const monday = startOfWeek(new Date(week));
-        const sunday = new Date(monday);
-        sunday.setDate(sunday.getDate() + 7);
-        const before = mockState.focusBlocks.length;
-        const ids = new Set<string>();
-        mockState.focusBlocks = mockState.focusBlocks.filter((b) => {
-          const t = new Date(b.start_time);
-          if (t >= monday && t < sunday) {
-            ids.add(`focus-${b.id}`);
-            return false;
-          }
-          return true;
-        });
-        mockState.events = mockState.events.filter((e) => !ids.has(e.id));
-        const deleted = before - mockState.focusBlocks.length;
-        logAudit("focus.clear", `Cleared ${deleted} focus blocks (mock)`);
-        return { deleted };
-      },
-    ),
+    demoOrReal("api.clearFocusBlocks", [week], () => requestApi<{ deleted: number }>("DELETE", "/focus/blocks", undefined, { week })),
 
   // Schedule
   scheduleSuggest: (body: {
@@ -1437,16 +1028,8 @@ export const api = {
     range_end: string;
     title: string;
   }) =>
-    withFallback(
-      () => requestApi<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body),
-      () => {
-        const cov = coverageFromAttendees(body.attendees);
-        const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end).map(
-          (s) => ({ ...s, coverage: cov }),
-        );
-        return { slots };
-      },
-    ),
+    demoOrReal("api.scheduleSuggest", [body], () => requestApi<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body)),
+
   scheduleCreate: (body: {
     title: string;
     start: string;
@@ -1454,185 +1037,62 @@ export const api = {
     attendees: string[];
     description?: string;
   }) =>
-    withFallback(
-      () => requestApi<CalendarEventDTO>("POST", "/schedule/create", body),
-      () => {
-        const ev: CalendarEvent = {
-          id: String(mockState.nextEventId++),
-          title: body.title,
-          start: body.start,
-          end: body.end,
-          attendees: body.attendees,
-          color: "#3B82F6",
-          coverage: coverageFromAttendees(body.attendees),
-        };
-        mockState.events.push(ev);
-        logAudit("schedule.create", `Created "${body.title}" (mock)`);
-        return mockEventDTO(ev);
-      },
-    ),
+    demoOrReal("api.scheduleCreate", [body], () => requestApi<CalendarEventDTO>("POST", "/schedule/create", body)),
+
   compressionPreview: (body: { date?: string; week?: string }) =>
-    withFallback(
-      () => requestApi<CompressionResult[]>("POST", "/schedule/compress", body),
-      () => [],
-    ),
+    demoOrReal("api.compressionPreview", [body], () => requestApi<CompressionResult[]>("POST", "/schedule/compress", body)),
+
   compressionApply: (body: { proposals: MoveProposal[] }) =>
-    withFallback(
-      () =>
+    demoOrReal("api.compressionApply", [body], () =>
         requestApi<CompressionApplyResponse>("POST", "/schedule/compress/apply", {
           proposals: body.proposals.map(toApplyProposal),
-        }),
-      () => ({
-        applied: body.proposals.map((proposal) => proposal.eventId),
-        failed: [],
-      }),
-    ),
+        })),
 
   // NLP
   nlpParse: (text: string) =>
-    withFallback(
-      () => requestApi<ParseResult>("POST", "/nlp/parse", { text }),
-      () => {
-        const t = text.trim().toLowerCase();
-        if (!t) return { intent: "unknown", error: "Please type a request." } as ParseResult;
-        if (t.includes("focus")) {
-          return {
-            intent: "schedule_focus",
-            title: "Focus Time",
-            duration_minutes: 90,
-          } as ParseResult;
-        }
-        const durationMatch = t.match(/(\d+)\s*(min|minute|m\b|h\b|hour|hr)/);
-        let duration = 30;
-        if (durationMatch) {
-          const n = parseInt(durationMatch[1], 10);
-          duration = /h/.test(durationMatch[2]) ? n * 60 : n;
-        }
-        const attendees = Array.from(text.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0]);
-        const titleMatch = text.match(/(?:about|for|:)\s*(.+)$/i);
-        const title = titleMatch ? titleMatch[1].trim() : attendees.length ? `Meeting with ${attendees[0].split("@")[0]}` : "New meeting";
-        const now = new Date();
-        const rangeStart = now.toISOString();
-        const rangeEnd = new Date(now.getTime() + 7 * 24 * 3600_000).toISOString();
-        const cov = coverageFromAttendees(attendees);
-        return {
-          intent: "schedule_meeting",
-          title,
-          duration_minutes: duration,
-          attendees,
-          range_start: rangeStart,
-          range_end: rangeEnd,
-          suggested_slots: mockSuggestedSlots(duration, rangeStart, rangeEnd).map((s) => ({ ...s, coverage: cov })),
-          coverage: cov,
-        } as ParseResult;
-      },
-    ),
+    demoOrReal("api.nlpParse", [text], () => requestApi<ParseResult>("POST", "/nlp/parse", { text })),
+
   nlpConfirm: (parse_result: ParseResult, selected_slot_index: number) =>
-    withFallback(
-      () => requestApi<CalendarEventDTO>("POST", "/nlp/confirm", { parse_result, selected_slot_index }),
-      () => {
-        const slot = parse_result.suggested_slots?.[selected_slot_index];
-        if (!slot) throw new Error("No slot selected");
-        const ev: CalendarEvent = {
-          id: String(mockState.nextEventId++),
-          title: parse_result.title || "New meeting",
-          start: slot.start,
-          end: slot.end,
-          attendees: parse_result.attendees,
-          color: "#3B82F6",
-          coverage: parse_result.coverage ?? coverageFromAttendees(parse_result.attendees),
-        };
-        mockState.events.push(ev);
-        logAudit("nlp.confirm", `Scheduled "${ev.title}" (mock)`);
-        return mockEventDTO(ev);
-      },
-    ),
+    demoOrReal("api.nlpConfirm", [parse_result, selected_slot_index], () => requestApi<CalendarEventDTO>("POST", "/nlp/confirm", { parse_result, selected_slot_index })),
 
   // Audit
   getAudit: (limit = DEFAULT_AUDIT_LIMIT) =>
-    withFallback(
-      async () => {
+    demoOrReal("api.getAudit", [limit], async () => {
         const raw = await requestApi<unknown>("GET", "/audit", undefined, { limit: String(limit) });
         return normalizeAuditEntries(raw);
-      },
-      () => mockState.audit.slice(0, limit),
-    ),
-
+      }),
 
   // Personal calendars
   listPersonalCalendars: () =>
-    withFallback(
-      async () => {
+    demoOrReal("api.listPersonalCalendars", [], async () => {
         const raw = await requestApi<BackendPersonalCalendar[]>("GET", "/personal-calendars");
         return (raw ?? []).map(normalizePersonalCalendar);
-      },
-      () => [...mockState.personalCalendars],
-    ),
+      }),
+
   addPersonalCalendar: (body: { type: PersonalCalendarType; label: string; url?: string }) =>
-    withFallback(
-      () =>
+    demoOrReal("api.addPersonalCalendar", [body], () =>
         requestApi<BackendPersonalCalendar>(
           "POST",
           "/personal-calendars",
           { provider: body.type, name: body.label, url: body.url, enabled: true },
-        ).then(normalizePersonalCalendar),
-      () => {
-        const id = String(mockState.nextPersonalId++);
-        const cal: PersonalCalendar = {
-          id,
-          label: body.label || "Personal",
-          type: body.type,
-          enabled: true,
-          last_synced_at: new Date().toISOString(),
-          ...(body.type === "webcal"
-            ? { url: body.url }
-            : { email: `you.${body.type}@example.com` }),
-        };
-        mockState.personalCalendars.push(cal);
-        logAudit("personal.add", `Added personal calendar "${cal.label}" (mock)`);
-        // No auth_url in mocks — we just pretend it succeeded.
-        return cal;
-      },
-    ),
+        ).then(normalizePersonalCalendar)),
+
   updatePersonalCalendar: (id: string, patch: Partial<Pick<PersonalCalendar, "enabled" | "label">>) =>
-    withFallback(
-      () =>
+    demoOrReal("api.updatePersonalCalendar", [id, patch], () =>
         requestApi<BackendPersonalCalendar>("PATCH", `/personal-calendars/${id}`, {
           ...(patch.label === undefined ? {} : { name: patch.label }),
           ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
-        }).then(normalizePersonalCalendar),
-      () => {
-        const cal = mockState.personalCalendars.find((c) => c.id === id);
-        if (!cal) throw new Error("Not found");
-        Object.assign(cal, patch);
-        logAudit("personal.update", `Updated "${cal.label}" (mock)`);
-        return { ...cal };
-      },
-    ),
+        }).then(normalizePersonalCalendar)),
+
   deletePersonalCalendar: (id: string) =>
-    withFallback(
-      () => requestApi<void>("DELETE", `/personal-calendars/${id}`),
-      () => {
-        mockState.personalCalendars = mockState.personalCalendars.filter((c) => c.id !== id);
-        logAudit("personal.delete", `Removed personal calendar (mock)`);
-      },
-    ),
+    demoOrReal("api.deletePersonalCalendar", [id], () => requestApi<void>("DELETE", `/personal-calendars/${id}`)),
+
   syncPersonalCalendar: (id: string) =>
-    withFallback(
-      () => requestApi<BackendPersonalCalendar>("POST", `/personal-calendars/${id}/sync`).then(normalizePersonalCalendar),
-      () => {
-        const cal = mockState.personalCalendars.find((c) => c.id === id);
-        if (!cal) throw new Error("Not found");
-        cal.last_synced_at = new Date().toISOString();
-        logAudit("personal.sync", `Synced "${cal.label}" (mock)`);
-        return { ...cal };
-      },
-    ),
+    demoOrReal("api.syncPersonalCalendar", [id], () => requestApi<BackendPersonalCalendar>("POST", `/personal-calendars/${id}/sync`).then(normalizePersonalCalendar)),
 
   // LLM
   llmTest: (s: Settings) =>
-    withFallback(
-      async () => {
+    demoOrReal("api.llmTest", [s], async () => {
         const res = await requestApi<{ ok: boolean; response: string; provider: string; configuration?: "own" | "organization" }>(
           "POST",
           "/llm/test",
@@ -1640,9 +1100,7 @@ export const api = {
         );
         const whose = res.configuration === "organization" ? "your organisation's " : "";
         return { ok: res.ok, message: `Reached ${whose}${res.provider || "the provider"}: ${res.response}` };
-      },
-      () => mockLlmTest(s),
-    ),
+      }),
 
   // ----- Events: edit / delete -----
   updateEvent: (
@@ -1650,155 +1108,45 @@ export const api = {
     patch: Partial<Pick<CalendarEvent, "title" | "start" | "end" | "description" | "location" | "room_resource_email" | "attendees" | "attendee_details">>,
     sendUpdates: "all" | "none" = "none",
   ) =>
-    withFallback(
-      () =>
-        requestApi<CalendarEventDTO>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates }),
-      () => {
-        const ev = mockState.events.find((e) => e.id === id);
-        if (!ev) throw new Error("Not found");
-        Object.assign(ev, patch);
-        // keep attendees array in sync with attendee_details if details given
-        if (patch.attendee_details) {
-          ev.attendees = patch.attendee_details.map((a) => a.email);
-        }
-        logAudit("event.update", `Edited "${ev.title}" (mock)`);
-        return mockEventDTO(ev);
-      },
-    ),
+    demoOrReal("api.updateEvent", [id, patch, sendUpdates], () =>
+        requestApi<CalendarEventDTO>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates })),
 
   deleteEvent: (id: string, sendUpdates: "all" | "none" = "none") =>
-    withFallback(
-      () => requestApi<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates }),
-      () => {
-        const ev = mockState.events.find((e) => e.id === id);
-        mockState.events = mockState.events.filter((e) => e.id !== id);
-        logAudit("event.delete", `Deleted "${ev?.title ?? id}" (mock)`);
-      },
-    ),
+    demoOrReal("api.deleteEvent", [id, sendUpdates], () => requestApi<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates })),
 
   // ----- Rooms -----
   searchRooms: (q: string, start?: string, end?: string) =>
-    withFallback(
-      () => requestApi<Room[]>("GET", "/rooms", undefined, { q, start, end }),
-      () => {
-        const ql = q.trim().toLowerCase();
-        const matches = ql
-          ? MOCK_ROOMS.filter(
-              (r) =>
-                r.name.toLowerCase().includes(ql) ||
-                r.building?.toLowerCase().includes(ql) ||
-                r.email.toLowerCase().includes(ql),
-            )
-          : MOCK_ROOMS.slice();
-        const s = start ? new Date(start).getTime() : 0;
-        const e = end ? new Date(end).getTime() : 0;
-        return matches.map((r) => {
-          let available = true;
-          if (s && e) {
-            available = !mockState.events.some(
-              (ev) =>
-                ev.room_resource_email === r.email &&
-                new Date(ev.start).getTime() < e &&
-                new Date(ev.end).getTime() > s,
-            );
-            // pretend a couple are busy for demo flair
-            if (r.id === "r3" || r.id === "r6") available = false;
-          }
-          return { ...r, available };
-        });
-      },
-    ),
+    demoOrReal("api.searchRooms", [q, start, end], () => requestApi<Room[]>("GET", "/rooms", undefined, { q, start, end })),
 
   // ----- Attendees -----
   suggestAttendees: (q: string) =>
-    withFallback(
-      () => requestApi<Attendee[]>("GET", "/attendees/suggest", undefined, { q }),
-      () => {
-        const ql = q.trim().toLowerCase();
-        if (!ql) return MOCK_DIRECTORY.slice(0, 5);
-        return MOCK_DIRECTORY.filter(
-          (a) =>
-            a.email.toLowerCase().includes(ql) ||
-            (a.name?.toLowerCase().includes(ql) ?? false),
-        ).slice(0, 8);
-      },
-    ),
+    demoOrReal("api.suggestAttendees", [q], () => requestApi<Attendee[]>("GET", "/attendees/suggest", undefined, { q })),
 
   // ----- Conferencing -----
   addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
-    withFallback(
-      () =>
+    demoOrReal("api.addConference", [eventId, body], () =>
         requestApi<ConferenceLink>(
           "POST",
           `/events/${eventId}/conference`,
           conferenceRequestBody(body),
-        ),
-      () => {
-        const ev = mockState.events.find((e) => e.id === eventId);
-        if (!ev) throw new Error("Not found");
-        const link = mockGenerateConferenceLink(body.provider, body.url);
-        ev.conference = link;
-        logAudit("conference.add", `Added ${body.provider} link to "${ev.title}" (mock)`);
-        return { ...link };
-      },
-    ),
+        )),
+
   removeConference: (eventId: string) =>
-    withFallback(
-      () => requestApi<void>("DELETE", `/events/${eventId}/conference`),
-      () => {
-        const ev = mockState.events.find((e) => e.id === eventId);
-        if (!ev) return;
-        delete ev.conference;
-        logAudit("conference.remove", `Removed conference from "${ev.title}" (mock)`);
-      },
-    ),
+    demoOrReal("api.removeConference", [eventId], () => requestApi<void>("DELETE", `/events/${eventId}/conference`)),
+
   conferenceProviders: () =>
-    withFallback(
-      async () =>
+    demoOrReal("api.conferenceProviders", [], async () =>
         normalizeConferenceProviders(
           await requestApi<unknown>("GET", "/conference/providers"),
-        ),
-      () => {
-        const calProvider = mockState.settings.calendar_provider ?? "google";
-        return [
-          {
-            provider: "google_meet",
-            connected: calProvider === "google",
-            auto_with: "google",
-          },
-          {
-            provider: "zoom",
-            connected: mockState.conference.zoom.connected,
-            email: mockState.conference.zoom.email,
-          },
-          {
-            provider: "teams",
-            connected: calProvider === "outlook",
-            enabled: !!mockState.settings.teams_enabled,
-            auto_with: "outlook",
-          },
-        ] as ConferenceProviderStatus[];
-      },
-    ),
+        )),
 
   zoomConnectUrl: () => `${API_BASE}/auth/zoom`,
+
   zoomDisconnect: () =>
-    withFallback(
-      async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/conference/zoom/disconnect")),
-      (): ProviderDisconnectResult => {
-        mockState.conference.zoom = { connected: false, email: undefined };
-        logAudit("conference.zoom.disconnect", "Disconnected Zoom (mock)");
-        return { provider: "zoom", revocation: "confirmed" };
-      },
-    ),
+    demoOrReal("api.zoomDisconnect", [], async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/conference/zoom/disconnect"))),
+
   microsoftDisconnect: () =>
-    withFallback(
-      async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/auth/microsoft/disconnect")),
-      (): ProviderDisconnectResult => {
-        logAudit("auth.microsoft.disconnect", "Disconnected Outlook (mock)");
-        return { provider: "outlook", revocation: "not_offered" };
-      },
-    ),
+    demoOrReal("api.microsoftDisconnect", [], async () => ProviderDisconnectResultSchema.parse(await requestApi<unknown>("POST", "/auth/microsoft/disconnect"))),
 } satisfies ApiPort;
 
 // ---------- Conferencing helpers (exported for tests) ----------
@@ -1845,39 +1193,3 @@ export function isValidConferenceUrl(value: string): boolean {
     return false;
   }
 }
-
-// Mock-only conferencing link generator
-
-function mockGenerateConferenceLink(provider: ConferenceProvider, custom?: string): ConferenceLink {
-  if (provider === "custom") {
-    return { provider, url: custom?.trim() || "https://meet.example.com/your-room" };
-  }
-  const id = Math.random().toString(36).slice(2, 11);
-  switch (provider) {
-    case "google_meet":
-      return { provider, url: `https://meet.google.com/${id.slice(0, 3)}-${id.slice(3, 7)}-${id.slice(7, 10)}` };
-    case "zoom":
-      return { provider, url: `https://zoom.us/j/${Math.floor(1e10 + Math.random() * 9e10)}` };
-    case "teams":
-      return { provider, url: `https://teams.microsoft.com/l/meetup-join/${id}` };
-  }
-}
-
-// Pretend toggle for Zoom (used by Settings UI without a real OAuth flow)
-export function mockZoomConnect(email = "you@zoom.us") {
-  mockState.conference.zoom = { connected: true, email };
-  mockListeners.forEach(() => {});
-}
-
-// keep helper for components that want to nudge state
-export const _mockHelpers = {
-  get: () => mockState,
-  pushEvent: (ev: CalendarEvent) => {
-    // Replace any existing event with the same id so seeding is idempotent.
-    mockState.events = mockState.events.filter((e) => e.id !== ev.id);
-    mockState.events.push(ev);
-  },
-  removeEventsWithPrefix: (prefix: string) => {
-    mockState.events = mockState.events.filter((e) => !e.id.startsWith(prefix));
-  },
-};

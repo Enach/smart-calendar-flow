@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, isUsingMocks, normalizeAttendees, normalizeEvents, setMockMode } from "./client";
+import { ApiHttpError, normalizeAttendees, normalizeEvents } from "./client";
 import { teamsApi, unwrapTeam, unwrapTeamList } from "./teams";
 import { getEventOwnership } from "@/lib/eventOwnership";
 import type { CalendarEvent } from "./types";
@@ -49,7 +49,6 @@ describe("event attendee normalization", () => {
 
 describe("teams list payload shapes", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     localStorage.clear();
@@ -76,6 +75,5 @@ describe("teams list payload shapes", () => {
   it("keeps an HTTP error as an error instead of demo data", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "nope" }, 500));
     await expect(teamsApi.remote.list()).rejects.toBeInstanceOf(ApiHttpError);
-    expect(isUsingMocks()).toBe(false);
   });
 });

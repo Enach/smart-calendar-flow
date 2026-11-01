@@ -10,7 +10,8 @@ export interface AuthContextValue {
   sessionStale: boolean;
   /** Resolves to the user, null when there is no session, or undefined when the server could not tell. */
   refresh: () => Promise<AuthUser | null | undefined | void>;
-  loginDemo: () => void;
+  /** Only the demo entry control calls this, after starting the demo session (PAC-83). */
+  enterDemo: (user: AuthUser) => void;
   exitDemo: () => void;
   logout: () => Promise<void>;
 }

@@ -163,7 +163,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
     expect(slotsSpy).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    fireEvent.click(screen.getByRole("button", { name: /try again/i } /* PAC-83: the manual retry is labelled "Try again" (spec §3.4) */));
     expect(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ })).toBeInTheDocument();
     expect(screen.queryByText(/too many requests for available times/i)).not.toBeInTheDocument();
   });

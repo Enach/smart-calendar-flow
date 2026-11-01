@@ -1,15 +1,16 @@
 /**
- * Teams API (T-35 / T-36 backend surface, mock impl).
+ * Teams API (T-35 / T-36 backend surface).
  *
- * Persisted in localStorage. Distinct from the manager API:
+ * The server is the source of truth (`teamsApi.remote`); the top level is a
+ * local store of the last answer, read synchronously by a few pages. It
+ * never invents a slot or a number: the demo's live in src/demo (PAC-83). Distinct from the manager API:
  * - manager.ts: the user's personal "people I have 1:1s with" list (Tab 1)
  * - teams.ts:   formal Paceday teams the user creates / joins for
  *               coordination (Protected Hours, Find a Time, Analytics)
  */
 
-import { managerApi, type TeamMember as ManagerTeamMember } from "./manager";
-import { getFreebusy } from "./coverageCache";
-import { requestApi, withFallback } from "./client";
+import { requestApi } from "./client";
+import { demoOrReal } from "./demoGate";
 import type { components } from "./generated/types";
 import { localISODate } from "@/lib/localDate";
 import { DEFAULT_TIME_FORMAT, formatMinutesOfDay, type TimeFormat } from "@/lib/timeFormat";
@@ -47,6 +48,14 @@ export interface FormalTeam {
   owner_email: string;
   members: FormalTeamMember[];
   no_meeting_zones: NoMeetingZone[];
+}
+
+/** One member's weeks in the team analytics view. */
+export interface TeamAnalyticsRow {
+  email: string;
+  display_name: string;
+  is_paceday_user: boolean;
+  weeks: { week_start: string; meeting_minutes: number; focus_minutes: number; free_minutes: number }[];
 }
 
 export interface AvailabilitySlot {
@@ -294,10 +303,8 @@ export function unwrapTeam(raw: unknown): BackendTeam | null {
 }
 
 const teamsRemote = {
-
   list: () =>
-    withFallback<FormalTeam[]>(
-      async () => {
+    demoOrReal<FormalTeam[]>("teams.list", [], async () => {
         const raw = unwrapTeamList(await requestApi<unknown>("GET", "/teams/"));
         const teams = await Promise.all(raw.map((team) => remoteTeam(team.id)));
         const state = load();
@@ -310,19 +317,13 @@ const teamsRemote = {
         if (ownerEmail) state.current_user_email = ownerEmail;
         save(state);
         return teams.slice().sort((a, b) => a.name.localeCompare(b.name));
-      },
-      () => teamsApi.list(),
-    ),
+      }),
 
   get: (id: string) =>
-    withFallback<FormalTeam | null>(
-      async () => remoteTeam(id),
-      () => teamsApi.get(id),
-    ),
+    demoOrReal<FormalTeam | null>("teams.get", [id], async () => remoteTeam(id)),
 
   createTeam: (name: string) =>
-    withFallback<FormalTeam>(
-      async () => {
+    demoOrReal<FormalTeam>("teams.createTeam", [name], async () => {
         assertTeams(validateTeamName(name));
         const raw = unwrapTeam(await requestApi<unknown>("POST", "/teams/", { name: name.trim() }));
         if (!raw?.id) throw new TeamValidationError("The server did not return the created team.");
@@ -332,36 +333,26 @@ const teamsRemote = {
         state.active_team_id = team.id;
         save(state);
         return team;
-      },
-      () => teamsApi.createTeam(name),
-    ),
-
+      }),
 
   renameTeam: (id: string, name: string) =>
-    withFallback<FormalTeam | null>(
-      async () => {
+    demoOrReal<FormalTeam | null>("teams.renameTeam", [id, name], async () => {
         assertTeams(validateTeamName(name));
         await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
         return remoteTeam(id);
-      },
-      () => teamsApi.renameTeam(id, name),
-    ),
+      }),
 
   deleteTeam: (id: string) =>
-    withFallback<void>(
-      async () => {
+    demoOrReal<void>("teams.deleteTeam", [id], async () => {
         await requestApi("DELETE", "/teams/" + id);
         const state = load();
         state.teams = state.teams.filter((team) => team.id !== id);
         if (state.active_team_id === id) state.active_team_id = state.teams[0]?.id ?? null;
         save(state);
-      },
-      () => teamsApi.deleteTeam(id),
-    ),
+      }),
 
   inviteMember: (teamId: string, email: string, displayName?: string) =>
-    withFallback<FormalTeamMember | null>(
-      async () => {
+    demoOrReal<FormalTeamMember | null>("teams.inviteMember", [teamId, email, displayName], async () => {
         assertTeams(validateTeamEmail(email));
         await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
         const team = await remoteTeam(teamId);
@@ -373,26 +364,20 @@ const teamsRemote = {
           is_paceday_user: false,
           invited_at: new Date().toISOString(),
         };
-      },
-      () => teamsApi.inviteMember(teamId, email, displayName),
-    ),
+      }),
 
   removeMember: (teamId: string, email: string) =>
-    withFallback<void>(
-      async () => {
+    demoOrReal<void>("teams.removeMember", [teamId, email], async () => {
         const team = await remoteTeam(teamId);
         const member = team.members.find((item) => item.email === email.toLowerCase());
         if (!member) return;
         const userID = (await requestApi<{ members?: BackendTeamMember[] }>("GET", "/teams/" + teamId)).members?.find((item) => item.email?.toLowerCase() === email.toLowerCase())?.userId;
         if (!userID) throw new Error("team member has no user id");
         await requestApi("DELETE", "/teams/" + teamId + "/members/" + userID);
-      },
-      () => teamsApi.removeMember(teamId, email),
-    ),
+      }),
 
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
-    withFallback<NoMeetingZone | null>(
-      async () => {
+    demoOrReal<NoMeetingZone | null>("teams.addZone", [teamId, input], async () => {
         assertTeams(validateZoneInput(input));
         const raw = await requestApi<BackendZone>("POST", "/teams/" + teamId + "/no-meeting-zones", {
           dayOfWeek: input.day_of_week,
@@ -406,13 +391,10 @@ const teamsRemote = {
           end_min: minutesFromTime(raw.endTime) || input.end_min,
           label: raw.label ?? input.label, created_at: raw.createdAt ?? new Date().toISOString(),
         };
-      },
-      () => teamsApi.addZone(teamId, input),
-    ),
+      }),
 
   updateZone: (teamId: string, zoneId: string, patch: Partial<NoMeetingZone>) =>
-    withFallback<void>(
-      async () => {
+    demoOrReal<void>("teams.updateZone", [teamId, zoneId, patch], async () => {
         const current = (await remoteTeam(teamId)).no_meeting_zones.find((zone) => zone.id === zoneId);
         if (!current) throw new Error("zone not found");
         const merged = {
@@ -427,19 +409,13 @@ const teamsRemote = {
           endTime: timeFromMinutes(patch.end_min ?? current.end_min),
           label: patch.label ?? current.label,
         });
-      },
-      () => teamsApi.updateZone(teamId, zoneId, patch),
-    ),
+      }),
 
   removeZone: (teamId: string, zoneId: string) =>
-    withFallback<void>(
-      () => requestApi("DELETE", "/teams/" + teamId + "/no-meeting-zones/" + zoneId),
-      () => teamsApi.removeZone(teamId, zoneId),
-    ),
+    demoOrReal<void>("teams.removeZone", [teamId, zoneId], () => requestApi("DELETE", "/teams/" + teamId + "/no-meeting-zones/" + zoneId)),
 
   findSlots: (teamId: string, dateISO: string, durationMin: number) =>
-    withFallback<AvailabilitySlot[]>(
-      async () => {
+    demoOrReal<AvailabilitySlot[]>("teams.findSlots", [teamId, dateISO, durationMin], async () => {
         assertTeams(validateAvailabilityQuery(dateISO, durationMin));
         const raw = await requestApi<{ slots?: Array<{ start: string; end: string; quality_score?: number }> }>(
           "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
@@ -450,13 +426,10 @@ const teamsRemote = {
           start: slot.start, end: slot.end, score: slot.quality_score ?? 0,
           free_count: total, total_count: total,
         }));
-      },
-      () => teamsApi.findSlots(teamId, dateISO, durationMin),
-    ),
+      }),
 
   teamAnalytics: (teamId: string, dateISO?: string) =>
-    withFallback<ReturnType<typeof teamsApi.teamAnalytics>>(
-      async () => {
+    demoOrReal<TeamAnalyticsRow[]>("teams.teamAnalytics", [teamId, dateISO], async () => {
         if (dateISO !== undefined) assertTeams(ISO_DATE_RE.test(dateISO) ? null : "Pick a valid date.");
         const raw = await requestApi<{
           member_breakdown?: Array<{ name?: string; meeting_minutes: number; focus_minutes: number }>;
@@ -479,9 +452,7 @@ const teamsRemote = {
               weeks: [{ week_start: week, meeting_minutes: meeting, focus_minutes: focus, free_minutes: Math.max(0, 2400 - meeting - focus) }],
             };
           });
-      },
-      () => teamsApi.teamAnalytics(teamId),
-    ),
+      }),
 };
 
 export const teamsApi = {
@@ -635,140 +606,6 @@ export const teamsApi = {
     save(s);
   },
 
-  // ---------- Slot finder ----------
-
-  /**
-   * Return ranked slots for the team on a given date + duration.
-   * Uses freebusy cache for member availability and excludes any slot
-   * that overlaps a no-meeting zone.
-   */
-  async findSlots(teamId: string, dateISO: string, durationMin: number): Promise<AvailabilitySlot[]> {
-    const team = this.get(teamId);
-    if (!team) return [];
-    const active = team.members.filter((m) => m.status === "active");
-    if (active.length === 0) return [];
-
-    const day = new Date(dateISO);
-    day.setHours(0, 0, 0, 0);
-    const dow = day.getDay() === 0 ? 7 : day.getDay(); // 1..7
-    const dayStart = new Date(day);
-    dayStart.setHours(8, 0, 0, 0);
-    const dayEnd = new Date(day);
-    dayEnd.setHours(20, 0, 0, 0);
-
-    // Pull freebusy in one window
-    let busyMap: Record<string, Array<{ start: string; end: string }>> = {};
-    try {
-      const fb = await getFreebusy({
-        emails: active.map((m) => m.email),
-        start_time: dayStart.toISOString(),
-        end_time: dayEnd.toISOString(),
-      });
-      busyMap = fb.busy ?? {};
-    } catch {
-      busyMap = {};
-    }
-
-    const zones = team.no_meeting_zones.filter((z) => z.day_of_week === dow);
-    const stepMin = 15;
-    const slots: AvailabilitySlot[] = [];
-
-    for (
-      let cursor = new Date(dayStart);
-      cursor.getTime() + durationMin * 60_000 <= dayEnd.getTime();
-      cursor = new Date(cursor.getTime() + stepMin * 60_000)
-    ) {
-      const slotStart = new Date(cursor);
-      const slotEnd = new Date(cursor.getTime() + durationMin * 60_000);
-      const startMin = slotStart.getHours() * 60 + slotStart.getMinutes();
-      const endMin = slotEnd.getHours() * 60 + slotEnd.getMinutes();
-
-      // skip if overlaps a protected zone
-      const inZone = zones.some((z) => !(endMin <= z.start_min || startMin >= z.end_min));
-      if (inZone) continue;
-
-      // count free members
-      let free = 0;
-      for (const m of active) {
-        const busy = busyMap[m.email.toLowerCase()] ?? [];
-        const conflict = busy.some(
-          (b) => !(new Date(b.end) <= slotStart || new Date(b.start) >= slotEnd),
-        );
-        if (!conflict) free += 1;
-      }
-
-      if (free === 0) continue;
-
-      // score: free fraction (0..70) + mid-day bonus (0..30)
-      const freeFrac = free / active.length;
-      const hour = slotStart.getHours() + slotStart.getMinutes() / 60;
-      // peak around 10–11 and 14–15
-      const midBonus =
-        hour >= 10 && hour <= 11.5
-          ? 30
-          : hour >= 14 && hour <= 15.5
-            ? 28
-            : hour >= 9 && hour <= 16
-              ? 18
-              : 6;
-      const score = Math.round(freeFrac * 70 + (freeFrac === 1 ? midBonus : midBonus * 0.6));
-
-      slots.push({
-        start: slotStart.toISOString(),
-        end: slotEnd.toISOString(),
-        score,
-        free_count: free,
-        total_count: active.length,
-      });
-    }
-
-    // Sort by score desc, then earlier first
-    slots.sort((a, b) => b.score - a.score || a.start.localeCompare(b.start));
-    return slots.slice(0, 8);
-  },
-
-  // ---------- Aggregated team analytics ----------
-
-  /**
-   * Pull per-member analytics from the manager API where possible.
-   * Members not in the manager team get a synthetic estimate.
-   */
-  teamAnalytics(teamId: string): Array<{
-    email: string;
-    display_name: string;
-    is_paceday_user: boolean;
-    weeks: { week_start: string; meeting_minutes: number; focus_minutes: number; free_minutes: number }[];
-  }> {
-    const team = this.get(teamId);
-    if (!team) return [];
-    const mgrMap = new Map<string, ManagerTeamMember>();
-    for (const m of managerApi.listTeam()) mgrMap.set(m.email, m);
-
-    return team.members
-      .filter((m) => m.status === "active" && m.email !== load().current_user_email)
-      .map((m) => {
-        const mgr = mgrMap.get(m.email);
-        if (mgr) {
-          const a = managerApi.analytics(m.email);
-          if (a) {
-            return {
-              email: m.email,
-              display_name: m.display_name,
-              is_paceday_user: m.is_paceday_user,
-              weeks: a.weeks,
-            };
-          }
-        }
-        // Synthetic estimate for non-manager-team folks
-        return {
-          email: m.email,
-          display_name: m.display_name,
-          is_paceday_user: m.is_paceday_user,
-          weeks: syntheticWeeks(m.email, m.is_paceday_user),
-        };
-      });
-  },
-
   resetAll() {
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -777,34 +614,6 @@ export const teamsApi = {
     }
   },
 };
-
-function syntheticWeeks(email: string, paceday: boolean) {
-  const seed = Array.from(email).reduce((a, c) => a + c.charCodeAt(0), 0);
-  const monday = (() => {
-    const d = new Date();
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
-  const weeks = [];
-  for (let i = 11; i >= 0; i--) {
-    const ws = new Date(monday);
-    ws.setDate(ws.getDate() - i * 7);
-    const r = (n: number) => ((seed * (i + 1) * (n + 3)) % 100) / 100;
-    const meetings = Math.round(120 + r(1) * 600);
-    const focus = paceday ? Math.round(60 + r(2) * 480) : 0;
-    const free = Math.max(0, 2400 - meetings - focus);
-    weeks.push({
-      week_start: ws.toISOString().slice(0, 10),
-      meeting_minutes: meetings,
-      focus_minutes: focus,
-      free_minutes: free,
-    });
-  }
-  return weeks;
-}
 
 // ---------- Helpers exposed to UI ----------
 

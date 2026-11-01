@@ -8,7 +8,7 @@ vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { ConnectionStatus } from "./ConnectionStatus";
 import { WorkCalendarConnection } from "./WorkCalendarConnection";
-import { isUsingMocks, setMockMode } from "@/api/client";
+
 import type { Settings } from "@/api/types";
 
 // PAC-35 AC-17 (web half), on both places the app offers a calendar
@@ -57,7 +57,6 @@ function serve(status: unknown, disconnect: () => Response) {
 
 describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, renderSurface) => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     toast.success.mockReset();
@@ -91,7 +90,6 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
     expect(toast.error.mock.calls[0][0]).toMatch(NOT_AVAILABLE);
     expect(toast.success).not.toHaveBeenCalled();
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("keeps the generic failure message for any other failure", async () => {

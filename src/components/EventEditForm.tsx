@@ -148,7 +148,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, "write"));
     } finally {
       setSaving(false);
     }
@@ -163,7 +163,7 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
       setConfirmingDelete(false);
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, "write"));
     } finally {
       setDeleting(false);
     }

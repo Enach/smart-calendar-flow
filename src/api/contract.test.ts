@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setMockMode } from "./client";
+import { api } from "./client";
 import { schedulingLinksApi } from "./schedulingLinks";
 import type { ApiPort } from "./contract";
 
@@ -18,7 +18,6 @@ function requestPath(input: RequestInfo | URL): string {
 
 describe("frontend/backend API port", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });

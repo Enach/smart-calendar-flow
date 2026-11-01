@@ -468,12 +468,12 @@ function TeamTab({
       if (/^https?:\/\//i.test(url)) window.location.assign(url);
       else navigate(url);
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
   });
 
   const detectMut = useMutation({
     mutationFn: () => managerApi.remote.detect(activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
     onSuccess: (preview) => {
       setScanPreview(preview);
       setSelectedCandidates(preview.candidates.filter((candidate) => !candidate.already_assigned).map((candidate) => candidate.email));
@@ -482,7 +482,7 @@ function TeamTab({
 
   const confirmDetectMut = useMutation({
     mutationFn: () => managerApi.remote.confirmDetect(activeTeam.id, selectedCandidates),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
     onSuccess: (result) => {
       setScanPreview(null);
       setSelectedCandidates([]);
@@ -494,7 +494,7 @@ function TeamTab({
 
   const removeMut = useMutation({
     mutationFn: (email: string) => managerApi.remote.removeMember(email, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -505,7 +505,7 @@ function TeamTab({
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, "write")),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -1167,7 +1167,7 @@ export function AddPersonDialog({
         custom_cadence_days: cadence === "custom" ? customDays : undefined,
       }, teamId),
     // Form values are intentionally preserved on error.
-    onError: (e) => setError(apiErrorMessage(e)),
+    onError: (e) => setError(apiErrorMessage(e, "write")),
     onSuccess: ({ alreadyAuto }) => {
       onAdded();
       if (alreadyAuto) {
@@ -1286,7 +1286,7 @@ function CreateTeamDialog({
   const createMut = useMutation({
     mutationFn: () => teamsApi.remote.createTeam(name),
     // Keep the typed name on error.
-    onError: (e) => setError(apiErrorMessage(e)),
+    onError: (e) => setError(apiErrorMessage(e, "write")),
     onSuccess: (t) => {
       toast.success(`Team "${t.name}" created.`);
       setName("");

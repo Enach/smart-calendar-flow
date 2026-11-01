@@ -1,7 +1,7 @@
 
 # Clockwise-like calendar frontend
 
-Build the full frontend at the Lovable project root (`src/`), wired to the Go backend's `/api/*` endpoints, with a graceful mock-data fallback so the Lovable preview is fully interactive.
+Build the full frontend at the Lovable project root (`src/`), wired to the Go backend's `/api/*` endpoints. Superseded by PAC-83: there is no automatic mock data; the Lovable preview (a non-production build) offers an explicit demo, entered only from the sign-in screen's "Explore a demo — made-up data" control.
 
 ## Stack & setup
 - React 18 + TypeScript + Vite + Tailwind (existing)
@@ -10,7 +10,7 @@ Build the full frontend at the Lovable project root (`src/`), wired to the Go ba
 - Custom toast system (no external lib), per spec
 
 ## Architecture
-- `src/api/client.ts` — axios instance (`baseURL: "/api"`) with a **mock fallback**: each API function tries the real call first; on network failure returns realistic mock data (sample week of events, default settings, fake focus blocks, NLP parses with 3 suggested slots, audit entries). A small dev banner appears when mocks are active.
+- `src/api/client.ts` — the API client (`/api`). PAC-83: a failed call is an error shown to the user, never mock data. Demo data (sample week of events, default settings, focus blocks, NLP parses, audit entries) lives under `src/demo/` and answers only in an explicit demo session of a non-production build.
 - `src/api/types.ts` — all interfaces from the spec
 - `src/hooks/` — `useToast`, `useSettings`, `useCalendarEvents`, `useFocusBlocks` (react-query wrappers)
 - `src/App.tsx` — Router + QueryClientProvider + ToastProvider
