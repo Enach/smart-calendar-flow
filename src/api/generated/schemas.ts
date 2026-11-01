@@ -385,6 +385,15 @@ export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBooking
 export type RawGoogleFreeBusyMap = __TypedOpenapi.Schemas.RawGoogleFreeBusyMap;
 export const RawGoogleFreeBusyMap = z.record(z.string(), z.array(RawGoogleBusyWindow));
 
+export type ReadinessNotReady = __TypedOpenapi.Schemas.ReadinessNotReady;
+export const ReadinessNotReady = z.strictObject({ error: z.literal("not ready") });
+
+export type ReadinessReady = __TypedOpenapi.Schemas.ReadinessReady;
+export const ReadinessReady = z.strictObject({ status: z.literal("ready") });
+
+export type RequestBudgetExpiredError = __TypedOpenapi.Schemas.RequestBudgetExpiredError;
+export const RequestBudgetExpiredError = z.strictObject({ error: z.literal("request timed out") });
+
 export type ScanCandidate = __TypedOpenapi.Schemas.ScanCandidate;
 export const ScanCandidate = z.strictObject({ email: z.email(), display_name: z.string(), already_assigned: z.boolean() });
 
