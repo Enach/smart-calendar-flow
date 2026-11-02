@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEMO_SESSION_KEY, isApiHttpError, isApiUnreachableError, isUsingMocks, setMockMode } from "./client";
+import { isApiHttpError, isApiUnreachableError } from "./client";
 import { publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
@@ -37,7 +37,6 @@ const BACKEND_LINK = {
 
 describe("scheduling links contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -158,7 +157,6 @@ describe("scheduling links contract", () => {
     fetchMock.mockResolvedValue(emptyResponse(204));
     await expect(schedulingLinksApi.deleteLink("l1")).resolves.toBeUndefined();
     await expect(schedulingLinksApi.leaveLink("l1")).resolves.toBeUndefined();
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("surfaces real HTTP errors instead of falling back to demo data", async () => {
@@ -178,14 +176,12 @@ describe("scheduling links contract", () => {
         co_host_emails: [],
       }),
     ).rejects.toSatisfy((e: unknown) => isApiHttpError(e) && e.status === 409);
-    expect(isUsingMocks()).toBe(false);
   });
 
-  it("falls back to preview data only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5).
+  it("rejects with ApiUnreachableError when the backend is unreachable (no preview links)", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
-    const res = await schedulingLinksApi.listLinks();
-    expect(res.owned.length + res.shared.length).toBeGreaterThan(0);
-    expect(isUsingMocks()).toBe(true);
+    await expect(schedulingLinksApi.listLinks()).rejects.toSatisfy(isApiUnreachableError);
   });
 
   it("uses the documented host-invite endpoints", async () => {
@@ -258,7 +254,6 @@ describe("strict backend validation alignment (422)", () => {
   };
 
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -305,7 +300,6 @@ describe("strict backend validation alignment (422)", () => {
       jsonResponse({ detail: "window_start must be before window_end" }, 422),
     );
     await expect(schedulingLinksApi.createLink(base)).rejects.toSatisfy((e: unknown) => isApiHttpError(e));
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("keeps the created server link usable when the list refetch fails", async () => {
@@ -327,14 +321,12 @@ describe("strict backend validation alignment (422)", () => {
     // error (no demo links) while the created link above remains valid data.
     fetchMock.mockImplementation(async () => jsonResponse({ detail: "boom" }, 500));
     await expect(schedulingLinksApi.listLinks()).rejects.toSatisfy((e: unknown) => isApiHttpError(e));
-    expect(isUsingMocks()).toBe(false);
   });
 });
 
 
 describe("link bookings", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -377,7 +369,6 @@ describe("link bookings", () => {
 
 describe("public booking contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -470,48 +461,44 @@ describe("public booking contract", () => {
       .catch((e) => e);
     expect(isApiHttpError(err)).toBe(true);
     expect((err as { status: number }).status).toBe(status);
-    expect(isUsingMocks()).toBe(false);
   });
 
-  it("never fakes a booking confirmation when the backend is unreachable", async () => {
+  it("never fakes a booking confirmation when the backend is unreachable, and sends it once", async () => {
     fetchMock.mockImplementation(async () => {
       throw new TypeError("Failed to fetch");
     });
     const input = { start: "2030-03-04T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" };
     const err = await schedulingLinksApi.bookSlot("intro-chat", input).catch((e) => e);
     expect(isApiUnreachableError(err)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    // Even after another call has flipped the app into preview mode.
-    setMockMode(true);
+    // A leftover flag of the removed preview mode changes nothing (AC-9, AC-15b).
+    sessionStorage.setItem("clockwise:mock-mode", "1");
     const again = await schedulingLinksApi.bookSlot("intro-chat", input).catch((e) => e);
     expect(isApiUnreachableError(again)).toBe(true);
-    setMockMode(false);
+    sessionStorage.removeItem("clockwise:mock-mode");
   });
 
-  it("books against preview data in an explicit demo session", async () => {
-    sessionStorage.setItem(DEMO_SESSION_KEY, "1");
-    try {
-      const conf = await schedulingLinksApi.bookSlot("intro-chat", {
-        start: "2030-03-04T09:00:00Z",
-        duration_minutes: 30,
-        name: "Demo",
-        email: "demo@co.com",
-      });
-      expect(conf.link_slug).toBe("intro-chat");
-      expect(fetchMock).not.toHaveBeenCalled();
-    } finally {
-      sessionStorage.removeItem(DEMO_SESSION_KEY);
-    }
+  it("books against demo data in an explicit demo session", async () => {
+    sessionStorage.setItem("paceday:demo", "1");
+    const conf = await schedulingLinksApi.bookSlot("intro-chat", {
+      start: "2030-03-04T09:00:00Z",
+      duration_minutes: 30,
+      name: "Demo",
+      email: "demo@co.com",
+    });
+    expect(conf.link_slug).toBe("intro-chat");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to preview data only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5, AC-12): a demo seed slug gets no demo link when the server is unreachable.
+  it("never shows the demo link for a demo seed slug when the backend is unreachable", async () => {
     fetchMock.mockImplementation(async () => {
       throw new TypeError("Failed to fetch");
     });
-    const info = await schedulingLinksApi.getPublicLink("intro-chat");
-    expect(isUsingMocks()).toBe(true);
-    expect(info.slug).toBe("intro-chat");
-    setMockMode(false);
+    await expect(schedulingLinksApi.getPublicLink("intro-chat")).rejects.toSatisfy(isApiUnreachableError);
+    await expect(schedulingLinksApi.getPublicSlots("intro-chat", { date: "2030-03-04", duration: 30 })).rejects.toSatisfy(isApiUnreachableError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -531,7 +518,6 @@ describe("PAC-72 booking horizon and refusal message", () => {
   };
 
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });

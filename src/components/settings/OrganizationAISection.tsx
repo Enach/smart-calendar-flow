@@ -15,6 +15,8 @@ import type { OrganizationAIConfiguration } from "@/api/types";
 import { useOrganizationAI, usePatchOrganizationAI } from "@/hooks/useOrganizationAI";
 import { KEY_PROVIDERS, PROVIDER_LABELS } from "@/lib/aiProviders";
 import { formFrom, isOrgAIStepupLanding, orgAIChangeBody, type OrgAIForm } from "@/lib/orgAI";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 // PAC-73 Part 2 (spec §3.6, P2-AC-30, P2-AC-32): the organisation's AI
 // configuration in Settings. Every member sees the same values (never the
@@ -203,7 +205,7 @@ function EditForm({ shown, onDone }: { shown: OrganizationAIConfiguration; onDon
           setMessage({ kind: "error", text: "You are not in an organisation." });
       }
     } catch (e) {
-      setMessage({ kind: "error", text: apiErrorMessage(e) });
+      setMessage({ kind: "error", text: apiErrorMessage(e, effectOf("standalone.patchOrganizationAI")) });
     }
   };
 
@@ -368,7 +370,7 @@ export function OrganizationAISection({ inOrganization }: { inOrganization: bool
           {mode === "explain" && (
             <div className="space-y-3">
               {options.data && <StepupExplanation offer={options.data} />}
-              {options.error && <p className="text-sm text-destructive">{apiErrorMessage(options.error)}</p>}
+              {options.error && <p className="text-sm text-destructive"><ApiErrorText error={options.error} effect="read" /></p>}
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"

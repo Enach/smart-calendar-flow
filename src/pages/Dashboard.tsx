@@ -15,8 +15,7 @@ import { TodayAgenda } from "@/components/TodayAgenda";
 import { FocusStats } from "@/components/FocusStats";
 import { QuickActions } from "@/components/QuickActions";
 import { EventDrawer } from "@/components/EventDrawer";
-import { MockBanner } from "@/components/MockBanner";
-import { DemoBanner } from "@/components/DemoBanner";
+import { ServerStatusBanner } from "@/components/ServerStatusBanner";
 import { useAuth } from "@/contexts/useAuth";
 import { QuickCreatePopover } from "@/components/QuickCreatePopover";
 import { LoadingOverlay } from "@/components/ui/spinner";
@@ -32,6 +31,7 @@ import { UI_LOCALE } from "@/lib/locale";
 import { eventChipColors } from "@/lib/eventChip";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { calendarSlotLabelFormat, formatTime } from "@/lib/timeFormat";
+import { effectOf } from "@/api/effects";
 
 type CalView = "timeGridDay" | "timeGridWeek" | "dayGridMonth";
 const VIEW_STORAGE_KEY = "calendar.view";
@@ -121,6 +121,7 @@ export default function Dashboard() {
   const [nlpInitial, setNlpInitial] = useState<string>("");
   const [nlpLoading, setNlpLoading] = useState(false);
   const [nlpError, setNlpError] = useState<string | null>(null);
+  const [nlpFailure, setNlpFailure] = useState<unknown>(null);
   const [nlpNotConfigured, setNlpNotConfigured] = useState<AINotConfigured | null>(null);
   const [parseResult, setParseResult] = useState<ParseResult | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -167,6 +168,7 @@ export default function Dashboard() {
   const handleNLP = useCallback(async (text: string) => {
     setNlpLoading(true);
     setNlpError(null);
+    setNlpFailure(null);
     setNlpNotConfigured(null);
     try {
       const res = await api.nlpParse(text);
@@ -190,7 +192,7 @@ export default function Dashboard() {
         setNlpError(res.error || "Sorry, I couldn't understand that request.");
       }
     } catch (e) {
-      setNlpError(apiErrorMessage(e));
+      setNlpFailure(e);
     } finally {
       setNlpLoading(false);
     }
@@ -207,7 +209,7 @@ export default function Dashboard() {
       setNlpInitial("");
       qc.invalidateQueries({ queryKey: ["events"] });
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.nlpConfirm")));
     } finally {
       setConfirming(false);
     }
@@ -230,7 +232,7 @@ export default function Dashboard() {
         qc.invalidateQueries({ queryKey: ["events"] });
         setQuickCreate(null);
       } catch (e) {
-        toast.error(apiErrorMessage(e));
+        toast.error(apiErrorMessage(e, effectOf("api.scheduleCreate")));
       } finally {
         setQuickCreateSaving(false);
       }
@@ -295,7 +297,7 @@ export default function Dashboard() {
         demoWriteToast();
       } catch (e) {
         revert();
-        toast.error(apiErrorMessage(e));
+        toast.error(apiErrorMessage(e, effectOf("api.updateEvent")));
       }
     },
     [qc, demoWriteToast],
@@ -350,8 +352,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DemoBanner />
-      <MockBanner />
+      <ServerStatusBanner />
       <Navbar
         weekLabel={titleLabel}
         onPrevWeek={goPrev}
@@ -365,6 +366,7 @@ export default function Dashboard() {
           initialValue={nlpInitial}
           loading={nlpLoading}
           error={nlpError}
+          failure={nlpFailure}
           notConfigured={nlpNotConfigured}
           onSubmit={handleNLP}
         />
@@ -455,6 +457,8 @@ export default function Dashboard() {
               <InlineError
                 title="Couldn't load your calendar"
                 message={apiErrorMessage(eventsErrorObj)}
+                error={eventsErrorObj}
+                effect="read"
                 onRetry={() => refetchEvents()}
                 retrying={eventsFetching}
                 className="my-8"
@@ -485,6 +489,8 @@ export default function Dashboard() {
                     compact
                     title="Calendar may be out of date"
                     message={apiErrorMessage(eventsErrorObj)}
+                    error={eventsErrorObj}
+                    effect="read"
                     onRetry={() => refetchEvents()}
                     retrying={eventsFetching}
                     className="mb-3"

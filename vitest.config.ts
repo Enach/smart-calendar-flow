@@ -4,6 +4,12 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  // PAC-83: unit tests run the non-production behaviour. Under vitest this is
+  // a runtime global, so production-path tests flip it with
+  // vi.stubGlobal("__PACEDAY_DEMO_BUILD__", false) (spec AC-15d).
+  define: {
+    __PACEDAY_DEMO_BUILD__: true,
+  },
   test: {
     environment: "jsdom",
     globals: true,

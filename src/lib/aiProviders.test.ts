@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import { AINotConfigured, AIStatus, LLMApiKeysSet, LLMTestRequest, LLMTestResult, Settings } from "@/api/generated/schemas";
-import { mockLlmTest } from "@/api/client";
 import type { Settings as AppSettings } from "@/api/types";
 import {
   KEY_PROVIDERS,
@@ -127,18 +126,6 @@ describe("AI provider values follow the contract", () => {
     expect(providerSwitch("openai")).toHaveProperty("llm_api_key", undefined);
   });
 
-  it("the mock probe knows exactly the five providers", () => {
-    const base = { llm_model: "", aws_region: "us-east-1", azure_endpoint: "https://x", azure_deployment: "d" } as AppSettings;
-    for (const p of KEY_PROVIDERS) {
-      expect(mockLlmTest({ ...base, llm_provider: p }).ok).toBe(true);
-    }
-    for (const p of ["", "organization", "unsupported", "ollama"]) {
-      const res = mockLlmTest({ ...base, llm_provider: p });
-      expect(res.ok).toBe(false);
-      expect(res.message).not.toMatch(/ollama/i);
-    }
-    expect(mockLlmTest({ ...base, llm_provider: "azure_openai", azure_endpoint: "" }).ok).toBe(false);
-  });
 });
 
 describe("who can turn AI on", () => {

@@ -10,7 +10,7 @@ You are modifying only the Paceday frontend in the existing repository. The fron
 - Do not add direct fetch calls inside React components.
 - Do not make localStorage the primary source of truth.
 - Do not replace real API behavior with mock data when the API is reachable.
-- Preserve the existing local fallback used by Lovable preview, but make the fallback explicit and recoverable.
+- Never show invented data after a failure (PAC-83). A timeout, a network error, a non-JSON answer or a gateway error is shown as an error where the action happened ("Can't reach Paceday", with a manual retry for reads; "may or may not have been applied" for writes), never as mock or preview data and never as a fake success. The only made-up data is the explicit demo: non-production builds only, entered from the one "Explore a demo — made-up data" control on the sign-in screen, code under `src/demo/`, reached only through `src/api/demoGate.ts`.
 
 ## Existing frontend boundary
 

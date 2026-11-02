@@ -8,7 +8,7 @@ vi.hoisted(() => {
 });
 
 import { SsoAdminStepupSection } from "./SsoAdminStepupSection";
-import { setMockMode } from "@/api/client";
+
 
 // PAC-50 AC-25: the Settings entry point for the optional SSO administrator
 // step-up, from GET /api/admin/sso/stepup/options, and the outcome on return.
@@ -51,7 +51,6 @@ function renderAt(path = "/settings") {
 
 describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     assigned.length = 0;

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, describeAuditEntry, disconnectNotice, setMockMode } from "./client";
+import { api, describeAuditEntry, disconnectNotice } from "./client";
 
 // PAC-67 (web half): the two disconnects answer ProviderDisconnectResult, the
 // client says what became of the grant at the provider (spec D-2, AC-15,
@@ -17,7 +17,6 @@ function requestPath(input: RequestInfo | URL): string {
 
 describe("provider disconnects (PAC-67)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -52,12 +51,11 @@ describe("provider disconnects (PAC-67)", () => {
     await expect(api.microsoftDisconnect()).rejects.toMatchObject({ status: 500 });
   });
 
-  it("answers in preview mode without a request", async () => {
-    setMockMode(true);
+  it("answers in a demo session without a request", async () => {
+    sessionStorage.setItem("paceday:demo", "1"); // PAC-83: demo answers only in an explicit demo session
     await expect(api.zoomDisconnect()).resolves.toEqual({ provider: "zoom", revocation: "confirmed" });
     await expect(api.microsoftDisconnect()).resolves.toEqual({ provider: "outlook", revocation: "not_offered" });
     expect(fetchMock).not.toHaveBeenCalled();
-    setMockMode(false);
   });
 });
 

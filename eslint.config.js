@@ -31,4 +31,24 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": "off",
     },
   },
+  {
+    // PAC-83 (contract §4.2): demo code is reached only through a dynamic
+    // import guarded by the literal __PACEDAY_DEMO_BUILD__ flag. A static
+    // import would put the demo into the production bundle.
+    files: ["**/*.{ts,tsx}"],
+    ignores: ["src/demo/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["@/demo", "@/demo/*", "**/src/demo", "**/src/demo/*", "../demo", "../demo/*", "../../demo", "../../demo/*", "./demo", "./demo/*"],
+              message: "Demo code is reached only by import() inside `if (__PACEDAY_DEMO_BUILD__)` (PAC-83, src/api/demoGate.ts).",
+            },
+          ],
+        },
+      ],
+    },
+  },
 );

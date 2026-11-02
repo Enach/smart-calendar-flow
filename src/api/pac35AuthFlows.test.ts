@@ -1,15 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  api,
-  canDisconnectCalendar,
-  isApiHttpError,
-  isApiUnreachableError,
-  isCalendarDisconnectUnsupported,
-  isUsingMocks,
-  requestApi,
-  setMockMode,
-} from "./client";
+import { api, canDisconnectCalendar, isApiHttpError, isApiUnreachableError, isCalendarDisconnectUnsupported, requestApi } from "./client";
 import { schedulingLinksApi } from "./schedulingLinks";
 import { apiFetch } from "@/lib/api";
 
@@ -29,7 +20,6 @@ const UNSUPPORTED = { error: "disconnecting this kind of calendar is not availab
 
 describe("PAC-35 client", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -55,7 +45,6 @@ describe("PAC-35 client", () => {
     expect(isApiHttpError(err)).toBe(true);
     expect(isApiUnreachableError(err)).toBe(false);
     expect(isCalendarDisconnectUnsupported(err)).toBe(true);
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("does not mistake another 409 or another failure for the unsupported answer", async () => {

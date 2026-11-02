@@ -22,7 +22,7 @@ Inspect src/api/client.ts, the getEvents adapter, src/api/types.ts, and src/lib/
 
 GET /api/events may return attendees as string values or attendee objects. The adapter must never call string methods on an object.
 
-Normalize the attendee collection to the string representation expected by the existing ownership logic, preferring an attendee email when present and using a safe display fallback only when appropriate. Preserve attendee_details or the richer server field for views that use it. Do not fabricate addresses.
+Normalize the attendee collection to the string representation expected by the existing ownership logic, preferring an attendee email when present and using a safe display name only when appropriate. Preserve attendee_details or the richer server field for views that use it. Do not fabricate addresses.
 
 Add tests for string attendees, object attendees, missing attendees, and mixed arrays. A malformed attendee must not crash the dashboard.
 
@@ -30,9 +30,9 @@ Add tests for string attendees, object attendees, missing attendees, and mixed a
 
 Inspect src/api/teams.ts and every consumer of teamsApi.remote.list and teamsApi.remote.create.
 
-GET /api/teams/ and the create response must accept both a bare array and an envelope with a teams property. Normalize both into the existing Team type. Keep the existing query keys and explicit mock fallback semantics.
+GET /api/teams/ and the create response must accept both a bare array and an envelope with a teams property. Normalize both into the existing Team type. Keep the existing query keys; a failed call is an error, never mock data (PAC-83).
 
-HTTP errors must remain errors. Only an unreachable backend may use the existing preview fallback.
+HTTP errors must remain errors, and so must an unreachable backend: no preview data (PAC-83).
 
 Add adapter tests for both payload shapes and for a real HTTP error not becoming demo data.
 

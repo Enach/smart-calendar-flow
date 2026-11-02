@@ -10,6 +10,7 @@ import type { SuggestedSlot } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
+import { effectOf } from "@/api/effects";
 
 interface Props {
   defaultRangeStart: string; // ISO
@@ -127,7 +128,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       qc.invalidateQueries({ queryKey: ["events"] });
       onClose();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.scheduleCreate")));
     } finally {
       setApplying(false);
     }

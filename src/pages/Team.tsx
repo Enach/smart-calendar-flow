@@ -77,6 +77,8 @@ import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { DATE_TIME, formatDateTime } from "@/lib/timeFormat";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -231,7 +233,7 @@ export default function Team() {
             className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-foreground"
           >
             <span className="flex-1">
-              Couldn't refresh your teams: {apiErrorMessage(teamsError)}
+              Couldn't refresh your teams: <ApiErrorText error={teamsError} effect="read" />
               {teams.length > 0 ? " Showing the last loaded list." : ""}
             </span>
             <Button size="sm" variant="outline" onClick={() => teamsQ.refetch()}>
@@ -273,11 +275,13 @@ export default function Team() {
   );
 }
 
-function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+function ErrorBanner({ message, failure, onRetry, busy }: { message: string; failure?: unknown; onRetry: () => void; busy?: boolean }) {
   return (
     <div className="mb-4 flex flex-wrap items-start gap-3 rounded-xl border border-destructive/40 bg-destructive/8 px-4 py-3">
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B91C1C]" />
-      <p className="min-w-0 flex-1 text-sm text-foreground">{message}</p>
+      <p className="min-w-0 flex-1 text-sm text-foreground">
+        {failure !== undefined && failure !== null ? <ApiErrorText error={failure} effect="read" /> : message}
+      </p>
       <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="gap-1.5">
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
         Retry
@@ -468,12 +472,12 @@ function TeamTab({
       if (/^https?:\/\//i.test(url)) window.location.assign(url);
       else navigate(url);
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.schedulePrefillUrl"))),
   });
 
   const detectMut = useMutation({
     mutationFn: () => managerApi.remote.detect(activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.detect"))),
     onSuccess: (preview) => {
       setScanPreview(preview);
       setSelectedCandidates(preview.candidates.filter((candidate) => !candidate.already_assigned).map((candidate) => candidate.email));
@@ -482,7 +486,7 @@ function TeamTab({
 
   const confirmDetectMut = useMutation({
     mutationFn: () => managerApi.remote.confirmDetect(activeTeam.id, selectedCandidates),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.confirmDetect"))),
     onSuccess: (result) => {
       setScanPreview(null);
       setSelectedCandidates([]);
@@ -494,7 +498,7 @@ function TeamTab({
 
   const removeMut = useMutation({
     mutationFn: (email: string) => managerApi.remote.removeMember(email, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.removeMember"))),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -505,7 +509,7 @@ function TeamTab({
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.updateMember"))),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -537,6 +541,7 @@ function TeamTab({
       {teamQ.isError && (
         <ErrorBanner
           message={apiErrorMessage(teamQ.error)}
+          failure={teamQ.error}
           onRetry={() => teamQ.refetch()}
           busy={teamQ.isFetching}
         />
@@ -573,6 +578,7 @@ function TeamTab({
           gaps={gapsQ.data ?? []}
           isLoading={gapsQ.isLoading}
           error={gapsQ.isError ? apiErrorMessage(gapsQ.error) : null}
+          failure={gapsQ.isError ? gapsQ.error : null}
           onRetry={() => gapsQ.refetch()}
           busy={gapsQ.isFetching}
           schedulingEmail={scheduleMut.isPending ? (scheduleMut.variables as string) : null}
@@ -802,6 +808,7 @@ function GapsSection({
   gaps,
   isLoading,
   error,
+  failure,
   onRetry,
   busy,
   schedulingEmail,
@@ -810,6 +817,8 @@ function GapsSection({
   gaps: OneOnOneGap[];
   isLoading: boolean;
   error: string | null;
+  /** PAC-83: the API failure behind `error`, for the e2e contract's api-error tags. */
+  failure?: unknown;
   onRetry: () => void;
   busy: boolean;
   schedulingEmail: string | null;
@@ -819,7 +828,7 @@ function GapsSection({
   const [open, setOpen] = useState(overdue.length > 0);
 
   if (error && gaps.length === 0) {
-    return <ErrorBanner message={error} onRetry={onRetry} busy={busy} />;
+    return <ErrorBanner message={error} failure={failure} onRetry={onRetry} busy={busy} />;
   }
 
   if (isLoading && gaps.length === 0) {
@@ -1167,7 +1176,7 @@ export function AddPersonDialog({
         custom_cadence_days: cadence === "custom" ? customDays : undefined,
       }, teamId),
     // Form values are intentionally preserved on error.
-    onError: (e) => setError(apiErrorMessage(e)),
+    onError: (e) => setError(apiErrorMessage(e, effectOf("manager.addMember"))),
     onSuccess: ({ alreadyAuto }) => {
       onAdded();
       if (alreadyAuto) {
@@ -1286,7 +1295,7 @@ function CreateTeamDialog({
   const createMut = useMutation({
     mutationFn: () => teamsApi.remote.createTeam(name),
     // Keep the typed name on error.
-    onError: (e) => setError(apiErrorMessage(e)),
+    onError: (e) => setError(apiErrorMessage(e, effectOf("teams.createTeam"))),
     onSuccess: (t) => {
       toast.success(`Team "${t.name}" created.`);
       setName("");

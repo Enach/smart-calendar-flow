@@ -5,7 +5,7 @@ Ce dossier contient les prompts de référence pour faire évoluer uniquement le
 ## Ordre recommandé
 
 1. `00-global-context.md` — contexte et règles d’architecture à fournir au début d’une session Lovable.
-2. `01-real-api-first.md` — vérifier que le frontend utilise réellement l’API et que le fallback reste explicite.
+2. `01-real-api-first.md` — vérifier que le frontend utilise réellement l’API et n’affiche jamais de données inventées après un échec (PAC-83).
 3. `02-personal-calendars.md` — calendriers personnels, synchronisation, édition et aperçu.
 4. `03-scheduling-links.md` — création, édition, partage et invitations des liens de planification.
 5. `04-public-booking.md` — parcours public de consultation des créneaux et réservation.
@@ -34,7 +34,7 @@ Le backend et ses contrats sont considérés comme gelés pendant cette phase. L
 - Utiliser les modules de `frontend/src/api/` et React Query comme seule frontière réseau.
 - Ne pas ajouter de `fetch` direct dans les composants.
 - Ne pas utiliser `localStorage` comme source principale de vérité.
-- Conserver le fallback local existant pour la preview Lovable, mais ne jamais masquer silencieusement une erreur de l’API en mode connecté.
+- Ne jamais remplacer une erreur ou une absence de réponse de l’API par des données de démonstration (PAC-83). La démo n’existe que dans les builds hors production, via le bouton « Explore a demo — made-up data » de l’écran de connexion.
 - Respecter les réponses HTTP 204, 409, 410, 422 et 5xx.
 - Ne pas inventer de champs ou d’endpoints : demander d’abord une adaptation dans l’adapter API si un besoin manque.
 - Ne jamais afficher de secret, token OAuth ou contenu sensible dans l’interface ou les logs.

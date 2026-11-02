@@ -7,7 +7,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { QuickActions } from "./QuickActions";
-import { setMockMode } from "@/api/client";
+
 
 // PAC-32 (API-015): running the focus engine against the real backend reads
 // the run result's createdBlocks. Before the fix the component read
@@ -22,7 +22,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("QuickActions run focus engine (PAC-32)", () => {
   beforeEach(() => {
-    setMockMode(false);
     toast.success.mockReset();
     toast.error.mockReset();
     fetchMock.mockReset();

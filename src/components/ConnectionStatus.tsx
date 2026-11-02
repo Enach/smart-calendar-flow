@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  apiErrorMessage,
   CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE,
   canDisconnectCalendar,
   isCalendarDisconnectUnsupported,
@@ -8,6 +9,7 @@ import {
 import { Loader2, LogIn, LogOut, Link2 } from "lucide-react";
 import { toast } from "@/hooks/useToast";
 import { useState } from "react";
+import { effectOf } from "@/api/effects";
 
 export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   const qc = useQueryClient();
@@ -30,7 +32,7 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
         toast.error(CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE);
         qc.invalidateQueries({ queryKey: ["auth"] });
       } else {
-        toast.error("Failed to disconnect");
+        toast.error(apiErrorMessage(e, effectOf("api.authDisconnect")));
       }
     } finally {
       setBusy(false);

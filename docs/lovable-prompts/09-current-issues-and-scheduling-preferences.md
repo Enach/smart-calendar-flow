@@ -69,7 +69,7 @@ For lunch:
 - Each day can be protected/off and can have its own start/end.
 - Reject inverted or malformed intervals.
 
-The existing global fields remain the compatibility fallback:
+The existing global fields remain the compatibility default:
 
 - work_start / work_end
 - lunch_start / lunch_end / protect_lunch
@@ -91,7 +91,7 @@ Normalize both existing snake_case fields and the backend's camelCase response f
 
 - After a successful POST /api/scheduling-links/, render the returned server link and refresh the list from the server.
 - A server HTTP error (4xx/5xx) must remain an error and must never be replaced by demo links.
-- A genuine unreachable/network error may use the existing explicit demo fallback, but show the demo/offline banner and keep the retry path visible.
+- An unreachable/network error shows "Can't reach Paceday" with a retry; it never shows demo links (PAC-83).
 - Never show a fabricated slug, booking URL, host list, or success toast before the server response.
 - Add a regression test for the flow: create succeeds, list refetch fails, the saved server data remains visible with an actionable retry state.
 

@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
-import { api, apiErrorMessage, disconnectNotice, isUsingMocks, mockZoomConnect } from "@/api/client";
+import { api, apiErrorMessage, disconnectNotice } from "@/api/client";
+import { isDemoSession } from "@/api/demoGate";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceProvider, ConferenceProviderStatus, ProviderDisconnectResult, Settings } from "@/api/types";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -92,21 +95,24 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       refresh();
       qc.invalidateQueries({ queryKey: ["auth"] });
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.microsoftDisconnect")));
     } finally {
       setOutlookBusy(false);
     }
   };
 
-  const handleZoomConnect = () => {
+  const handleZoomConnect = async () => {
     if (zoomBusy !== null) return;
     setZoomError(null);
-    // Demo/offline mode only: no OAuth round-trip is possible.
-    if (isUsingMocks()) {
-      mockZoomConnect();
-      toast.success("Zoom connected (demo)");
-      refresh();
-      return;
+    // PAC-83: only an explicit demo session (non-production builds) stays
+    // local; every other "Connect Zoom" starts the real OAuth hand-off.
+    if (__PACEDAY_DEMO_BUILD__) {
+      if (isDemoSession()) {
+        const { demoZoomConnect } = await import("@/demo/zoom");
+        toast.success(demoZoomConnect());
+        refresh();
+        return;
+      }
     }
     // Real API mode: hand off to the backend OAuth entry point.
     setZoomBusy("connect");
@@ -121,7 +127,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
       announce(await api.zoomDisconnect());
       refresh();
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, effectOf("api.zoomDisconnect"));
       toast.error(message);
       setZoomError({ message, retry: handleZoomDisconnect });
     } finally {
@@ -159,7 +165,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold text-destructive">Couldn't load conferencing providers</p>
-            <p className="text-[11px] text-destructive/90">{loadError}</p>
+            <p className="text-[11px] text-destructive/90">
+              <ApiErrorText error={error} effect="read" />
+            </p>
           </div>
           <button
             type="button"

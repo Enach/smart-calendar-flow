@@ -8,8 +8,7 @@ import {
 } from "react";
 
 import { apiFetch, type ApiError } from "@/lib/api";
-import { DEMO_SESSION_KEY, setMockMode } from "@/api/client";
-import { seedDemoEvents, clearDemoEvents } from "@/lib/demoData";
+import { clearDemoSession, isDemoSession, restoreStoresAfterDemo } from "@/api/demoGate";
 import { AuthContext } from "./auth-context";
 import type { AuthContextValue } from "./auth-context";
 
@@ -21,23 +20,10 @@ export interface AuthUser {
   avatarUrl?: string;
 }
 
-const DEMO_USER: AuthUser = {
-  id: "demo",
-  name: "Alex Demo",
-  email: "alex@demo.paceday.com",
-};
-
-const DEMO_FLAG = DEMO_SESSION_KEY;
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [isDemo, setIsDemo] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem(DEMO_FLAG) === "1";
-    } catch {
-      return false;
-    }
-  });
+  // PAC-83: only a demo session of a non-production build (false otherwise).
+  const [isDemo, setIsDemo] = useState<boolean>(() => isDemoSession());
   const [loading, setLoading] = useState(true);
   const [sessionStale, setSessionStale] = useState(false);
   const mounted = useRef(true);
@@ -77,17 +63,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-
-  // Restore demo mock state if the flag is set on mount.
-  useEffect(() => {
-    if (isDemo) {
-      seedDemoEvents();
-      setMockMode(true);
-    }
-    // intentionally only on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // Initial /me probe.
   useEffect(() => {
     let cancelled = false;
@@ -104,25 +79,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refresh, isDemo]);
 
-  const loginDemo = useCallback(() => {
-    seedDemoEvents();
-    setMockMode(true);
-    try {
-      sessionStorage.setItem(DEMO_FLAG, "1");
-    } catch {
-      /* ignore */
-    }
+  /**
+   * Called by the demo entry control after it has started the demo session
+   * (src/demo/DemoEntry.tsx, the only code that sets it). Does nothing when
+   * no demo session exists, so no other caller can start one (PAC-83 AC-15b).
+   */
+  const enterDemo = useCallback((demoUser: AuthUser) => {
+    if (!isDemoSession()) return;
     setIsDemo(true);
-    setUser(DEMO_USER);
+    setUser(demoUser);
   }, []);
 
   const exitDemo = useCallback(() => {
-    clearDemoEvents();
-    setMockMode(false);
-    try {
-      sessionStorage.removeItem(DEMO_FLAG);
-    } catch {
-      /* ignore */
+    clearDemoSession();
+    restoreStoresAfterDemo();
+    if (__PACEDAY_DEMO_BUILD__) {
+      void import("@/demo/session").then((m) => m.endDemoSession());
     }
     setIsDemo(false);
     setUser(null);
@@ -144,8 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [isDemo, exitDemo]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout }),
-    [user, isDemo, loading, sessionStale, refresh, loginDemo, exitDemo, logout],
+    () => ({ user, isDemo, loading, sessionStale, refresh, enterDemo, exitDemo, logout }),
+    [user, isDemo, loading, sessionStale, refresh, enterDemo, exitDemo, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

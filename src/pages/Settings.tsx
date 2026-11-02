@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, Save, Zap, ScrollText, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
-import { MockBanner } from "@/components/MockBanner";
+import { ServerStatusBanner } from "@/components/ServerStatusBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
 import { PersonalCalendarsSection } from "@/components/PersonalCalendarsSection";
 import { ConferencingSection } from "@/components/ConferencingSection";
@@ -43,6 +43,7 @@ import {
   workingHoursCapacity,
   type SchedulingTemplateId,
 } from "@/lib/schedulingPresets";
+import { effectOf } from "@/api/effects";
 
 
 const TIMEZONES = [
@@ -218,7 +219,7 @@ export default function SettingsPage() {
       setDraft({ ...saved });
       toast.success("Settings saved");
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.updateSettings")));
     }
   };
 
@@ -236,7 +237,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <MockBanner />
+      <ServerStatusBanner />
       <Navbar />
       <main className="mx-auto w-full max-w-3xl space-y-4 p-4 sm:p-6">
         <div className="mb-2 flex items-end justify-between gap-3">
