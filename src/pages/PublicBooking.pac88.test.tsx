@@ -360,6 +360,30 @@ describe("PAC-88 days of the displayed zone", () => {
     expect(dayCell("2027-01-12")).not.toBeDisabled();
   });
 
+  it("AC-14 (review #144): a selected day outside the visible month is kept when its own answer in the new zone has times, and dropped when it has none", async () => {
+    at("2026-12-01T10:00:00Z");
+    linkIs(PARIS_LINK);
+    // Paris Monday 7 December 13:00-14:00: still 7 December in New York, 8 December in Auckland.
+    serve(gridStarts("2026-12-07", [13, 0], [14, 0], "Europe/Paris"));
+    renderPage();
+    await screen.findByRole("heading", { name: "Intro call" });
+    await pickDay("2026-12-07");
+    await waitFor(() => expect(shownTimes()[0]).toBe("1:00 PM"));
+    // Page the calendar to January: its grid (27 Dec - 6 Feb) does not contain 7 December.
+    fireEvent.click(screen.getByRole("button", { name: /next month/i }));
+    await waitFor(() => expect(dayCell("2027-01-15")).toBeInTheDocument());
+    expect(() => dayCell("2026-12-07")).toThrow();
+
+    chooseZone("America/New_York");
+    await waitFor(() => expect(shownTimes()).toEqual(["7:00 AM", "7:15 AM", "7:30 AM"]));
+    expect(screen.getByText("Monday, December 7, 2026")).toBeInTheDocument();
+    expect(announcer()).toBe(`Times are now shown in America/New_York, UTC${MINUS}05:00.`);
+
+    chooseZone("Pacific/Auckland");
+    await waitFor(() => expect(screen.getByText("Select a date to see available times.")).toBeInTheDocument());
+    expect(announcer()).toBe("Times are now shown in Pacific/Auckland, UTC+13:00. Monday, December 7, 2026 has no times in Pacific/Auckland. Pick a date.");
+  });
+
   it("AC-15: on the details step a switch re-renders the chosen time in the new zone and keeps the typed details", async () => {
     at("2027-01-04T10:00:00Z");
     linkIs(PARIS_LINK);

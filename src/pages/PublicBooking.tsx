@@ -229,16 +229,40 @@ export default function PublicBooking() {
   }, [zoneRefused, previousZone, displayZone, hostZone, selectedSlot]);
 
   // After a switch, a selected day with no time in the new zone is dropped
-  // and the visitor is told to pick a date (AC-14, spec 3.9).
+  // and the visitor is told to pick a date (AC-14, spec 3.9). The visible
+  // grid's overview decides only for a day inside that grid; a selected day
+  // the visitor has paged away from is decided by its own answer in the new
+  // zone (review of #144: the overview of another month knows nothing of it).
+  const selectedInGrid = !!selectedDay && selectedDay >= grid.from && selectedDay <= grid.to;
   useEffect(() => {
-    if (!dayCheckPending || overviewCheck !== "ok" || overviewQuery.isFetching) return;
+    if (!dayCheckPending || !selectedDay) return;
+    let hasTimes: boolean;
+    if (selectedInGrid) {
+      if (overviewCheck !== "ok" || overviewQuery.isFetching) return;
+      hasTimes = availableDates.has(selectedDay);
+    } else {
+      if (dayCheck !== "ok" || daySlotsQuery.isFetching) return;
+      hasTimes = slots.length > 0;
+    }
     setDayCheckPending(false);
-    if (selectedDay && !(selectedDay >= todayKey && availableDates.has(selectedDay))) {
+    if (!(selectedDay >= todayKey && hasTimes)) {
       const dropped = selectedDay;
       setSelectedDay(undefined);
       setAnnouncement((a) => `${a} ${formatDateKeyLong(dropped)} has no times in ${displayZone}. Pick a date.`.trim());
     }
-  }, [dayCheckPending, overviewCheck, overviewQuery.isFetching, selectedDay, todayKey, availableDates, displayZone]);
+  }, [
+    dayCheckPending,
+    selectedDay,
+    selectedInGrid,
+    overviewCheck,
+    overviewQuery.isFetching,
+    availableDates,
+    dayCheck,
+    daySlotsQuery.isFetching,
+    slots,
+    todayKey,
+    displayZone,
+  ]);
 
   const overviewFailed =
     overviewQuery.isError && classifyApiFailure(overviewQuery.error) !== "cancelled" && !zoneRefused;
