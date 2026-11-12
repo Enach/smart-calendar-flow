@@ -8,6 +8,7 @@
 
 import { requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
+import type { components, operations } from "./generated/types";
 import {
   BOOKING_HORIZON_DEFAULT_DAYS,
   BOOKING_HORIZON_MAX_DAYS,
@@ -69,6 +70,34 @@ type BackendPublicLink = {
   hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
   min_notice_minutes?: number; usage_type?: LinkUsageType;
   coverage?: { total: number; checked: number };
+  time_zone?: string; booking_horizon_days?: number;
+};
+
+type PublicSlotsWire = components["schemas"]["PublicSlotsResponse"];
+type PublicSlotsQuery = NonNullable<operations["getPublicBookingSlots"]["parameters"]["query"]>;
+
+/**
+ * PAC-88 (contract section 3.1): what the page needs from a slot listing. The
+ * four PAC-88 keys are optional because a server without PAC-88 (or after its
+ * rollback) omits them; the page detects that by the missing
+ * `display_time_zone` echo (contract section 5). Parsed loosely, as before.
+ */
+export type PublicSlotsAnswer = {
+  slots: BookingSlot[];
+  available_dates: string[];
+} & Partial<Pick<PublicSlotsWire, "time_zone" | "display_time_zone" | "range_from" | "range_to">>;
+
+/**
+ * One listing request: `date` (one day of the day zone) or the overview
+ * `from`..`to` (at most 42 days). `displayTimeZone` is sent as
+ * `display_time_zone` on every request the page makes.
+ */
+export type PublicSlotsParams = {
+  date?: string;
+  from?: string;
+  to?: string;
+  duration?: number;
+  displayTimeZone?: string;
 };
 /**
  * GET /scheduling-links/:id/bookings returns the contract's
@@ -408,24 +437,44 @@ export const schedulingLinksApi = {
           min_notice_minutes: raw.min_notice_minutes,
           usage_type: raw.usage_type,
           coverage: raw.coverage,
+          // PAC-88 (spec 2.2): the page shows times in this zone by default.
+          time_zone: raw.time_zone,
+          booking_horizon_days: raw.booking_horizon_days,
         };
         publicLinkCache.set(slug, info);
         return info;
       }),
 
-  getPublicSlots: (slug: string, params: { date?: string; duration?: number }) => {
-    // The backend requires a date and may answer with either a bare array of
-    // slots or an envelope. Without a date there is nothing to ask for.
-    if (!params.date) return Promise.resolve({ available_dates: [] as string[], slots: [] as BookingSlot[] });
-    return demoOrReal<{ available_dates: string[]; slots: BookingSlot[] }>("schedulingLinksApi.getPublicSlots", [slug, params], async () => {
-        const raw = await requestApi<BookingSlot[] | { slots?: BookingSlot[]; available_dates?: string[] }>(
+  getPublicSlots: (slug: string, params: PublicSlotsParams): Promise<PublicSlotsAnswer> => {
+    // PAC-88 (contract section 3.1): a request without `date` is the day
+    // overview and needs `from` and `to`; the page never sends the date-less
+    // overview without them (no whole-horizon read).
+    if (!params.date && !(params.from && params.to)) {
+      return Promise.reject(new Error("getPublicSlots needs a date, or from and to"));
+    }
+    return demoOrReal<PublicSlotsAnswer>("schedulingLinksApi.getPublicSlots", [slug, params], async () => {
+        const query: { [K in keyof PublicSlotsQuery]?: string } = {
+          display_time_zone: params.displayTimeZone,
+          date: params.date,
+          from: params.date ? undefined : params.from,
+          to: params.date ? undefined : params.to,
+          duration: params.duration ? String(params.duration) : undefined,
+        };
+        const raw = await requestApi<BookingSlot[] | Partial<PublicSlotsWire>>(
           "GET",
           `/book/${slug}/slots`,
           undefined,
-          { date: params.date, duration: params.duration ? String(params.duration) : undefined },
+          query,
         );
         if (Array.isArray(raw)) return { slots: raw, available_dates: [] };
-        return { slots: raw.slots ?? [], available_dates: raw.available_dates ?? [] };
+        return {
+          slots: raw.slots ?? [],
+          available_dates: raw.available_dates ?? [],
+          time_zone: raw.time_zone,
+          display_time_zone: raw.display_time_zone,
+          range_from: raw.range_from,
+          range_to: raw.range_to,
+        };
       });
   },
 
