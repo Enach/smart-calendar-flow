@@ -34,6 +34,8 @@ const OPERATION_SAMPLES: Record<string, { args: unknown[] }> = {
   "api.freebusy": { args: [{ emails: ["a@co.com"], start_time: "2026-11-02T00:00:00Z", end_time: "2026-11-03T00:00:00Z" }] },
   "api.authStatus": { args: [] },
   "api.integrationAvailability": { args: [] },
+  "api.startConnect": { args: ["google"] },
+  "api.saveWorkCalendar": { args: ["outlook"] },
   "api.authDisconnect": { args: [] },
   "api.getSettings": { args: [] },
   "api.updateSettings": { args: [SETTINGS] },

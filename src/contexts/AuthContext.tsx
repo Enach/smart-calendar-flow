@@ -10,6 +10,7 @@ import {
 import { apiFetch, type ApiError } from "@/lib/api";
 import { clearDemoSession, isDemoSession, restoreStoresAfterDemo } from "@/api/demoGate";
 import { AuthContext } from "./auth-context";
+import type { components } from "@/api/generated/types";
 import type { AuthContextValue } from "./auth-context";
 
 export interface AuthUser {
@@ -18,7 +19,14 @@ export interface AuthUser {
   name: string;
   /** The picture, under the contract's one name for it (CurrentUserResponse.avatarUrl, PAC-35). May be "". */
   avatarUrl?: string;
+  /**
+   * PAC-71: whether the account's address is domain-confirmed
+   * (CurrentUserResponse.addressStanding). Absent only for the demo user.
+   */
+  addressStanding?: CurrentUserResponse["addressStanding"];
 }
+
+type CurrentUserResponse = components["schemas"]["CurrentUserResponse"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
