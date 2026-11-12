@@ -7,6 +7,8 @@ import { apiErrorMessage } from "@/api/client";
 import type { OrganizationAIConfiguration } from "@/api/types";
 import { useConfirmOrganizationAI, useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { PROVIDER_LABELS, organizationConsentText } from "@/lib/aiProviders";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 interface OrgAIConsentDialogProps {
   open: boolean;
@@ -61,7 +63,7 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
         setChanged(true);
       }
     } catch (e) {
-      setProblem(apiErrorMessage(e));
+      setProblem(apiErrorMessage(e, effectOf("standalone.confirmOrganizationAI")));
     }
   };
 
@@ -76,7 +78,7 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
           </DialogDescription>
         </DialogHeader>
         {!shown && org.isLoading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-label="Loading" />}
-        {!shown && org.error && <p className="text-sm text-destructive">{apiErrorMessage(org.error)}</p>}
+        {!shown && org.error && <p className="text-sm text-destructive"><ApiErrorText error={org.error} effect="read" /></p>}
         {shown && (
           <div className="space-y-3 text-sm text-foreground">
             {changed && (

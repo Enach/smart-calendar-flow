@@ -10,7 +10,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { CoveragePill } from "@/components/CoveragePill";
-import { apiErrorMessage, isApiHttpError, isApiUnreachableError } from "@/api/client";
+import { apiErrorMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
+import { ApiErrorNotice } from "@/components/ApiErrorNotice";
+import { StillWorking } from "@/components/StillWorking";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
@@ -124,6 +126,18 @@ export default function PublicBooking() {
   const [email, setEmail] = useState("");
   const [notes, setNotes] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /**
+   * PAC-83 §3.5: a booking whose outcome Paceday could not confirm (lost
+   * answer, any 5xx) or that the server refused for slowness (budget 503).
+   * Shown with the booking wording; never re-sent by code.
+   */
+  const [submitFailure, setSubmitFailure] = useState<unknown>(null);
+  /**
+   * The time of a booking whose outcome is unknown. The booker is sent back
+   * to the refreshed list and must pick a time again: nothing re-sends the
+   * booking in one click (spec §3.5).
+   */
+  const [unconfirmedSlot, setUnconfirmedSlot] = useState<BookingSlot | null>(null);
   const [confirmation, setConfirmation] = useState<BookingConfirmation | null>(null);
 
   // Default duration once link loads.
@@ -149,18 +163,16 @@ export default function PublicBooking() {
     (slotsQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
     return s;
   }, [slotsQuery.data]);
-  const slotsErrorMessage = slotsQuery.error
-    ? isApiUnreachableError(slotsQuery.error)
-      ? "We can't reach the scheduling service right now."
-      : httpStatus(slotsQuery.error) === 429
-        ? SLOTS_RATE_LIMITED_MESSAGE
-        : apiErrorMessage(slotsQuery.error)
-    : null;
+  // PAC-83 AC-11: a failed listing is an error with a retry — never an empty
+  // list and never "no time available" (and never the previous day's times).
+  const slotsFailed = slotsQuery.isError && classifyApiFailure(slotsQuery.error) !== "cancelled";
 
   // Reset slot selection when date / duration change.
   useEffect(() => {
     setSelectedSlot(null);
     setSubmitError(null);
+    setSubmitFailure(null);
+    setUnconfirmedSlot(null);
   }, [dateStr, duration]);
 
   const bookMutation = useMutation({
@@ -176,9 +188,12 @@ export default function PublicBooking() {
     onSuccess: (conf) => {
       setConfirmation(conf);
       setSubmitError(null);
+      setSubmitFailure(null);
     },
     onError: (e: unknown) => {
       const status = httpStatus(e);
+      const kind = classifyApiFailure(e);
+      if (kind === "cancelled") return;
       const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
       if (status === 429) {
         // Keep the chosen slot and the typed details; no refetch, no alarm.
@@ -194,8 +209,17 @@ export default function PublicBooking() {
         setSubmitError(detail ?? "Please check your details and try again.");
       } else if (status === 410) {
         setSubmitError(detail ?? "This link is no longer accepting bookings.");
-      } else if (isApiUnreachableError(e)) {
-        setSubmitError("We can't reach the scheduling service. Check your connection and try again.");
+      } else if (kind === "budget") {
+        // The one answer that proves nothing was saved: the booker may press Book again.
+        setSubmitFailure(e);
+      } else if (kind === "lost" || (status !== undefined && status >= 500)) {
+        // The booking may have been saved (contract §2.4). The chosen time and
+        // the typed details stay; the day's times are re-read so the booker
+        // can see whether the slot is gone. Nothing re-sends the booking.
+        setSubmitFailure(e);
+        setUnconfirmedSlot(selectedSlot);
+        setSelectedSlot(null);
+        void slotsQuery.refetch();
       } else {
         setSubmitError(apiErrorMessage(e));
         toast.error("Booking failed");
@@ -207,6 +231,28 @@ export default function PublicBooking() {
   // ---------- Render: not found / no longer available ----------
   if (linkQuery.isError) {
     const err = linkQuery.error as unknown;
+    const kind = classifyApiFailure(err);
+    if (kind === "lost" || kind === "budget") {
+      // PAC-83 AC-10: the link may well exist — never "Link not found".
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-background px-4">
+          <div className="w-full max-w-md text-center">
+            <h1 className="font-serif text-3xl text-foreground">We couldn't load this link</h1>
+            <ApiErrorNotice
+              className="mt-4 text-left"
+              error={err}
+              effect="read"
+              onRetry={() => void linkQuery.refetch()}
+              retrying={linkQuery.isFetching}
+            />
+            <StillWorking active={linkQuery.isFetching} className="mt-3" />
+            <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
+              ← Back to Paceday
+            </Link>
+          </div>
+        </div>
+      );
+    }
     const status = isApiHttpError(err) ? err.status : (err as { status?: number } | null)?.status;
     const gone = status === 410;
     const notFound = status === 404 || (err as Error | null)?.message === "not_found";
@@ -215,9 +261,7 @@ export default function PublicBooking() {
       ? "This booking link has been used up or paused. Reach out to the host for another time."
       : notFound
         ? "This booking link doesn't exist or is no longer active."
-        : isApiUnreachableError(err)
-          ? "We can't reach the scheduling service right now. Check your connection and try again."
-          : apiErrorMessage(err);
+        : apiErrorMessage(err);
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <div className="max-w-md text-center">
@@ -299,8 +343,9 @@ export default function PublicBooking() {
   // ---------- Render: loading ----------
   if (!link) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-background px-4">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        <StillWorking active={linkQuery.isFetching} />
       </div>
     );
   }
@@ -434,22 +479,36 @@ export default function PublicBooking() {
                       {submitError}
                     </p>
                   )}
-                  {slotsErrorMessage && (
-                    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-                      <span>{slotsErrorMessage}</span>
-                      <Button variant="outline" size="sm" onClick={() => slotsQuery.refetch()} disabled={slotsQuery.isFetching}>
-                        {slotsQuery.isFetching && <Loader2 className="h-4 w-4 animate-spin" />} Retry
-                      </Button>
+                  {submitFailure !== null && unconfirmedSlot && (
+                    <div className="mb-3 space-y-2">
+                      <ApiErrorNotice error={submitFailure} effect="booking" />
+                      <p className="text-sm text-muted-foreground" data-testid="unconfirmed-booking-time">
+                        You had chosen {fmtDateLong(unconfirmedSlot.start)}, {fmtTime(unconfirmedSlot.start)}. If you still want a
+                        time, pick one again below — your details are kept.
+                      </p>
                     </div>
+                  )}
+                  {slotsFailed && (
+                    <ApiErrorNotice
+                      className="mb-3"
+                      error={slotsQuery.error}
+                      effect="read"
+                      message={httpStatus(slotsQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
+                      onRetry={() => void slotsQuery.refetch()}
+                      retrying={slotsQuery.isFetching}
+                    />
                   )}
                   {!selectedDate ? (
                     <p className="text-sm text-muted-foreground">Select a date to see available times.</p>
-                  ) : slotsQuery.isLoading || (slotsQuery.isFetching && slots.length === 0 && !slotsErrorMessage) ? (
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" /> Finding times…
+                  ) : slotsQuery.isLoading || (slotsQuery.isFetching && (slots.length === 0 || slotsQuery.isPlaceholderData)) ? (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Finding times…
+                      </div>
+                      <StillWorking active={slotsQuery.isFetching} />
                     </div>
-                  ) : slots.length === 0 ? (
-                    !slotsErrorMessage && (
+                  ) : slotsFailed ? null : slots.length === 0 ? (
+                    (
                       <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
                         {isCollective
                           ? "No time available for all hosts on this day — try another date."
@@ -486,7 +545,14 @@ export default function PublicBooking() {
                       {fmtDateLong(selectedSlot.start)} · {fmtTime(selectedSlot.start)} – {fmtTime(selectedSlot.end)}
                     </p>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedSlot(null)}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedSlot(null);
+                      setSubmitFailure(null);
+                    }}
+                  >
                     Change
                   </Button>
                 </div>
@@ -496,6 +562,8 @@ export default function PublicBooking() {
                   onSubmit={(e) => {
                     e.preventDefault();
                     setSubmitError(null);
+                    setSubmitFailure(null);
+                    setUnconfirmedSlot(null);
                     if (!name.trim() || !email.trim()) {
                       setSubmitError("Please enter your name and email.");
                       return;
@@ -539,11 +607,13 @@ export default function PublicBooking() {
                       {submitError}
                     </p>
                   )}
+                  {submitFailure !== null && <ApiErrorNotice error={submitFailure} effect="booking" />}
 
                   <Button type="submit" disabled={bookMutation.isPending} className="w-full sm:w-auto">
                     {bookMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                     Confirm booking
                   </Button>
+                  <StillWorking active={bookMutation.isPending} />
                 </form>
               </div>
             )}

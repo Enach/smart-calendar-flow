@@ -1,12 +1,11 @@
 /**
  * Seeded mock calendar events for demo mode.
  *
- * Pushes the spec's 7 fixtures into the existing mock state owned by
- * `src/api/client.ts` so the calendar reads them through the regular
- * `getEvents` fallback. Idempotent — safe to call multiple times.
+ * Pushes the spec's 7 fixtures into the demo calendar (src/demo/clientMocks.ts)
+ * so the demo's `getEvents` returns them. Idempotent — safe to call multiple times.
  */
 
-import { _mockHelpers } from "@/api/client";
+import { _mockHelpers } from "./clientMocks";
 
 const DEMO_PREFIX = "demo-";
 

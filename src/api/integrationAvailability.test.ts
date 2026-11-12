@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, ApiHttpError, isUsingMocks, setMockMode } from "./client";
+import { api, ApiHttpError, ApiUnreachableError } from "./client";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -13,7 +13,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 describe("integration availability contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -49,17 +48,11 @@ describe("integration availability contract", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "server unavailable" }, 503));
 
     await expect(api.integrationAvailability()).rejects.toBeInstanceOf(ApiHttpError);
-    expect(isUsingMocks()).toBe(false);
   });
 
-  it("uses all providers in preview mode only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5): never "every provider available" after a failure.
+  it("rejects with ApiUnreachableError when the backend is unreachable (no invented availability)", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-
-    const availability = await api.integrationAvailability();
-
-    expect(availability.google.available).toBe(true);
-    expect(availability.microsoft.available).toBe(true);
-    expect(availability.notion.available).toBe(true);
-    expect(isUsingMocks()).toBe(true);
+    await expect(api.integrationAvailability()).rejects.toBeInstanceOf(ApiUnreachableError);
   });
 });

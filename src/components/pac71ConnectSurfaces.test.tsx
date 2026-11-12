@@ -17,8 +17,6 @@ vi.mock("@/components/TodayAgenda", () => ({ TodayAgenda: () => null }));
 vi.mock("@/components/FocusStats", () => ({ FocusStats: () => null }));
 vi.mock("@/components/QuickActions", () => ({ QuickActions: () => null }));
 vi.mock("@/components/EventDrawer", () => ({ EventDrawer: () => null }));
-vi.mock("@/components/MockBanner", () => ({ MockBanner: () => null }));
-vi.mock("@/components/DemoBanner", () => ({ DemoBanner: () => null }));
 vi.mock("@/components/QuickCreatePopover", () => ({ QuickCreatePopover: () => null }));
 vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ data: undefined }) }));
 vi.mock("@/hooks/useCalendarEvents", () => ({
@@ -30,7 +28,7 @@ import { WorkCalendarConnection } from "./WorkCalendarConnection";
 import Dashboard from "@/pages/Dashboard";
 import Onboarding from "@/pages/Onboarding";
 import { TimeFormatValue } from "@/contexts/TimeFormatContext";
-import { isUsingMocks, setMockMode } from "@/api/client";
+import { isDemoSession } from "@/api/demoGate";
 import type { Settings } from "@/api/types";
 
 // PAC-71 AC-32 (web): the four signed-in controls start a connect — a POST to
@@ -112,7 +110,6 @@ function expectNoSignInStart() {
 
 describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
     toast.success.mockReset();
@@ -194,7 +191,7 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     expect(writes()).toEqual([{ method: "PATCH", path: "/api/settings", body: { calendarProvider: "outlook" } }]);
     expect(connectCalls()).toEqual([]);
     expect(assigned).toEqual([]);
-    expect(isUsingMocks()).toBe(false);
+    expect(isDemoSession()).toBe(false);
   });
 
   it("Dashboard 'Connect calendar' banner: POSTs the Google connect", async () => {
@@ -264,7 +261,7 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     ["the server failed (500)", () => jsonResponse({ error: "internal error" }, 500)],
     ["Microsoft is not configured (503)", () => jsonResponse({ error: "microsoft not configured" }, 503)],
     ["an answer outside the contract", () => jsonResponse({ authorize_url: GOOGLE_AUTHORIZE, extra: true })],
-  ])("a failed start (%s) navigates nowhere, says so, and never falls back to preview data", async (_case, answer) => {
+  ])("a failed start (%s) navigates nowhere, says so, and never falls back to demo data", async (_case, answer) => {
     serve(answer);
     render(
       <Shell>
@@ -274,7 +271,7 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     fireEvent.click(await screen.findByRole("button", { name: /connect/i }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
     expect(assigned).toEqual([]);
-    expect(isUsingMocks()).toBe(false);
+    expect(isDemoSession()).toBe(false);
     // The control can be used again.
     await waitFor(() => expect(screen.getByRole("button", { name: /connect/i })).not.toBeDisabled());
   });

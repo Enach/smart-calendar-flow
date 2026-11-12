@@ -1,13 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  api,
-  conferenceRequestBody,
-  isApiHttpError,
-  isUsingMocks,
-  isValidConferenceUrl,
-  normalizeConferenceProviders,
-  setMockMode,
-} from "./client";
+import { api, ApiUnreachableError, conferenceRequestBody, isApiHttpError, isValidConferenceUrl, normalizeConferenceProviders } from "./client";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -24,7 +16,6 @@ function requestPath(input: RequestInfo | URL): string {
 
 describe("conferencing contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -95,7 +86,6 @@ describe("conferencing contract", () => {
     await expect(api.addConference("ev1", { provider: "zoom" })).rejects.toSatisfy(
       (e: unknown) => isApiHttpError(e) && e.status === 409,
     );
-    expect(isUsingMocks()).toBe(false);
   });
 
   it("does not swallow a 401 on zoom disconnect", async () => {
@@ -103,12 +93,10 @@ describe("conferencing contract", () => {
     await expect(api.zoomDisconnect()).rejects.toSatisfy((e: unknown) => isApiHttpError(e) && e.status === 401);
   });
 
-  it("falls back to demo providers only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5).
+  it("rejects with ApiUnreachableError when the backend is unreachable (no demo providers)", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("network down"));
-    const list = await api.conferenceProviders();
-    expect(list.map((p) => p.provider)).toEqual(["google_meet", "zoom", "teams"]);
-    expect(isUsingMocks()).toBe(true);
-    setMockMode(false);
+    await expect(api.conferenceProviders()).rejects.toBeInstanceOf(ApiUnreachableError);
   });
 
   it("validates custom conference URLs", () => {

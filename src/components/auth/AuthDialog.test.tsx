@@ -10,7 +10,7 @@ vi.hoisted(() => {
 });
 
 vi.mock("@/contexts/useAuth", () => ({
-  useAuth: () => ({ loginDemo: vi.fn(), refresh: vi.fn() }),
+  useAuth: () => ({ enterDemo: vi.fn(), refresh: vi.fn() }),
 }));
 
 import { AuthDialog } from "./AuthDialog";

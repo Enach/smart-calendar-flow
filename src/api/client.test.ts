@@ -7,14 +7,7 @@ vi.hoisted(() => {
   (window as Window & { __API_BASE_URL__?: string }).__API_BASE_URL__ = "https://api.paceday.test/api";
 });
 
-import {
-  ApiHttpError,
-  apiErrorMessage,
-  fetchSsoStepupOptions,
-  setMockMode,
-  ssoStepupRequired,
-  ssoStepupStartUrl,
-} from "./client";
+import { ApiHttpError, apiErrorMessage, fetchSsoStepupOptions, ssoStepupRequired, ssoStepupStartUrl } from "./client";
 
 // PAC-50 AC-22: a 403 carrying `stepup_url` is a typed step-up-required
 // outcome, never an automatic navigation; any other 403 renders as before.
@@ -93,7 +86,6 @@ describe("ssoStepupRequired (PAC-50 AC-22)", () => {
 
 describe("fetchSsoStepupOptions (PAC-50 AC-25, contract revision 8)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });

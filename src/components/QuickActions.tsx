@@ -8,6 +8,8 @@ import { toast } from "@/hooks/useToast";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime } from "@/lib/timeFormat";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 interface QuickActionsProps {
   weekISO: string;
@@ -37,7 +39,7 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
       toast.success(`Created ${n} focus block${n === 1 ? "" : "s"}`);
       refreshAll();
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.runFocus")));
     } finally {
       setRunning(false);
     }
@@ -50,8 +52,8 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
       const { deleted } = await api.clearFocusBlocks(weekISO);
       toast.info(`Removed ${deleted} focus block${deleted === 1 ? "" : "s"}`);
       refreshAll();
-    } catch {
-      toast.error("Failed to clear focus blocks");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, effectOf("api.clearFocusBlocks")));
     } finally {
       setClearing(false);
     }
@@ -121,7 +123,7 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
             {audit.error && (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-[11px] text-muted-foreground">
                 <p className="font-medium text-foreground">Couldn’t load activity</p>
-                <p className="mt-0.5">{apiErrorMessage(audit.error)}</p>
+                <p className="mt-0.5"><ApiErrorText error={audit.error} effect="read" /></p>
                 <button
                   onClick={() => void audit.refetch()}
                   className="mt-1 rounded border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-foreground transition hover:bg-muted"

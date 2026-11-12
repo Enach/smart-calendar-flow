@@ -7,7 +7,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { ConferencingSection } from "./ConferencingSection";
-import { setMockMode } from "@/api/client";
+
 import type { Settings } from "@/api/types";
 
 // PAC-67 (web half): the Zoom disconnect tells the user when Zoom did not
@@ -47,7 +47,6 @@ const MICROSOFT = "/api/auth/microsoft/disconnect";
 
 describe("ConferencingSection disconnects (PAC-67)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     toast.success.mockReset();
     toast.error.mockReset();

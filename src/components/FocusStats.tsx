@@ -70,6 +70,8 @@ export function FocusStats({ weekISO, dailyTargetMinutes, focusColor }: FocusSta
           compact
           title="Couldn't load focus data"
           message={apiErrorMessage(error)}
+          error={error}
+          effect="read"
           onRetry={() => refetch()}
           retrying={isFetching}
         />

@@ -5,6 +5,11 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // PAC-83 (owner OQ-1 (c)): the demo exists only in non-production builds.
+  // Decided when the bundle is built; no runtime input can change it.
+  define: {
+    __PACEDAY_DEMO_BUILD__: JSON.stringify(mode !== "production"),
+  },
   server: {
     host: "::",
     port: 8080,

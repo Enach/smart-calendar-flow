@@ -7,7 +7,7 @@ vi.hoisted(() => {
   (window as Window & { __API_BASE_URL__?: string }).__API_BASE_URL__ = "https://api.paceday.test/api";
 });
 
-import { setMockMode } from "@/api/client";
+
 import { OrganizationAISection } from "./OrganizationAISection";
 import { SsoAdminStepupSection } from "./SsoAdminStepupSection";
 
@@ -73,7 +73,6 @@ function renderAt(path = "/settings", inOrganization = true) {
 
 describe("OrganizationAISection (PAC-73 Part 2)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     sent.length = 0;
     assigned.length = 0;

@@ -10,6 +10,7 @@ import { toast } from "@/hooks/useToast";
 import type { CalendarProvider } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 import { useCalendarConnect } from "@/hooks/useCalendarConnect";
+import { effectOf } from "@/api/effects";
 
 type Step = "connect" | "profile";
 
@@ -79,8 +80,7 @@ export default function Onboarding() {
     }
     setBusy(true);
     try {
-      // For mock mode, just pretend it succeeded and advance.
-      // For a real backend, this starts a connect (PAC-71: a signed-in POST,
+      // This starts a connect (PAC-71: a signed-in POST,
       // never the sign-in start) whose provider step returns to
       // /auth/callback → which lands on /app/onboarding again.
       const status = await api.authStatus().catch(() => ({ connected: false }));
@@ -106,7 +106,7 @@ export default function Onboarding() {
         onboarding_profile_selected: true,
       });
     } catch (e) {
-      setProfileError(apiErrorMessage(e)); // keep the selected role
+      setProfileError(apiErrorMessage(e, effectOf("manager.setProfile"))); // keep the selected role
       setBusy(false);
       return;
     }

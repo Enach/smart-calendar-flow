@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Mail, ArrowRight, ArrowLeft, AlertCircle } from "lucide-react";
 import { z } from "zod";
@@ -17,6 +17,9 @@ import {
 import { PacedayMark } from "@/components/auth/AuthLayout";
 
 import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
+import { ApiUnreachableError, apiErrorMessage, isAnswerLost } from "@/api/client";
+import { ApiErrorNotice } from "@/components/ApiErrorNotice";
+import type { AuthUser } from "@/contexts/AuthContext";
 import type { SsoDetectResponse } from "@/api/generated/schemas";
 import { useAuth } from "@/contexts/useAuth";
 import { useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
@@ -27,6 +30,15 @@ interface AuthDialogProps {
   /** "signin" or "signup" — only changes copy, not behaviour. */
   mode?: "signin" | "signup";
 }
+
+/**
+ * PAC-83 (owner OQ-1 (c), contract §4.4): the one demo entry, in a
+ * non-production build only, on the initial view only — never after an error.
+ */
+const DemoEntry = __PACEDAY_DEMO_BUILD__ ? lazy(() => import("@/demo/DemoEntry")) : null;
+
+/** A sign-in step that could not reach Paceday, and how to try it again. */
+type SignInFailure = { error: unknown; retry: () => void };
 
 const emailSchema = z.string().trim().email("Enter a valid email address.").max(255);
 
@@ -41,7 +53,7 @@ export function AuthDialog({ open, onOpenChange, mode = "signin" }: AuthDialogPr
 }
 
 function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose: () => void }) {
-  const { loginDemo, refresh } = useAuth();
+  const { enterDemo, refresh } = useAuth();
   const { data: availability } = useIntegrationAvailability();
   const navigate = useNavigate();
 
@@ -61,26 +73,39 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<null | "google" | "microsoft" | "email">(null);
+  /**
+   * PAC-83 §3.4: Paceday could not be reached. The dialog says so with a
+   * retry; nothing starts or offers the demo from here.
+   */
+  const [failure, setFailure] = useState<SignInFailure | null>(null);
+  // The step that held focus is hidden while the failure shows: move focus to
+  // the failure heading so keyboard and screen-reader users land on it.
+  const failureHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (failure) failureHeading.current?.focus();
+  }, [failure]);
 
-  /** Drop into demo mode and close — used when the API is unreachable. */
-  const fallbackDemo = () => {
-    loginDemo();
+  const onDemoStarted = (demoUser: AuthUser) => {
+    enterDemo(demoUser);
     onClose();
     navigate(resolveRedirect(), { replace: true });
   };
 
   const onSocial = async (provider: "google" | "microsoft") => {
+    setFailure(null);
     setPending(provider);
     const ok = await checkApiAvailability();
     if (!ok) {
-      fallbackDemo();
+      setPending(null);
+      setFailure({ error: new ApiUnreachableError("network"), retry: () => void onSocial(provider) });
       return;
     }
     window.location.href = apiUrl(`/api/auth/${provider}`);
   };
 
-  const onEmailContinue = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onEmailContinue = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setFailure(null);
     const parsed = emailSchema.safeParse(email);
     if (!parsed.success) {
       setEmailError(parsed.error.issues[0]?.message ?? "Invalid email");
@@ -111,9 +136,13 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
       // generic → go to password step
       setStep("generic");
       setPending(null);
-    } catch {
-      // Network error or backend down → silent demo fallback per T-26.
-      fallbackDemo();
+    } catch (err) {
+      setPending(null);
+      if (isAnswerLost(err)) {
+        setFailure({ error: err, retry: () => void onEmailContinue() });
+      } else {
+        setEmailError(apiErrorMessage(err));
+      }
     }
   };
 
@@ -124,8 +153,29 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
         <span className="font-serif text-base leading-none tracking-tight">Paceday</span>
       </div>
 
+      {failure && (
+        <div className="mt-6 space-y-3">
+          <h2
+            ref={failureHeading}
+            tabIndex={-1}
+            data-testid="sign-in-failure-heading"
+            className="font-serif text-2xl leading-tight tracking-tight text-foreground focus:outline-none"
+          >
+            Can't sign in right now
+          </h2>
+          <ApiErrorNotice error={failure.error} effect="read" onRetry={failure.retry} />
+          <Button type="button" variant="ghost" size="sm" onClick={() => setFailure(null)}>
+            <ArrowLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            Back
+          </Button>
+        </div>
+      )}
+
+      <div hidden={failure !== null}>
       {step === "discover" ? (
         <DiscoverStep
+          showDemoEntry={failure === null}
+          onDemoStarted={onDemoStarted}
           mode={mode}
           email={email}
           setEmail={(v) => {
@@ -148,9 +198,10 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
             onClose();
             navigate(resolveRedirect(), { replace: true });
           }}
-          onApiDown={fallbackDemo}
+          onApiDown={(error, retry) => setFailure({ error, retry })}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -158,6 +209,8 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
 /* ---------- step 1: discover ---------- */
 
 function DiscoverStep({
+  showDemoEntry,
+  onDemoStarted,
   mode,
   email,
   setEmail,
@@ -168,13 +221,15 @@ function DiscoverStep({
   googleAvailable,
   microsoftAvailable,
 }: {
+  showDemoEntry: boolean;
+  onDemoStarted: (user: AuthUser) => void;
   mode: "signin" | "signup";
   email: string;
   setEmail: (v: string) => void;
   emailError: string | null;
   pending: null | "google" | "microsoft" | "email";
   onSocial: (p: "google" | "microsoft") => void;
-  onEmailContinue: (e: React.FormEvent) => void;
+  onEmailContinue: (e?: React.FormEvent) => void;
   googleAvailable: boolean;
   microsoftAvailable: boolean;
 }) {
@@ -262,6 +317,12 @@ function DiscoverStep({
         <SsoGlyph />
         Single sign-on (SSO) is detected automatically from your email domain.
       </p>
+
+      {__PACEDAY_DEMO_BUILD__ && showDemoEntry && DemoEntry && (
+        <Suspense fallback={null}>
+          <DemoEntry onStarted={onDemoStarted} />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -277,7 +338,7 @@ function GenericStep({
   email: string;
   onBack: () => void;
   onSuccess: () => void;
-  onApiDown: () => void;
+  onApiDown: (error: unknown, retry: () => void) => void;
 }) {
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [name, setName] = useState("");
@@ -285,8 +346,8 @@ function GenericStep({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
       return;
@@ -308,14 +369,15 @@ function GenericStep({
       onSuccess();
     } catch (e) {
       const err = e as ApiError;
+      if (isAnswerLost(e)) {
+        // PAC-83: never a demo — the dialog says Paceday can't be reached.
+        onApiDown(e, () => void submit());
+        return;
+      }
       if (err?.status === 401) {
         setError("Incorrect email or password.");
       } else if (err?.status === 404) {
         setError("No account found — try creating one.");
-      } else if (err?.status == null) {
-        // No status → network failure → silent demo fallback.
-        onApiDown();
-        return;
       } else {
         setError("Something went wrong. Please try again.");
       }

@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, apiErrorMessage, ApiHttpError, connectStartPath, isApiHttpError, isUsingMocks, setMockMode } from "./client";
+import { api, apiErrorMessage, ApiHttpError, connectStartPath, isApiHttpError } from "./client";
+import { isDemoSession } from "./demoGate";
 
 // PAC-71 (contract contracts/features/PAC-71.md in the api repo): the client
 // half of "connect is a signed-in step" and of the reworded Teams 400s.
@@ -15,7 +16,6 @@ const AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth?client_id=c&stat
 
 describe("PAC-71 connect start (startGoogleConnect / startMicrosoftConnect)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -65,19 +65,19 @@ describe("PAC-71 connect start (startGoogleConnect / startMicrosoftConnect)", ()
     expect(JSON.parse(String(init?.body))).toEqual({ calendarProvider: provider });
   });
 
-  it("a failed work-calendar save is thrown, never preview data", async () => {
+  it("a failed work-calendar save is thrown, never demo data", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "internal error" }, 500));
     const err = await api.saveWorkCalendar("outlook").catch((e: unknown) => e);
     expect(isApiHttpError(err)).toBe(true);
-    expect(isUsingMocks()).toBe(false);
+    expect(isDemoSession()).toBe(false);
   });
 
-  it.each([401, 500, 503])("surfaces a %s as an HTTP failure and never switches to preview data", async (status) => {
+  it.each([401, 500, 503])("surfaces a %s as an HTTP failure and never switches to demo data", async (status) => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "x" }, status));
     const err = await api.startConnect("outlook").catch((e: unknown) => e);
     expect(isApiHttpError(err)).toBe(true);
     expect((err as ApiHttpError).status).toBe(status);
-    expect(isUsingMocks()).toBe(false);
+    expect(isDemoSession()).toBe(false);
   });
 
   it("no longer offers a GET connect URL", () => {

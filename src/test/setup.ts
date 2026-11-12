@@ -15,3 +15,14 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => {},
   }),
 });
+
+// PAC-83: a test that enters the demo session (sessionStorage "paceday:demo")
+// never leaks it into the next one.
+import { afterEach } from "vitest";
+afterEach(() => {
+  try {
+    sessionStorage.removeItem("paceday:demo");
+  } catch {
+    /* jsdom without storage */
+  }
+});

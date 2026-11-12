@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api, apiErrorMessage, type ConnectProvider } from "@/api/client";
+import { effectOf, type OperationKey } from "@/api/effects";
 import { toast } from "@/hooks/useToast";
 
 export interface CalendarConnectOptions {
@@ -30,17 +31,20 @@ export function useCalendarConnect() {
   const connect = useCallback(
     async (provider: ConnectProvider = "google", options: CalendarConnectOptions = {}): Promise<boolean> => {
       setConnecting(true);
+      // PAC-83: the failure is worded by the effect of the step that failed.
+      let step: OperationKey = "api.saveWorkCalendar";
       try {
         if (options.setWorkCalendar) {
           const saved = await api.saveWorkCalendar(provider);
           qc.setQueryData(["settings"], saved);
         }
+        step = "api.startConnect";
         const url = await api.startConnect(provider);
         // Stay "connecting" while the browser leaves for the provider.
         window.location.href = url;
         return true;
       } catch (e) {
-        toast.error(apiErrorMessage(e));
+        toast.error(apiErrorMessage(e, effectOf(step)));
         setConnecting(false);
         return false;
       }

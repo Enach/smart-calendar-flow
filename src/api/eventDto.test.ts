@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
-import { api, setMockMode } from "./client";
+import { api } from "./client";
 import { CalendarEvent as CalendarEventSchema } from "./generated/schemas";
 import type { components } from "./generated/types";
 import type { ParseResult } from "./types";
@@ -36,14 +36,12 @@ const PARSE: ParseResult = {
 
 describe("event mutations answer the CalendarEvent DTO (PAC-29)", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterAll(() => {
     vi.unstubAllGlobals();
-    setMockMode(false);
   });
 
   it("the fixture is the backend's CalendarEvent", () => {
@@ -85,8 +83,8 @@ describe("event mutations answer the CalendarEvent DTO (PAC-29)", () => {
     expectTypeOf(api.updateEvent).returns.resolves.toEqualTypeOf<GeneratedCalendarEvent>();
   });
 
-  it("the preview (mock) answers have the same shape", async () => {
-    setMockMode(true);
+  it("the demo answers have the same shape", async () => {
+    sessionStorage.setItem("paceday:demo", "1"); // PAC-83: demo answers only in an explicit demo session
     const created = await api.scheduleCreate({ title: "Sync", start: DTO.start, end: DTO.end, attendees: ["bob@example.com"] });
     expect(() => CalendarEventSchema.parse(created)).not.toThrow();
     const confirmed = await api.nlpConfirm(PARSE, 0);

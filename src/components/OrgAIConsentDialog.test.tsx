@@ -7,7 +7,7 @@ vi.hoisted(() => {
   (window as Window & { __API_BASE_URL__?: string }).__API_BASE_URL__ = "https://api.paceday.test/api";
 });
 
-import { setMockMode } from "@/api/client";
+
 import { AINotConfiguredNotice } from "./AINotConfiguredNotice";
 
 // PAC-73 Part 2 (owner O-13; spec §3.4, §3.6; P2-AC-22, P2-AC-26, P2-AC-38):
@@ -70,7 +70,6 @@ const WORDS = /\b(read|reads|see)\b/i;
 
 describe("OrgAIConsentDialog via the not-configured notice", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     calls.length = 0;
     vi.stubGlobal("fetch", fetchMock);

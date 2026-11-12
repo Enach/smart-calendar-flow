@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, isUsingMocks, setMockMode } from "./client";
+import { ApiHttpError } from "./client";
 import type { components } from "./generated/types";
 import {
   managerApi,
@@ -40,7 +40,6 @@ function bodyOf(call: number): unknown {
 }
 
 beforeEach(() => {
-  setMockMode(false);
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
@@ -201,13 +200,11 @@ describe("manager scoped wire contract", () => {
   it("rejects a roster without members and never enables mock fallback", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ team_id: teamID }));
     await expect(managerApi.remote.listTeam(teamID)).rejects.toThrow();
-    expect(isUsingMocks()).toBe(false);
   });
   it("does not activate preview data when the scoped backend is unreachable", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("connection reset"));
 
     await expect(managerApi.remote.listTeam(teamID)).rejects.toThrow();
-    expect(isUsingMocks()).toBe(false);
   });
 
 

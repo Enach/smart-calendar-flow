@@ -5,7 +5,8 @@ import { Sparkles, CalendarPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
-import { apiErrorMessage } from "@/api/client";
+import { ApiErrorNotice } from "@/components/ApiErrorNotice";
+import { StillWorking } from "@/components/StillWorking";
 import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
@@ -35,14 +36,17 @@ export function FindATimeTab({ team }: Props) {
   const [duration, setDuration] = useState(30);
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** PAC-83: the server's failure (a read) — shown with its kind, never as invented slots. */
+  const [failure, setFailure] = useState<unknown>(null);
 
   const findMut = useMutation({
     mutationKey: teamKeys.availability(team.id, date, duration),
     mutationFn: () => teamsApi.remote.findSlots(team.id, date, duration),
     // Previously loaded slots are kept visible when a refetch fails.
-    onError: (e) => setError(apiErrorMessage(e)),
+    onError: (e) => setFailure(e),
     onSuccess: (s) => {
       setError(null);
+      setFailure(null);
       // Never offer a time that has already started.
       const now = Date.now();
       setSlots(s.filter((slot) => new Date(slot.start).getTime() > now));
@@ -56,6 +60,7 @@ export function FindATimeTab({ team }: Props) {
       return;
     }
     setError(null);
+    setFailure(null);
     findMut.mutate();
   };
 
@@ -126,9 +131,12 @@ export function FindATimeTab({ team }: Props) {
         </div>
       )}
 
+      {failure !== null && <ApiErrorNotice error={failure} effect="read" onRetry={run} retrying={findMut.isPending} />}
+
       {/* Results */}
       {findMut.isPending && (
         <div className="space-y-2">
+          <StillWorking active={findMut.isPending} />
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="h-16 animate-pulse rounded-xl border border-border bg-card" />
           ))}

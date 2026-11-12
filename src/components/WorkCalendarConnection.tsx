@@ -12,6 +12,8 @@ import { toast } from "@/hooks/useToast";
 import type { CalendarProvider, Settings } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
 import { useCalendarConnect } from "@/hooks/useCalendarConnect";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const PROVIDERS: Array<{
   value: CalendarProvider;
@@ -105,7 +107,7 @@ export function WorkCalendarConnection({
         toast.error(CALENDAR_DISCONNECT_UNAVAILABLE_MESSAGE);
         qc.invalidateQueries({ queryKey: ["auth"] });
       } else {
-        toast.error("Failed to disconnect");
+        toast.error(apiErrorMessage(e, effectOf("api.authDisconnect")));
       }
     } finally {
       setBusy(false);
@@ -165,7 +167,7 @@ export function WorkCalendarConnection({
           </p>
         ) : availabilityError ? (
           <p role="alert" className="col-span-full text-xs text-destructive">
-            Could not check calendar providers: {apiErrorMessage(availabilityError)}
+            Could not check calendar providers: <ApiErrorText error={availabilityError} effect="read" />
           </p>
         ) : availableProviders.length === 0 ? (
           <p className="col-span-full text-xs text-muted-foreground">

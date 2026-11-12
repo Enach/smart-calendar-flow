@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
-import { DemoBanner } from "@/components/DemoBanner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
@@ -13,6 +12,8 @@ import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl, publicBooking
 import { apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { SchedulingLink } from "@/api/types";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 function publicUrlFor(slug: string) {
   return publicBookingUrl(slug);
@@ -190,14 +191,16 @@ function LinkCard({
   );
 }
 
-function ErrorBanner({ message, onRetry, busy }: { message: string; onRetry: () => void; busy?: boolean }) {
+function ErrorBanner({ error, onRetry, busy }: { error: unknown; onRetry: () => void; busy?: boolean }) {
   return (
     <div
       role="alert"
       className="mb-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3"
     >
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-      <p className="min-w-0 flex-1 text-sm text-destructive/90">{message}</p>
+      <p className="min-w-0 flex-1 text-sm text-destructive/90">
+        <ApiErrorText error={error} effect="read" />
+      </p>
       <Button size="sm" variant="outline" onClick={onRetry} disabled={busy} className="shrink-0">
         <RotateCcw className="h-3.5 w-3.5" /> Retry
       </Button>
@@ -227,7 +230,7 @@ function InviteBanner({
   });
 
   if (error && !invites.length) {
-    return <ErrorBanner message={apiErrorMessage(error)} onRetry={() => refetch()} busy={isFetching} />;
+    return <ErrorBanner error={error} onRetry={() => refetch()} busy={isFetching} />;
   }
   if (!invites.length) return null;
 
@@ -315,7 +318,7 @@ export default function LinksPage() {
       toast.success("Invite accepted");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.acceptInvite"))),
   });
 
   const declineInvite = useMutation({
@@ -324,7 +327,7 @@ export default function LinksPage() {
       toast.info("Invite declined");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.declineInvite"))),
   });
 
   const deleteLink = useMutation({
@@ -333,7 +336,7 @@ export default function LinksPage() {
       toast.info("Link deleted");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.deleteLink"))),
   });
 
   const leaveLink = useMutation({
@@ -342,7 +345,7 @@ export default function LinksPage() {
       toast.info("You left the link");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.leaveLink"))),
   });
 
   const updateLink = useMutation({
@@ -352,7 +355,7 @@ export default function LinksPage() {
       toast.success(link.active ? "Link activated" : "Link paused");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e)),
+    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.updateLink"))),
   });
 
   const pendingInviteId =
@@ -384,7 +387,6 @@ export default function LinksPage() {
   return (
     <div className="min-h-screen bg-background">
       <Navbar />
-      <DemoBanner />
 
       <main className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
         <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -411,7 +413,7 @@ export default function LinksPage() {
         </div>
 
         {listError && (
-          <ErrorBanner message={apiErrorMessage(listError)} onRetry={() => refetch()} busy={isFetching} />
+          <ErrorBanner error={listError} onRetry={() => refetch()} busy={isFetching} />
         )}
 
         {isLoading ? (

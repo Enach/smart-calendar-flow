@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import PublicBooking from "./PublicBooking";
 import { ApiHttpError } from "@/api/client";
-import type { BookingRateLimitError } from "@/api/generated/schemas";
+import type { BookingRateLimitError, BookingSlotUnavailableError } from "@/api/generated/schemas";
 import { schedulingLinksApi } from "@/api/schedulingLinks";
 import { toast } from "@/hooks/useToast";
 
@@ -62,6 +62,27 @@ describe("PublicBooking", () => {
     expect(alert).toHaveTextContent("slot is no longer available");
     expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/you are confirmed/i)).not.toBeInTheDocument();
+  });
+
+  // PAC-72 revision 2: a link whose owner chose specific reasons answers the
+  // 409 with {error, reason}; the page shows the server's text for the reason
+  // and goes back to the slot list, exactly as for the generic body.
+  it("shows the specific refusal text when the link owner chose specific reasons", async () => {
+    vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
+    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockResolvedValue(oneSlot);
+    const specific: BookingSlotUnavailableError = { error: "a host is busy at that time", reason: "host_busy" };
+    vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(409, specific));
+
+    renderPage();
+    await pickFirstDay();
+    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Booker" } });
+    fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "booker@co.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("a host is busy at that time");
+    expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
   });
 });
 
@@ -142,7 +163,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
     expect(slotsSpy).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /retry/i }));
+    fireEvent.click(screen.getByRole("button", { name: /try again/i } /* PAC-83: the manual retry is labelled "Try again" (spec §3.4) */));
     expect(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ })).toBeInTheDocument();
     expect(screen.queryByText(/too many requests for available times/i)).not.toBeInTheDocument();
   });
