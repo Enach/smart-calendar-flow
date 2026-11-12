@@ -26,6 +26,8 @@ export type OrganizationConsentOutcome = OrganizationAIConsentResult;
  * Confirms the version the user was shown; when `choose` is set, then chooses
  * "Use my organisation's AI" (the confirmation first, so the choice never
  * runs unconfirmed). A conflict shows the current configuration instead.
+ * `choose` comes only from row 7 and the Settings choice list: rows 5 and 10
+ * confirm alone (PAC-87, PAC87-AC-16: no settings write from row 10).
  */
 export function useConfirmOrganizationAI() {
   const qc = useQueryClient();

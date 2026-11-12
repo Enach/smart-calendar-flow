@@ -387,4 +387,23 @@ describe("AI settings", () => {
     expect(llmTestBody({ ...read, llm_provider: "organization", llm_model: "gpt-x", llm_api_key: "sk-typed" })).toEqual({ llmProvider: "organization" });
     expect(llmTestBody({ ...read, llm_provider: "", llm_model: "gpt-x" })).toEqual({ llmProvider: "" });
   });
+
+  // PAC-87 (factory decision, contract §4, PAC87-AC-14): a member in row 9
+  // probes the organisation's AI they actually use with `{}`: never their own
+  // provider, model or key.
+  it("row 9: probes the organisation's AI with an empty body", () => {
+    const row9 = { configured: true, configuration: "organization" as const, provider: "anthropic" as const, inOrganization: true };
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_model: "gpt-x", llm_api_key: "sk-typed", ai_status: row9 })).toEqual({});
+    expect(llmTestBody({ ...read, llm_provider: "unsupported", ai_status: row9 })).toEqual({});
+    // Row 4 (a follower) still names the organisation; off still names off.
+    expect(llmTestBody({ ...read, llm_provider: "organization", ai_status: row9 })).toEqual({ llmProvider: "organization" });
+    expect(llmTestBody({ ...read, llm_provider: "", ai_status: row9 })).toEqual({ llmProvider: "" });
+    // Own provider in use (row 2): the draft's provider and model, as before.
+    expect(llmTestBody({ ...read, llm_provider: "openai", llm_model: "gpt-x", ai_status: { ...row9, configuration: "own", provider: "openai" } })).toEqual({
+      llmProvider: "openai",
+      llmModel: "gpt-x",
+    });
+    // Row 10 (not configured): unchanged, the stored provider is named.
+    expect(llmTestBody({ ...read, llm_provider: "openai", ai_status: { configured: false, inOrganization: true } })).toEqual({ llmProvider: "openai", llmModel: read.llm_model ?? "" });
+  });
 });

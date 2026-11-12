@@ -20,10 +20,13 @@ interface AINotConfiguredNoticeProps {
  * informational state, not an error.
  *
  * PAC-73 Part 2 (spec §3.6): the administrator of the organisation is named
- * exactly when the answer's enablers include them. In row 5 the notice offers
- * to confirm the organisation's AI (owner O-13: told and asked once, nothing
- * sent before); in rows 7 and 10 it offers "Use my organisation's AI", which
- * shows the same notice and confirms.
+ * exactly when the answer's enablers include them. In rows 5 and 10 the
+ * notice offers "Review and confirm" (owner O-13: told and asked once,
+ * nothing sent before); confirming never rewrites the member's stored choice
+ * (PAC-87, owner OQ-P2-2: a member on their own provider in an organisation
+ * that forbids personal keys is moved onto its AI, their own settings kept).
+ * In row 7 only it offers "Use my organisation's AI", which shows the same
+ * notice, confirms and then chooses the organisation.
  */
 export function AINotConfiguredNotice({ notConfigured, showLink = true, onResolved }: AINotConfiguredNoticeProps) {
   const [consent, setConsent] = useState<null | { choose: boolean }>(null);
