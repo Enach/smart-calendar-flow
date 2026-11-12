@@ -29,6 +29,8 @@ import Dashboard from "@/pages/Dashboard";
 import Onboarding from "@/pages/Onboarding";
 import { TimeFormatValue } from "@/contexts/TimeFormatContext";
 import { isDemoSession } from "@/api/demoGate";
+import { API_MESSAGES } from "@/api/client";
+import { DEMO_CONNECT_UNAVAILABLE } from "@/hooks/useCalendarConnect";
 import type { Settings } from "@/api/types";
 
 // PAC-71 AC-32 (web): the four signed-in controls start a connect — a POST to
@@ -114,6 +116,7 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     vi.stubGlobal("fetch", fetchMock);
     toast.success.mockReset();
     toast.error.mockReset();
+    toast.info.mockReset();
     localStorage.clear();
     assigned.length = 0;
     Object.defineProperty(window, "location", {
@@ -274,5 +277,62 @@ describe("PAC-71 AC-32: the signed-in controls start a connect, never a sign-in"
     expect(isDemoSession()).toBe(false);
     // The control can be used again.
     await waitFor(() => expect(screen.getByRole("button", { name: /connect/i })).not.toBeDisabled());
+  });
+  // PAC-83 wording by effect: the toast names the step that failed. The save
+  // is a write (its lost answer may have been applied); the connect start is a
+  // read (nothing to check, try again).
+  it("Settings work-calendar control: a lost answer to the save is worded as a write, and no connect starts", async () => {
+    serve(undefined, () => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(
+      <Shell>
+        <WorkCalendarConnection settings={{} as Settings} onPatch={() => {}} />
+      </Shell>,
+    );
+    fireEvent.click(await screen.findByRole("radio", { name: /Microsoft Outlook/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Microsoft Outlook" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostWrite);
+    expect(connectCalls()).toEqual([]);
+    expect(assigned).toEqual([]);
+  });
+
+  it("Settings work-calendar control: a lost answer to the connect start (after the save) is worded as a read", async () => {
+    serve(() => {
+      throw new TypeError("Failed to fetch");
+    });
+    render(
+      <Shell>
+        <WorkCalendarConnection settings={{} as Settings} onPatch={() => {}} />
+      </Shell>,
+    );
+    fireEvent.click(await screen.findByRole("radio", { name: /Microsoft Outlook/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Microsoft Outlook" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
+    expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostRead);
+    expect(writes().map((w) => w.path)).toEqual(["/api/settings", "/api/auth/microsoft/connect"]);
+    expect(assigned).toEqual([]);
+  });
+
+  it("in a demo session (non-production build), the connect controls send nothing to the server and say so", async () => {
+    serve();
+    sessionStorage.setItem("paceday:demo", "1");
+    try {
+      render(
+        <Shell>
+          <WorkCalendarConnection settings={{} as Settings} onPatch={() => {}} />
+        </Shell>,
+      );
+      fireEvent.click(await screen.findByRole("radio", { name: /Microsoft Outlook/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect Microsoft Outlook" }));
+      await waitFor(() => expect(toast.info).toHaveBeenCalledWith(DEMO_CONNECT_UNAVAILABLE));
+      expect(writes()).toEqual([]);
+      expect(connectCalls()).toEqual([]);
+      expect(assigned).toEqual([]);
+      expect(toast.error).not.toHaveBeenCalled();
+    } finally {
+      sessionStorage.removeItem("paceday:demo");
+    }
   });
 });

@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { api, apiErrorMessage, type ConnectProvider } from "@/api/client";
 import { effectOf, type OperationKey } from "@/api/effects";
+import { isDemoSession } from "@/api/demoGate";
 import { toast } from "@/hooks/useToast";
 
 export interface CalendarConnectOptions {
@@ -15,6 +16,9 @@ export interface CalendarConnectOptions {
    */
   setWorkCalendar?: boolean;
 }
+
+/** Shown instead of a connect in a demo session (non-production builds only). */
+export const DEMO_CONNECT_UNAVAILABLE = "Connecting a calendar is not available in the demo.";
 
 /**
  * PAC-71: the one way a signed-in control connects a calendar. It POSTs the
@@ -30,6 +34,14 @@ export function useCalendarConnect() {
 
   const connect = useCallback(
     async (provider: ConnectProvider = "google", options: CalendarConnectOptions = {}): Promise<boolean> => {
+      // PAC-83: a demo session has no server session, so a connect (or the
+      // work-calendar save before it) would only reach the real server and be
+      // refused. Nothing is sent; the user is told instead. The literal build
+      // flag drops this branch from production builds.
+      if (__PACEDAY_DEMO_BUILD__ && isDemoSession()) {
+        toast.info(DEMO_CONNECT_UNAVAILABLE);
+        return false;
+      }
       setConnecting(true);
       // PAC-83: the failure is worded by the effect of the step that failed.
       let step: OperationKey = "api.saveWorkCalendar";
