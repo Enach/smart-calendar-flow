@@ -1,0 +1,44 @@
+# CI on GitHub-hosted runners: this repo's gate, `make verify`.
+# The api repo's release workflow publishes a frontend image only for a main
+# commit on which this job ("verify") passed.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The contract lives in the api repo (CONTRACT ?= ../clockwise-like/...).
+      - uses: actions/checkout@v4
+        with:
+          repository: Enach/clockwise-like
+          path: api
+      - run: mv api ../clockwise-like
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --legacy-peer-deps
+
+      - name: make verify
+        run: make verify
+
+      - name: Verify summary
+        if: always()
+        run: cat .verify/steps.txt 2>/dev/null || true
