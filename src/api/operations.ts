@@ -70,7 +70,7 @@ export const NOT_OPERATIONS: Record<string, string> = {
   "client.conferenceRequestBody": PURE,
   "client.normalizeConferenceProviders": PURE,
   "client.isValidConferenceUrl": PURE,
-  "api.authConnectUrl": URL_BUILDER,
+  "client.connectStartPath": URL_BUILDER,
   "api.zoomConnectUrl": URL_BUILDER,
   "api.health": "the background probe: excluded from AC-7, covered by AC-8 (it has no caller data to invent)",
   // schedulingLinks.ts

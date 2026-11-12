@@ -12,6 +12,12 @@ export const OPERATION_EFFECTS = {
   "api.freebusy": "read",
   "api.authStatus": "read",
   "api.integrationAvailability": "read",
+  // PAC-71: the connect start writes nothing the user owns — it answers the
+  // provider's authorize_url (and a pending state the next start replaces), so
+  // a lost answer is safely retried: a read, although it is a POST.
+  "api.startConnect": "read",
+  // PAC-71: PATCH /api/settings with only calendarProvider.
+  "api.saveWorkCalendar": "write",
   "api.authDisconnect": "write",
   "api.getSettings": "read",
   "api.updateSettings": "write",
