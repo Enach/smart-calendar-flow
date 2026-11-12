@@ -16,7 +16,7 @@ function renderWith(user: AuthUser | null) {
     loading: false,
     sessionStale: false,
     refresh: async () => {},
-    loginDemo: () => {},
+    enterDemo: () => {},
     exitDemo: () => {},
     logout: async () => {},
   };
