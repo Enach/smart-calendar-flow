@@ -6,8 +6,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import PublicBooking from "./PublicBooking";
 import { ApiHttpError } from "@/api/client";
 import type { BookingRateLimitError, BookingSlotUnavailableError } from "@/api/generated/schemas";
-import { schedulingLinksApi } from "@/api/schedulingLinks";
+import { schedulingLinksApi, type PublicSlotsParams } from "@/api/schedulingLinks";
 import { toast } from "@/hooks/useToast";
+import { addDaysToKey, dateKeyInZone } from "@/lib/timeZone";
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -33,10 +34,7 @@ describe("PublicBooking", () => {
       usage_type: "reusable",
       coverage: { total: 1, checked: 1 },
     });
-    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockResolvedValue({
-      available_dates: [],
-      slots: [{ start: "2030-03-04T09:00:00Z", end: "2030-03-04T09:30:00Z" }],
-    });
+    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => pac88Answer(params));
     vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(
       new ApiHttpError(409, { error: "slot is no longer available" }),
     );
@@ -45,10 +43,14 @@ describe("PublicBooking", () => {
     await screen.findByRole("heading", { name: "Intro call" });
 
     // Any selectable future day; the mocked slots don't depend on which.
-    const grid = screen.getByRole("grid");
-    const day = within(grid)
-      .getAllByRole("button")
-      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+    // PAC-88: days become selectable once the day overview answers.
+    const day = await vi.waitFor(() => {
+      const d = within(screen.getByRole("grid"))
+        .getAllByRole("button")
+        .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+      if (!d) throw new Error("no selectable day yet");
+      return d;
+    });
     expect(day).toBeDefined();
     fireEvent.click(day!);
 
@@ -69,7 +71,7 @@ describe("PublicBooking", () => {
   // and goes back to the slot list, exactly as for the generic body.
   it("shows the specific refusal text when the link owner chose specific reasons", async () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
-    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockResolvedValue(oneSlot);
+    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => pac88Answer(params));
     const specific: BookingSlotUnavailableError = { error: "a host is busy at that time", reason: "host_busy" };
     vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(409, specific));
 
@@ -99,17 +101,30 @@ const introLink = {
   usage_type: "reusable" as const,
   coverage: { total: 1, checked: 1 },
 };
-const oneSlot = {
-  available_dates: [],
-  slots: [{ start: "2030-03-04T09:00:00Z", end: "2030-03-04T09:30:00Z" }],
-};
+/**
+ * PAC-88: a server's listing answer (contract section 2.5). The overview lists
+ * every day of the grid after today; a day lists one slot.
+ */
+function pac88Answer(params: PublicSlotsParams) {
+  const zone = params.displayTimeZone ?? "UTC";
+  const base = { time_zone: "UTC", display_time_zone: zone, range_from: params.date ?? params.from, range_to: params.date ?? params.to };
+  if (params.date) return { ...base, available_dates: [], slots: [{ start: "2030-03-04T09:00:00Z", end: "2030-03-04T09:30:00Z" }] };
+  const today = dateKeyInZone(Date.now(), zone);
+  const days: string[] = [];
+  for (let d = params.from!; d <= params.to!; d = addDaysToKey(d, 1)) if (d > today) days.push(d);
+  return { ...base, slots: [], available_dates: days };
+}
 
 async function pickFirstDay() {
   await screen.findByRole("heading", { name: "Intro call" });
-  const grid = screen.getByRole("grid");
-  const day = within(grid)
-    .getAllByRole("button")
-    .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+  // PAC-88: days become selectable once the day overview answers.
+  const day = await vi.waitFor(() => {
+    const d = within(screen.getByRole("grid"))
+      .getAllByRole("button")
+      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+    if (!d) throw new Error("no selectable day yet");
+    return d;
+  });
   expect(day).toBeDefined();
   fireEvent.click(day!);
 }
@@ -121,7 +136,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
 
   it("AC-10: a 429 on submit shows a friendly wait message, keeps the booker's input and slot, and neither toasts nor refetches", async () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
-    const slotsSpy = vi.spyOn(schedulingLinksApi, "getPublicSlots").mockResolvedValue(oneSlot);
+    const slotsSpy = vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => pac88Answer(params));
     vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(429, rateLimited));
     const toastError = vi.spyOn(toast, "error");
 
@@ -150,10 +165,12 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
 
   it("AC-11: a 429 on the slot listing shows a friendly wait message with the manual Retry", async () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
-    const slotsSpy = vi
-      .spyOn(schedulingLinksApi, "getPublicSlots")
-      .mockRejectedValueOnce(new ApiHttpError(429, rateLimited))
-      .mockResolvedValue(oneSlot);
+    // PAC-88: the overview answers; the day listing is the one rate limited.
+    let dayAnswers = 0;
+    const slotsSpy = vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => {
+      if (params.date && dayAnswers++ === 0) throw new ApiHttpError(429, rateLimited);
+      return pac88Answer(params);
+    });
 
     renderPage();
     await pickFirstDay();
@@ -161,7 +178,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     expect(await screen.findByText(/too many requests for available times/i)).toBeInTheDocument();
     expect(screen.getByText(/wait a minute/i)).toBeInTheDocument();
     expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
-    expect(slotsSpy).toHaveBeenCalledTimes(1);
+    expect(slotsSpy.mock.calls.filter(([, p]) => p.date).length).toBe(1);
 
     fireEvent.click(screen.getByRole("button", { name: /try again/i } /* PAC-83: the manual retry is labelled "Try again" (spec §3.4) */));
     expect(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ })).toBeInTheDocument();

@@ -421,10 +421,64 @@ describe("public booking contract", () => {
     expect(res.slots).toHaveLength(1);
   });
 
-  it("does not call the backend without a date", async () => {
-    const res = await schedulingLinksApi.getPublicSlots("intro", {});
+  // PAC-88 (contract section 3.1): the "no date, no request" shortcut is gone;
+  // a request without a date is the overview, which needs from and to, so a
+  // call with neither never reaches the server (no whole-horizon read).
+  it("never sends a listing without a date or from/to", async () => {
+    await expect(schedulingLinksApi.getPublicSlots("intro", {})).rejects.toThrow(/date, or from and to/);
+    await expect(schedulingLinksApi.getPublicSlots("intro", { from: "2027-03-01" })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(res.slots).toEqual([]);
+  });
+
+  // PAC-88 (contract section 3.1): the mapper keeps the link's zone and horizon.
+  it("keeps time_zone and booking_horizon_days from GET /book/:slug", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse({ slug: "intro", title: "Intro", durations: [30], hosts: [], time_zone: "Europe/Paris", booking_horizon_days: 90 }),
+    );
+    const info = await schedulingLinksApi.getPublicLink("intro");
+    expect(info.time_zone).toBe("Europe/Paris");
+    expect(info.booking_horizon_days).toBe(90);
+  });
+
+  it("PAC-88: sends display_time_zone with the overview's from/to, never with date, and returns the four PAC-88 keys", async () => {
+    const urls: URL[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      urls.push(new URL(String(input)));
+      return jsonResponse({
+        slots: [],
+        available_dates: ["2027-03-01"],
+        time_zone: "Europe/Paris",
+        display_time_zone: "Asia/Tokyo",
+        range_from: "2027-02-28",
+        range_to: "2027-04-10",
+      });
+    });
+    const res = await schedulingLinksApi.getPublicSlots("intro", { from: "2027-02-28", to: "2027-04-10", duration: 30, displayTimeZone: "Asia/Tokyo" });
+    expect(Object.fromEntries(urls[0]!.searchParams)).toEqual({
+      display_time_zone: "Asia/Tokyo",
+      from: "2027-02-28",
+      to: "2027-04-10",
+      duration: "30",
+    });
+    expect(res).toEqual({
+      slots: [],
+      available_dates: ["2027-03-01"],
+      time_zone: "Europe/Paris",
+      display_time_zone: "Asia/Tokyo",
+      range_from: "2027-02-28",
+      range_to: "2027-04-10",
+    });
+
+    await schedulingLinksApi.getPublicSlots("intro", { date: "2027-03-01", from: "2027-02-28", to: "2027-04-10", displayTimeZone: "Europe/Paris" });
+    expect(Object.fromEntries(urls[1]!.searchParams)).toEqual({ display_time_zone: "Europe/Paris", date: "2027-03-01" });
+  });
+
+  it("PAC-88: an older server's answer has no PAC-88 keys, and the client says so rather than inventing them", async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({ slots: [], available_dates: ["2027-03-01"] }));
+    const res = await schedulingLinksApi.getPublicSlots("intro", { from: "2027-02-28", to: "2027-04-10", displayTimeZone: "Asia/Tokyo" });
+    expect(res.display_time_zone).toBeUndefined();
+    expect(res.time_zone).toBeUndefined();
+    expect(res.available_dates).toEqual(["2027-03-01"]);
   });
 
   it("posts the frozen booking body names", async () => {

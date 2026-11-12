@@ -398,6 +398,13 @@ export interface PublicLinkInfo {
   usage_type?: LinkUsageType;
   /** Per-duration coverage of the hosts whose calendars we could read (T-40). */
   coverage?: CoverageSummary;
+  /**
+   * PAC-88: the link's zone (`PublicLinkInfo.time_zone`), the page's default
+   * display zone. Absent only from a server before PAC-72 (shown as UTC).
+   */
+  time_zone?: string;
+  /** PAC-88: the link's booking horizon in days (PAC-72 D-1), kept by the mapper. */
+  booking_horizon_days?: number;
 }
 
 export interface BookingConfirmation {

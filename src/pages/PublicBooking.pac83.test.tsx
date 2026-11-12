@@ -11,6 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import PublicBooking from "./PublicBooking";
 import { API_MESSAGES } from "@/api/client";
+import { addDaysToKey, dateKeyInZone } from "@/lib/timeZone";
 
 const fetchMock = vi.fn<typeof fetch>();
 const json = (body: unknown, status = 200) =>
@@ -20,10 +21,35 @@ const html = (status: number) => new Response("<html><body>502 Bad Gateway</body
 const LINK = { slug: "intro", title: "Intro call", durations: [30], hosts: [{ email: "host@co.com", name: "Host" }, { email: "co@co.com", name: "Co" }], min_notice_minutes: 0, usage_type: "reusable" };
 const SLOT = { start: "2030-03-04T09:00:00Z", end: "2030-03-04T09:30:00Z" };
 
-type Handler = (method: string, path: string) => Promise<Response> | Response;
+type Handler = (method: string, path: string, url: URL) => Promise<Response> | Response;
 let handler: Handler;
 const calls = (method: string, path: string) =>
   fetchMock.mock.calls.filter(([u, init]) => (init?.method ?? "GET") === method && new URL(String(u), window.location.origin).pathname === path).length;
+/** PAC-88: listing requests for one day (`date`), as opposed to the day overview (`from`/`to`). */
+const dayCalls = () =>
+  fetchMock.mock.calls.filter(([u]) => {
+    const url = new URL(String(u), window.location.origin);
+    return url.pathname === "/api/book/intro/slots" && url.searchParams.has("date");
+  }).length;
+const isDayRequest = (url: URL) => url.searchParams.has("date");
+
+/**
+ * A PAC-88 server's listing answer (contract section 2.5): the day overview
+ * lists every day of the requested grid after today, a day lists SLOT; both
+ * echo display_time_zone and state the link zone (UTC, the fixture has none).
+ */
+function slotsAnswer(url: URL) {
+  const zone = url.searchParams.get("display_time_zone") ?? "UTC";
+  const date = url.searchParams.get("date");
+  const from = date ?? url.searchParams.get("from")!;
+  const to = date ?? url.searchParams.get("to")!;
+  const base = { time_zone: "UTC", display_time_zone: zone, range_from: from, range_to: to };
+  if (date) return json({ ...base, slots: [SLOT], available_dates: [] });
+  const today = dateKeyInZone(Date.now(), zone);
+  const days: string[] = [];
+  for (let d = from; d <= to; d = addDaysToKey(d, 1)) if (d > today) days.push(d);
+  return json({ ...base, slots: [], available_dates: days });
+}
 
 function renderPage(slug = "intro") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -40,9 +66,14 @@ function renderPage(slug = "intro") {
 
 async function pickFirstDay() {
   await screen.findByRole("heading", { name: "Intro call" });
-  const day = within(screen.getByRole("grid"))
-    .getAllByRole("button")
-    .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+  // PAC-88: days become selectable once the day overview answers.
+  const day = await vi.waitFor(() => {
+    const d = within(screen.getByRole("grid"))
+      .getAllByRole("button")
+      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
+    if (!d) throw new Error("no selectable day yet");
+    return d;
+  });
   fireEvent.click(day!);
 }
 
@@ -55,9 +86,9 @@ async function fillAndSubmit() {
 }
 
 function serveBooking(book: () => Promise<Response> | Response) {
-  handler = (method, path) => {
+  handler = (method, path, url) => {
     if (method === "GET" && path === "/api/book/intro") return json(LINK);
-    if (method === "GET" && path === "/api/book/intro/slots") return json([SLOT]);
+    if (method === "GET" && path === "/api/book/intro/slots") return slotsAnswer(url);
     if (method === "POST" && path === "/api/book/intro") return book();
     return json({ error: "not here" }, 404);
   };
@@ -66,7 +97,10 @@ function serveBooking(book: () => Promise<Response> | Response) {
 describe("PAC-83 public booking", () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    fetchMock.mockImplementation(async (u, init) => handler((init?.method ?? "GET").toUpperCase(), new URL(String(u), window.location.origin).pathname));
+    fetchMock.mockImplementation(async (u, init) => {
+      const url = new URL(String(u), window.location.origin);
+      return handler((init?.method ?? "GET").toUpperCase(), url.pathname, url);
+    });
     vi.stubGlobal("fetch", fetchMock);
   });
   afterEach(() => {
@@ -109,8 +143,9 @@ describe("PAC-83 public booking", () => {
   });
 
   it("AC-11: a slot listing that fails at the network level shows 'can't reach' with a retry — never an empty list or 'no time available'", async () => {
-    handler = (method, path) => {
+    handler = (method, path, url) => {
       if (path === "/api/book/intro") return json(LINK);
+      if (!isDayRequest(url)) return slotsAnswer(url);
       throw new TypeError("Failed to fetch");
     };
     renderPage();
@@ -123,9 +158,10 @@ describe("PAC-83 public booking", () => {
 
   it("AC-4 / AC-5: a slot listing answered after 20 s shows 'still working' after 8 s, never 'no time available', then the real slots", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    handler = (method, path) => {
+    handler = (method, path, url) => {
       if (path === "/api/book/intro") return json(LINK);
-      return new Promise((r) => setTimeout(() => r(json([SLOT])), 20_000));
+      if (!isDayRequest(url)) return slotsAnswer(url);
+      return new Promise((r) => setTimeout(() => r(slotsAnswer(url)), 20_000));
     };
     renderPage();
     await pickFirstDay();
@@ -162,7 +198,7 @@ describe("PAC-83 public booking", () => {
     expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
     expect(screen.getByTestId("unconfirmed-booking-time")).toHaveTextContent(/you had chosen/i);
     expect(calls("POST", "/api/book/intro")).toBe(1);
-    await vi.waitFor(() => expect(calls("GET", "/api/book/intro/slots")).toBe(2));
+    await vi.waitFor(() => expect(dayCalls()).toBe(2));
     // Re-picking keeps the typed details.
     fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
     expect(screen.getByLabelText("Name", { exact: true })).toHaveValue("Booker");

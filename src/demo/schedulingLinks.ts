@@ -5,6 +5,8 @@
  * src/api/demoGate.ts in a demo session of a non-production build.
  */
 import { BOOKING_HORIZON_DEFAULT_DAYS } from "@/api/types";
+import type { PublicSlotsAnswer, PublicSlotsParams } from "@/api/schedulingLinks";
+import { addDaysToKey, dateKeyInZone, groupStartsByDay, offsetMinutes, wallTimeInZone } from "@/lib/timeZone";
 import type {
   BookingConfirmation,
   BookingRefusalMessage,
@@ -193,19 +195,30 @@ function publicLinkBySlug(slug: string): SchedulingLink | undefined {
   return undefined;
 }
 
-/** Generate plausible slots for a given date based on link configuration. */
+/**
+ * PAC-88 (contract section 3.6, AC-33): the demo links' zone. The demo's link
+ * days and hours are read in it, exactly as the server reads a real link's in
+ * the owner's profile zone.
+ */
+export const DEMO_LINK_ZONE = "Europe/Paris";
+
+/** Generate plausible slots for one link day (a calendar day in DEMO_LINK_ZONE). */
 function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin: number): BookingSlot[] {
-  const target = new Date(`${dateStr}T00:00:00`);
-  const dow = target.getDay();
-  const allowed = link.days.some((d) => WEEKDAY_INDEX[d] === dow);
+  const [y, mo, d] = dateStr.split("-").map((x) => Number(x));
+  const dow = new Date(Date.UTC(y!, mo! - 1, d!)).getUTCDay();
+  const allowed = link.days.some((day) => WEEKDAY_INDEX[day] === dow);
   if (!allowed) return [];
+
+  // The horizon: today (link zone) and the next booking_horizon_days - 1 days.
+  const today = dateKeyInZone(Date.now(), DEMO_LINK_ZONE);
+  const last = addDaysToKey(today, (link.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS) - 1);
+  if (dateStr < today || dateStr > last) return [];
 
   const [sh, sm] = parseHM(link.window_start);
   const [eh, em] = parseHM(link.window_end);
-  const dayStart = new Date(target);
-  dayStart.setHours(sh, sm, 0, 0);
-  const dayEnd = new Date(target);
-  dayEnd.setHours(eh, em, 0, 0);
+  const dayStart = wallTimeInZone(dateStr, sh, sm, DEMO_LINK_ZONE);
+  const dayEnd = wallTimeInZone(dateStr, eh, em, DEMO_LINK_ZONE);
+  if (!dayStart || !dayEnd) return [];
 
   const step = 30; // 30-min increments
   const out: BookingSlot[] = [];
@@ -224,7 +237,7 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
     // Simulate "all hosts must be free": chop a few slots out for collective links
     let collectiveBlocked = false;
     if (link.hosts.length > 1) {
-      const hour = cursor.getHours();
+      const hour = new Date(cursor.getTime() + offsetMinutes(cursor, DEMO_LINK_ZONE) * 60_000).getUTCHours();
       // Pretend lunch + early afternoon are usually crowded for everyone
       if (hour === 12 || hour === 14) collectiveBlocked = true;
     }
@@ -235,6 +248,30 @@ function generateSlotsForDate(link: SchedulingLink, dateStr: string, durationMin
     cursor = new Date(cursor.getTime() + step * 60_000);
   }
   return out;
+}
+
+/**
+ * The demo's slot answer, grouped by the server's rule (contract section 2.1):
+ * an offered start falls on day D when its date in the day zone is D. A day
+ * zone day overlaps at most the link days from D - 1 to D + 1.
+ */
+function demoSlotsAnswer(link: SchedulingLink | undefined, params: PublicSlotsParams): PublicSlotsAnswer {
+  const zone = params.displayTimeZone || DEMO_LINK_ZONE;
+  const from = params.date ?? params.from ?? "";
+  const to = params.date ?? params.to ?? "";
+  const base = { time_zone: DEMO_LINK_ZONE, display_time_zone: zone, range_from: from, range_to: to };
+  if (!link || !link.active || isLinkExhausted(link) || !from || !to) return { ...base, slots: [], available_dates: [] };
+  const duration = params.duration ?? link.durations[0] ?? 30;
+  const slots: BookingSlot[] = [];
+  for (let day = addDaysToKey(from, -1); day <= addDaysToKey(to, 1); day = addDaysToKey(day, 1)) {
+    slots.push(...generateSlotsForDate(link, day, duration));
+  }
+  const ends = new Map(slots.map((s) => [s.start, s.end]));
+  const byDay = groupStartsByDay(slots.map((s) => s.start), zone);
+  if (params.date) {
+    return { ...base, available_dates: [], slots: (byDay.get(params.date) ?? []).map((start) => ({ start, end: ends.get(start)! })) };
+  }
+  return { ...base, slots: [], available_dates: [...byDay.keys()].filter((k) => k >= from && k <= to).sort() };
 }
 
 /** True when the link has used up its allowed bookings. */
@@ -333,16 +370,15 @@ export const demoSchedulingLinksOps = {
           hosts: link.hosts.map((h) => ({ email: h.email, name: h.name, avatar_url: h.avatar_url })),
           min_notice_minutes: link.min_notice_minutes, usage_type: link.usage_type,
           coverage: { total: link.hosts.length, checked },
+          // PAC-88 AC-33: the demo page shows a zone label like a real link.
+          time_zone: DEMO_LINK_ZONE,
+          booking_horizon_days: link.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS,
         };
 
         return info;
       },
 
-  getPublicSlots: (slug: string, params: { date?: string; duration?: number }) => {
-        const link = publicLinkBySlug(slug);
-        if (!link || !link.active || isLinkExhausted(link)) return { available_dates: [], slots: [] };
-        return { available_dates: [], slots: generateSlotsForDate(link, params.date!, params.duration ?? link.durations[0] ?? 30) };
-      },
+  getPublicSlots: (slug: string, params: PublicSlotsParams) => demoSlotsAnswer(publicLinkBySlug(slug), params),
 
   bookSlot: (
     slug: string,

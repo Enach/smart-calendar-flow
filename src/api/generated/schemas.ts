@@ -392,7 +392,7 @@ export type PublicLinkInfo = __TypedOpenapi.Schemas.PublicLinkInfo;
 export const PublicLinkInfo = z.strictObject({ slug: z.string(), title: z.string(), durations: z.array(z.number().int()), hosts: z.array(PublicHost), min_notice_minutes: z.number().int(), usage_type: z.enum(["reusable", "recurring", "single_use"]), coverage: PublicLinkCoverage, time_zone: z.string(), booking_horizon_days: z.number().int().min(1).max(365) });
 
 export type PublicSlotsResponse = __TypedOpenapi.Schemas.PublicSlotsResponse;
-export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBookingSlot), available_dates: z.array(z.iso.date()) });
+export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBookingSlot), available_dates: z.array(z.iso.date()), time_zone: z.string(), display_time_zone: z.string(), range_from: z.iso.date(), range_to: z.iso.date() });
 
 export type RawGoogleFreeBusyMap = __TypedOpenapi.Schemas.RawGoogleFreeBusyMap;
 export const RawGoogleFreeBusyMap = z.record(z.string(), z.array(RawGoogleBusyWindow));
