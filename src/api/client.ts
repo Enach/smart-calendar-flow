@@ -2,6 +2,7 @@ import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./cont
 import {
   AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  CalendarNotConnectedError,
   ConnectStartResponse as ConnectStartResponseSchema,
   OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
   OrganizationAIConsentConflict as OrganizationAIConsentConflictSchema,
@@ -29,7 +30,6 @@ import type {
   ConferenceLink,
   ConferenceProvider,
   ConferenceProviderStatus,
-  CoverageProvider,
   CoverageStatus,
   DayInterval,
   LunchBreaks,
@@ -49,7 +49,7 @@ import type {
   PersonalCalendar,
   PersonalCalendarType,
   ProviderDisconnectResult,
-  Room,
+  CalendarRoom,
   OrganizationAIConfiguration,
   OrganizationAIConfigurationUpdate,
   AIStatus,
@@ -154,6 +154,34 @@ export function isBudgetExpired(e: unknown): boolean {
 /** 413, recognised by status alone (contract §2.2). */
 export function isRequestTooLarge(e: unknown): boolean {
   return isApiHttpError(e) && e.status === 413;
+}
+
+/**
+ * Why the room list could not be read (PAC-41 AC-16), or null when the
+ * request was only cancelled because the page is being left. The two 401s are
+ * told apart by body, never by status (contract listRooms): "calendar not
+ * connected" means the caller holds no Google credential (room booking reads
+ * Google room calendars only); the middleware's `{"error":"unauthorized"}`
+ * means the Paceday session has ended. Everything else (a 500, including a
+ * stored Google connection that can no longer be used, a gateway error, or no
+ * answer at all) is "could not be loaded".
+ */
+export type RoomListFailure = "calendar-not-connected" | "session-ended" | "unavailable";
+
+/** What the room picker says for each (AC-16), in one place for tests and e2e. */
+export const ROOM_LIST_FAILURE_TEXT: Record<RoomListFailure, string> = {
+  "calendar-not-connected": "Room booking needs a connected Google calendar. Rooms come from Google Calendar room resources.",
+  "session-ended": "Your session has ended. Sign in again to search rooms.",
+  unavailable: "Rooms could not be loaded. Try again.",
+};
+
+export function roomListFailure(e: unknown): RoomListFailure | null {
+  if (e instanceof ApiRequestCancelledError) return null;
+  if (isApiHttpError(e) && e.status === 401) {
+    if (CalendarNotConnectedError.safeParse(e.data).success) return "calendar-not-connected";
+    if ((e.data as { error?: unknown } | undefined)?.error === "unauthorized") return "session-ended";
+  }
+  return "unavailable";
 }
 
 /** What both calendar-disconnect surfaces say when disconnect is not offered (PAC-35). */
@@ -1022,13 +1050,8 @@ export const api = {
   /**
    * Free/busy probe (T-39 / T-40).
    *
-   * Tells the UI which participants we can read calendar data for.
-   * Mock heuristic — covers the demo + offline cases:
-   *   - email matches the current org domain → status=paceday_user (provider=paceday)
-   *   - known directory (co.com, acme.com, paceday.com) → known + google
-   *   - microsoft.com / outlook.com / hotmail.com / live.com → known + outlook
-   *   - personal mail (gmail.com, yahoo.com, proton.me, ...) → unknown
-   * The real backend overrides all of this when reachable.
+   * Tells the UI which participants we can read calendar data for. Each
+   * participant is `known` or `unknown`, with no provider (PAC-41, API-046).
    */
   freebusy: (input: { emails: string[]; start_time: string; end_time: string }) =>
     demoOrReal<FreeBusyResponse>("api.freebusy", [input], () => requestApi<FreeBusyResponse>("POST", "/freebusy", input)),
@@ -1182,8 +1205,13 @@ export const api = {
     demoOrReal("api.deleteEvent", [id, sendUpdates], () => requestApi<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates })),
 
   // ----- Rooms -----
-  searchRooms: (q: string, start?: string, end?: string) =>
-    demoOrReal("api.searchRooms", [q, start, end], () => requestApi<Room[]>("GET", "/rooms", undefined, { q, start, end })),
+  /**
+   * GET /api/rooms. `q` is the only parameter the server reads (contract
+   * listRooms): it filters by name or address, with no time window and no
+   * availability, so nothing else is sent (PAC-41, API-040).
+   */
+  searchRooms: (q: string) =>
+    demoOrReal("api.searchRooms", [q], () => requestApi<CalendarRoom[]>("GET", "/rooms", undefined, { q })),
 
   // ----- Attendees -----
   suggestAttendees: (q: string) =>

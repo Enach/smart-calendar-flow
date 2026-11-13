@@ -17,7 +17,7 @@ import type {
   PersonalCalendar,
   PersonalCalendarType,
   ProviderDisconnectResult,
-  Room,
+  CalendarRoom,
   Settings,
   SuggestedSlot,
 } from "./types";
@@ -106,7 +106,7 @@ export interface ApiPort {
   ): Promise<CalendarEventDTO>;
   deleteEvent(id: string, sendUpdates?: "all" | "none"): Promise<void>;
 
-  searchRooms(q: string, start?: string, end?: string): Promise<Room[]>;
+  searchRooms(q: string): Promise<CalendarRoom[]>;
   suggestAttendees(q: string): Promise<Attendee[]>;
 
   addConference(eventId: string, body: { provider: ConferenceProvider; url?: string }): Promise<ConferenceLink>;

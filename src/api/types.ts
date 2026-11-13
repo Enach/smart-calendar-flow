@@ -180,15 +180,14 @@ export interface CalendarEvent {
   coverage?: CoverageSummary;
 }
 
-export interface Room {
-  id: string;
-  name: string;
-  email: string;
-  building?: string;
-  floor?: string;
-  capacity?: number;
-  available?: boolean;
-}
+/**
+ * A bookable room, exactly as GET /api/rooms answers it: the generated
+ * contract type, never a hand-written copy (PAC-41, API-041). `id` is the
+ * room's resource calendar address; it is sent unchanged as the event's
+ * `room_resource_email` to book the room. The server reads no building,
+ * floor, capacity or availability, so a room carries none.
+ */
+export type CalendarRoom = components["schemas"]["CalendarRoom"];
 
 export interface ConferenceProviderStatus {
   provider: ConferenceProvider;
@@ -269,22 +268,18 @@ export type FreeBusyMap = Record<string, FreeBusyEntry[]>;
 // ---------- Free/busy coverage (T-39 / T-40) ----------
 
 /**
- * How well we can see this participant's calendar:
- * - paceday_user: they have a Paceday account (we use their stored events)
- * - known:        external user but we successfully read their calendar
- *                 (e.g. shared Google Workspace freebusy)
- * - unknown:      we could not reach their calendar — slots may overlap
+ * One participant of POST /api/freebusy, the generated contract type (PAC-41,
+ * API-046): `{email, status, busy}`. There is no provider (the answer does not
+ * say which calendar supplied the data) and no "is on Paceday" status.
  */
-export type CoverageStatus = "paceday_user" | "known" | "unknown";
+export type ParticipantCoverage = components["schemas"]["FreeBusyParticipant"];
 
-/** Provider that surfaced the freebusy data (drives the small logo on the badge). */
-export type CoverageProvider = "google" | "outlook" | "paceday";
-
-export interface ParticipantCoverage {
-  email: string;
-  status: CoverageStatus;
-  provider?: CoverageProvider;
-}
+/**
+ * How well we can see this participant's calendar, as the server says it:
+ * - known:   the provider returned their free/busy;
+ * - unknown: we could not read their calendar, so slots may overlap.
+ */
+export type CoverageStatus = ParticipantCoverage["status"];
 
 export interface FreeBusyResponse {
   start_time: string;

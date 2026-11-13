@@ -225,8 +225,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     if (coverageQuery.isLoading) return { kind: "loading" };
     const cov = coverageByEmail.get(email.toLowerCase());
     if (!cov) return { kind: "loading" };
-    if (cov.status === "paceday_user") return { kind: "paceday-accepted" };
-    if (cov.status === "known") return { kind: "synced", provider: cov.provider };
+    // Free/busy has two statuses and no provider (PAC-41): "On Paceday" is
+    // decided above, from the link's host record, never from free/busy (D-2).
+    if (cov.status === "known") return { kind: "synced" };
     return { kind: "unknown" };
   }
 
