@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, CalendarDays, CheckCircle2, Clock, Globe, Loader2, Users } from "lucide-react";
 
@@ -19,6 +19,7 @@ import { schedulingLinksApi, type PublicSlotsAnswer } from "@/api/schedulingLink
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
+import { TOP_LEVEL_LINK_TARGET } from "@/lib/framing";
 import { formatTimeInZone } from "@/lib/timeFormat";
 import {
   browserTimeZone,
@@ -376,9 +377,14 @@ export default function PublicBooking() {
               retrying={linkQuery.isFetching}
             />
             <StillWorking active={linkQuery.isFetching} className="mt-3" />
-            <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
+            <a
+              data-testid="booking-error-home-link"
+              href="/"
+              target={TOP_LEVEL_LINK_TARGET}
+              className="mt-6 inline-block text-sm font-medium text-primary hover:underline"
+            >
               ← Back to Paceday
-            </Link>
+            </a>
           </div>
         </div>
       );
@@ -404,9 +410,14 @@ export default function PublicBooking() {
               </Button>
             </div>
           )}
-          <Link to="/" className="mt-6 inline-block text-sm font-medium text-primary hover:underline">
+          <a
+            data-testid="booking-error-home-link"
+            href="/"
+            target={TOP_LEVEL_LINK_TARGET}
+            className="mt-6 inline-block text-sm font-medium text-primary hover:underline"
+          >
             ← Back to Paceday
-          </Link>
+          </a>
         </div>
       </div>
     );
@@ -508,12 +519,14 @@ export default function PublicBooking() {
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
-        <Link
-          to="/"
+        <a
+          data-testid="booking-home-link"
+          href="/"
+          target={TOP_LEVEL_LINK_TARGET}
           className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground"
         >
           <ArrowLeft className="h-3 w-3" /> paceday
-        </Link>
+        </a>
 
         <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] lg:gap-12">
           {/* LEFT — host info */}
