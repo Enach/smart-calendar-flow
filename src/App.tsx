@@ -18,6 +18,8 @@ import Logout from "./pages/Logout";
 import { ToastViewport } from "./components/Toast";
 import { AuthProvider } from "./contexts/AuthContext";
 import { RequireAuth } from "./components/RequireAuth";
+import { FrameGuard } from "./components/FrameGuard";
+import { BOOKING_ROUTE_PATH } from "./lib/framing";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,77 +35,80 @@ export function LegacyCalendarNewRedirect() {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
-      <AuthProvider>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/signin" element={<SignIn />} />
-          <Route path="/signup" element={<SignUp />} />
-          <Route path="/auth/callback" element={<AuthCallback />} />
-          <Route
-            path="/app"
-            element={
-              <RequireAuth>
-                <Dashboard />
-              </RequireAuth>
-            }
-          />
-          <Route path="/app/calendar/new" element={<LegacyCalendarNewRedirect />} />
-          <Route
-            path="/app/onboarding"
-            element={
-              <RequireAuth requireOnboarding={false}>
-                <Onboarding />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/app/links"
-            element={
-              <RequireAuth>
-                <LinksPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/app/team"
-            element={
-              <RequireAuth>
-                <Team />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/app/team/invite/:token"
-            element={
-              <RequireAuth>
-                <TeamInvite />
-              </RequireAuth>
-            }
-          />
-          <Route path="/app/manager" element={<Navigate to="/app/team" replace />} />
+      {/* PAC-91: above AuthProvider, so a framed non-booking route sends no session probe. */}
+      <FrameGuard>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/signin" element={<SignIn />} />
+            <Route path="/signup" element={<SignUp />} />
+            <Route path="/auth/callback" element={<AuthCallback />} />
+            <Route
+              path="/app"
+              element={
+                <RequireAuth>
+                  <Dashboard />
+                </RequireAuth>
+              }
+            />
+            <Route path="/app/calendar/new" element={<LegacyCalendarNewRedirect />} />
+            <Route
+              path="/app/onboarding"
+              element={
+                <RequireAuth requireOnboarding={false}>
+                  <Onboarding />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/app/links"
+              element={
+                <RequireAuth>
+                  <LinksPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/app/team"
+              element={
+                <RequireAuth>
+                  <Team />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/app/team/invite/:token"
+              element={
+                <RequireAuth>
+                  <TeamInvite />
+                </RequireAuth>
+              }
+            />
+            <Route path="/app/manager" element={<Navigate to="/app/team" replace />} />
 
-          <Route
-            path="/settings"
-            element={
-              <RequireAuth>
-                <SettingsPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/settings/audit"
-            element={
-              <RequireAuth>
-                <AuditPage />
-              </RequireAuth>
-            }
-          />
-          <Route path="/logout" element={<Logout />} />
-          <Route path="/book/:slug" element={<PublicBooking />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-        <ToastViewport />
-      </AuthProvider>
+            <Route
+              path="/settings"
+              element={
+                <RequireAuth>
+                  <SettingsPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/settings/audit"
+              element={
+                <RequireAuth>
+                  <AuditPage />
+                </RequireAuth>
+              }
+            />
+            <Route path="/logout" element={<Logout />} />
+            <Route path={BOOKING_ROUTE_PATH} element={<PublicBooking />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+          <ToastViewport />
+        </AuthProvider>
+      </FrameGuard>
     </BrowserRouter>
   </QueryClientProvider>
 );
