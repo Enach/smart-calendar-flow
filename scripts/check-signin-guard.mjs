@@ -8,7 +8,8 @@
 //                   apiFetch("/api/auth/login"), a template literal holding
 //                   /api/auth/register and apiUrl("/auth/login") all fail.
 //   AC-13 (inputs)  any non-test file under src/components/auth/ or a sign-in
-//                   page renders an input of type `password`, or uses
+//                   page holds a quoted "password" string literal (an input of
+//                   type password, a show/hide toggle, a constant), or uses
 //                   autoComplete `current-password` / `new-password`. The
 //                   API-key fields in Settings are outside this scope and stay.
 //   AC-17 (docs)    AGENTS.md or docs/lovable-prompts/00-global-context.md
@@ -147,6 +148,10 @@ const FORBIDDEN = {
   "password input in auth": ["src/components/auth/Pw.tsx", '<Input id="pw" type="password" />'],
   "password input, braced": ["src/components/auth/Pw2.tsx", "<input type={'password'} />"],
   "password input via props object": ["src/pages/SignUp.tsx", 'createElement("input", { type: "password" })'],
+  "show/hide toggle": ["src/components/auth/Toggle.tsx", '<Input type={show ? "text" : "password"} />'],
+  "constant": ["src/components/auth/Const.tsx", "const T = 'password';
+export const F = () => <input type={T} />;"],
+  "setAttribute": ["src/components/auth/Dom.ts", 'el.setAttribute("type", "password");'],
   "current-password autocomplete": ["src/components/auth/Ac.tsx", '<Input autoComplete="current-password" />'],
   "new-password autocomplete on a sign-in page": ["src/pages/Index.tsx", '<input autocomplete="new-password" />'],
   "AGENTS.md without the rule": ["AGENTS.md", "# Guide\n\n- Do not invent endpoints.\n"],

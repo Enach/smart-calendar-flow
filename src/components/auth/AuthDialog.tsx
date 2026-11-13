@@ -355,11 +355,9 @@ function AuthDialogBody({
           onBack={() => setStep("discover")}
         />
       ) : (
-        <div data-testid="auth-resolving-step" className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
-          <Spinner size="xs" />
-          <span>
-            Checking how <span className="font-medium text-foreground">{email}</span> signs in…
-          </span>
+        <div data-testid="auth-resolving-step" className="mt-6">
+          {/* The sentence is the spinner's label, so the status region announces it. */}
+          <Spinner size="xs" label={`Checking how ${email} signs in…`} />
         </div>
       )}
       </div>

@@ -158,6 +158,15 @@ describe("AuthDialog personal addresses, no password step (PAC-98)", () => {
     await waitFor(() => expect(assigned).toEqual([`${API}/api/auth/google?login_hint=dave%40yahoo.com`]));
   });
 
+  // D-5: the step takes the focus from the email step it replaces.
+  it("a11y: focus lands on the personal step's heading", async () => {
+    serve({ type: "generic" });
+    renderDialog();
+    submitEmail("dave@yahoo.com");
+    const heading = await screen.findByRole("heading", { name: "Sign in with your personal email" });
+    await waitFor(() => expect(heading).toHaveFocus());
+  });
+
   // AC-9
   it("AC-9: in sign-up mode the button reads 'Sign up with Google'", async () => {
     serve({ type: "generic" });
@@ -350,6 +359,8 @@ describe("AuthDialog personal addresses, no password step (PAC-98)", () => {
       renderDialog({ offerSwitch: true });
 
       expect(screen.getByTestId("auth-resolving-step")).toHaveTextContent("dave@yahoo.com");
+      // a11y: the sentence is the status region's accessible content.
+      expect(screen.getByRole("status")).toHaveTextContent("Checking how dave@yahoo.com signs in…");
       expect(await screen.findByTestId(testId)).toBeInTheDocument();
       expect(detectCalls()).toBe(1);
       const [, init] = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/api/auth/detect"))!;
