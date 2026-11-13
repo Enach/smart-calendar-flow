@@ -15,9 +15,16 @@ import {
   SsoGlyph,
 } from "@/components/auth/ProviderButton";
 import { PacedayMark } from "@/components/auth/AuthLayout";
-import { readRememberedSignInEmail, rememberSignInEmail } from "@/components/auth/rememberedEmail";
+import { PersonalAddressStep } from "@/components/auth/PersonalAddressStep";
+import {
+  readRememberedSignInEmail,
+  readRememberedSignInEmailKind,
+  rememberSignInEmail,
+  rememberSignInEmailKind,
+  type SignInEmailKind,
+} from "@/components/auth/rememberedEmail";
 
-import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
+import { apiFetch, apiUrl, checkApiAvailability } from "@/lib/api";
 import { ApiUnreachableError, apiErrorMessage, isAnswerLost } from "@/api/client";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import type { AuthUser } from "@/contexts/AuthContext";
@@ -32,13 +39,34 @@ interface AuthDialogProps {
   mode?: "signin" | "signup";
   /**
    * PAC-97 AC-25: opened from a sign-in failure notice. When this tab
-   * remembers the email typed earlier, the dialog starts at the provider
-   * choice for it; otherwise it opens as usual.
+   * remembers the email typed earlier, the dialog starts at the provider step
+   * that fits it (PAC-98 AC-15: the personal-address step for a personal
+   * address, the PAC-97 choice for a company one); otherwise it opens as usual.
    */
   offerSwitch?: boolean;
 }
 
 type Provider = "google" | "microsoft";
+
+/**
+ * - discover: the email form and the top provider buttons;
+ * - choose: the PAC-97 provider choice (a company address);
+ * - personal: the PAC-98 personal-address step;
+ * - resolving: opened from a failure notice with an email whose kind this tab
+ *   does not know: one detection request finds it (PAC-98 AC-15).
+ *
+ * There is no password step: Paceday has no password sign-in (PAC-98).
+ */
+type Step = "discover" | "choose" | "personal" | "resolving";
+
+function stepForKind(kind: SignInEmailKind): Step {
+  return kind === "personal" ? "personal" : "choose";
+}
+
+/** PAC-98 D-7: `generic` is a personal address; every other answer is not. */
+function kindOfAnswer(type: unknown): SignInEmailKind {
+  return type === "generic" ? "personal" : "company";
+}
 
 /**
  * PAC-83 (owner OQ-1 (c), contract §4.4): the one demo entry, in a
@@ -70,7 +98,7 @@ function AuthDialogBody({
   offerSwitch: boolean;
   onClose: () => void;
 }) {
-  const { enterDemo, refresh } = useAuth();
+  const { enterDemo } = useAuth();
   const availabilityQuery = useIntegrationAvailability();
   const availability = availabilityQuery.data;
   const navigate = useNavigate();
@@ -88,9 +116,15 @@ function AuthDialogBody({
   };
 
   // Read once, when the dialog opens (its body mounts on every open).
-  const [remembered] = useState<string | null>(() => (offerSwitch ? readRememberedSignInEmail() : null));
-  const [step, setStep] = useState<"discover" | "choose" | "generic">(remembered ? "choose" : "discover");
-  const [email, setEmail] = useState(remembered ?? "");
+  const [remembered] = useState<{ email: string; kind: SignInEmailKind | null } | null>(() => {
+    if (!offerSwitch) return null;
+    const rememberedEmail = readRememberedSignInEmail();
+    return rememberedEmail ? { email: rememberedEmail, kind: readRememberedSignInEmailKind() } : null;
+  });
+  const [step, setStep] = useState<Step>(() =>
+    !remembered ? "discover" : remembered.kind ? stepForKind(remembered.kind) : "resolving",
+  );
+  const [email, setEmail] = useState(remembered?.email ?? "");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<null | "google" | "microsoft" | "email">(null);
   /**
@@ -113,7 +147,7 @@ function AuthDialogBody({
 
   /**
    * Starts the public sign-in with a provider. The top buttons send no hint
-   * (PAC-71 AC-32); the provider choice (PAC-97) sends the typed email.
+   * (PAC-71 AC-32); the provider steps (PAC-97, PAC-98) send the typed email.
    */
   const onSocial = async (provider: Provider, loginHint?: string) => {
     setFailure(null);
@@ -130,6 +164,43 @@ function AuthDialogBody({
     const query = loginHint ? `?login_hint=${encodeURIComponent(loginHint)}` : "";
     window.location.href = apiUrl(`/api/auth/${provider}${query}`);
   };
+
+  /**
+   * PAC-98 AC-15: opened from a failure notice with an email remembered
+   * without its kind (an older build wrote it, or the detection after it
+   * failed). Exactly one detection request finds the kind. It never navigates
+   * on the answer; it only picks the step. An unreachable API shows the
+   * PAC-83 failure view with a retry.
+   */
+  const resolveRememberedKind = async () => {
+    if (!remembered) return;
+    setFailure(null);
+    try {
+      const res = await apiFetch<SsoDetectResponse>("/api/auth/detect", {
+        method: "POST",
+        json: { email: remembered.email },
+      });
+      const kind = kindOfAnswer(res?.type);
+      rememberSignInEmailKind(kind);
+      setStep(stepForKind(kind));
+    } catch (err) {
+      if (isAnswerLost(err)) {
+        setFailure({ error: err, retry: () => void resolveRememberedKind() });
+      } else {
+        // Detection answered with an error: the PAC-97 choice, as before PAC-98.
+        setStep("choose");
+      }
+    }
+  };
+  // One detection request per open, never one per render (AC-15).
+  const resolveStarted = useRef(false);
+  const resolveRef = useRef(resolveRememberedKind);
+  resolveRef.current = resolveRememberedKind;
+  useEffect(() => {
+    if (step !== "resolving" || resolveStarted.current) return;
+    resolveStarted.current = true;
+    void resolveRef.current();
+  }, [step]);
 
   const onEmailContinue = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -151,11 +222,31 @@ function AuthDialogBody({
         json: { email: parsed.data },
       });
       const type = res?.type;
+      // PAC-98 D-7: the kind is kept with the remembered email, so a failure
+      // return needs no new detection request.
+      rememberSignInEmailKind(kindOfAnswer(type));
+      // PAC-98 D-6: once availability has loaded, a direct answer for a
+      // provider this deployment does not offer gets the provider step for
+      // the address instead of a start that cannot work. While availability
+      // is loading, or its read failed, the dialog navigates as before.
+      const loaded = availabilityQuery.isSuccess ? availability : undefined;
       if (type === "google") {
+        if (loaded && loaded.google.available !== true) {
+          // gmail.com and googlemail.com are answered google (PAC-98 D-2):
+          // the personal-address step, in its "not available" state.
+          setPending(null);
+          setStep("personal");
+          return;
+        }
         window.location.href = apiUrl(`/api/auth/google?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
       if (type === "microsoft") {
+        if (loaded && loaded.microsoft.available !== true) {
+          setPending(null);
+          setStep("choose");
+          return;
+        }
         window.location.href = apiUrl(`/api/auth/microsoft?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
@@ -166,15 +257,14 @@ function AuthDialogBody({
         return;
       }
       setPending(null);
-      if (type === "generic" || type === "sso") {
-        // generic (a consumer or unparseable address) → the password step, as
-        // today. An sso answer without its redirect path also lands here, as
-        // today.
-        setStep("generic");
+      if (type === "generic") {
+        // PAC-98: a personal address → the personal-address step.
+        setStep("personal");
         return;
       }
-      // PAC-97: "choose", or any value this web does not know (AC-22): the
-      // user picks the provider. Never the password step for these.
+      // PAC-97: "choose", an sso answer without its path (PAC-98 AC-12), or
+      // any value this web does not know (AC-22): the user picks the
+      // provider. No step shows a password field (PAC-98).
       setStep("choose");
     } catch (err) {
       setPending(null);
@@ -204,7 +294,17 @@ function AuthDialogBody({
             Can't sign in right now
           </h2>
           <ApiErrorNotice error={failure.error} effect="read" onRetry={failure.retry} />
-          <Button type="button" variant="ghost" size="sm" onClick={() => setFailure(null)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setFailure(null);
+              // While the remembered email's kind is unknown there is no
+              // provider step to go back to: the email step, email kept.
+              if (step === "resolving") setStep("discover");
+            }}
+          >
             <ArrowLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
             Back
           </Button>
@@ -242,17 +342,25 @@ function AuthDialogBody({
           onPick={(provider) => void onSocial(provider, email.trim())}
           onBack={() => setStep("discover")}
         />
-      ) : (
-        <GenericStep
+      ) : step === "personal" ? (
+        <PersonalAddressStep
+          mode={mode}
           email={email}
+          availabilityLoading={availabilityQuery.isPending}
+          availabilityError={availabilityQuery.isError ? availabilityQuery.error : null}
+          onRetryAvailability={() => void availabilityQuery.refetch()}
+          googleAvailable={availability?.google.available === true}
+          pending={pending}
+          onPickGoogle={() => void onSocial("google", email.trim())}
           onBack={() => setStep("discover")}
-          onSuccess={async () => {
-            await refresh();
-            onClose();
-            navigate(resolveRedirect(), { replace: true });
-          }}
-          onApiDown={(error, retry) => setFailure({ error, retry })}
         />
+      ) : (
+        <div data-testid="auth-resolving-step" className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <Spinner size="xs" />
+          <span>
+            Checking how <span className="font-medium text-foreground">{email}</span> signs in…
+          </span>
+        </div>
       )}
       </div>
     </div>
@@ -383,10 +491,11 @@ function DiscoverStep({
 /* ---------- step 1b: choose a provider (PAC-97) ---------- */
 
 /**
- * Detection could not tell which provider the domain uses (`choose`, or a
- * value this web does not know). Offers the providers this deployment has,
- * each carrying the typed email as the login hint; nothing navigates until
- * one is picked. Never shows a password field.
+ * Detection could not tell which provider the domain uses (`choose`, an `sso`
+ * answer without its path, or a value this web does not know), or answered a
+ * provider this deployment does not offer (PAC-98 D-6). Offers the providers
+ * this deployment has, each carrying the typed email as the login hint;
+ * nothing navigates until one is picked. Never shows a password field.
  */
 function ChooseStep({
   mode,
@@ -487,173 +596,5 @@ function ChooseStep({
         Use a different email
       </Button>
     </div>
-  );
-}
-
-/* ---------- step 2: generic password (sign in / register) ---------- */
-
-function GenericStep({
-  email,
-  onBack,
-  onSuccess,
-  onApiDown,
-}: {
-  email: string;
-  onBack: () => void;
-  onSuccess: () => void;
-  onApiDown: (error: unknown, retry: () => void) => void;
-}) {
-  const [tab, setTab] = useState<"signin" | "signup">("signin");
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      if (tab === "signin") {
-        await apiFetch("/api/auth/login", {
-          method: "POST",
-          json: { email, password },
-        });
-      } else {
-        await apiFetch("/api/auth/register", {
-          method: "POST",
-          json: { email, password, name: name.trim() || undefined },
-        });
-      }
-      onSuccess();
-    } catch (e) {
-      const err = e as ApiError;
-      if (isAnswerLost(e)) {
-        // PAC-83: never a demo — the dialog says Paceday can't be reached.
-        onApiDown(e, () => void submit());
-        return;
-      }
-      if (err?.status === 401) {
-        setError("Incorrect email or password.");
-      } else if (err?.status === 404) {
-        setError("No account found — try creating one.");
-      } else {
-        setError("Something went wrong. Please try again.");
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-6 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" />
-        Back
-      </button>
-      <h2 className="mt-3 font-serif text-2xl leading-tight tracking-tight text-foreground">
-        Continue with email
-      </h2>
-      <p className="mt-1 text-sm text-muted-foreground">{email}</p>
-
-      <div className="mt-6 inline-flex w-full rounded-md border border-border bg-card p-0.5">
-        <button
-          type="button"
-          onClick={() => {
-            setTab("signin");
-            setError(null);
-          }}
-          className={`flex-1 rounded-[5px] px-3 py-1.5 text-xs font-medium transition ${
-            tab === "signin"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Sign in
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setTab("signup");
-            setError(null);
-          }}
-          className={`flex-1 rounded-[5px] px-3 py-1.5 text-xs font-medium transition ${
-            tab === "signup"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          Create account
-        </button>
-      </div>
-
-      <form onSubmit={submit} className="mt-5 space-y-3">
-        {tab === "signup" && (
-          <div className="space-y-1.5">
-            <Label htmlFor="auth-name" className="text-xs font-medium text-muted-foreground">
-              Full name
-            </Label>
-            <Input
-              id="auth-name"
-              type="text"
-              autoFocus
-              placeholder="Alex Morgan"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="h-11 rounded-md border-border bg-background text-sm"
-              disabled={submitting}
-            />
-          </div>
-        )}
-        <div className="space-y-1.5">
-          <Label htmlFor="auth-password" className="text-xs font-medium text-muted-foreground">
-            Password
-          </Label>
-          <Input
-            id="auth-password"
-            type="password"
-            autoFocus={tab === "signin"}
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="h-11 rounded-md border-border bg-background text-sm"
-            aria-invalid={!!error}
-            disabled={submitting}
-          />
-        </div>
-
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-xs text-destructive"
-          >
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <Button
-          type="submit"
-          disabled={submitting}
-          className="h-11 w-full rounded-md bg-primary text-sm text-primary-foreground hover:bg-primary/90"
-        >
-          {submitting ? (
-            <Spinner size="xs" className="text-primary-foreground" />
-          ) : tab === "signin" ? (
-            "Sign in"
-          ) : (
-            "Create account"
-          )}
-        </Button>
-      </form>
-    </>
   );
 }
