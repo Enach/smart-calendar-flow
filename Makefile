@@ -22,15 +22,16 @@ SELF := $(MAKE) --no-print-directory -f $(ROOT)/Makefile
 REQUIRE_DEPS = @test -d "$(ROOT)/node_modules" || { echo "node_modules missing — run: npm install" >&2; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help lint typecheck design-check design-baseline test coverage demo-check openapi openapi-check openapi-check-full verify verify-banner verify-summary
+.PHONY: help lint typecheck design-check design-baseline signin-guard test coverage demo-check openapi openapi-check openapi-check-full verify verify-banner verify-summary
 
 help:
 	@echo "Paceday (web repo) — targets"
-	@echo "  verify         lint, typecheck, design-check, openapi-check, test, demo-check, coverage — fail-fast, prints a PR-pasteable summary"
+	@echo "  verify         lint, typecheck, design-check, signin-guard, openapi-check, test, demo-check, coverage — fail-fast, prints a PR-pasteable summary"
 	@echo "  lint           eslint (src/api/generated is excluded on purpose)"
 	@echo "  typecheck      tsc against the generated contract types"
 	@echo "  design-check   Impeccable detector over src/, ratcheted against .impeccable/baseline.json"
 	@echo "  design-baseline  rewrite the baseline from the current scan (new entries need a PAC issue)"
+	@echo "  signin-guard   PAC-98: no password route or sign-in password input; the PAC-98 rule in AGENTS.md (self-tested)"
 	@echo "  test           vitest run"
 	@echo "  coverage       vitest run --coverage; the floor (ratchet toward 70%) is in vitest.config.ts"
 	@echo "  demo-check     PAC-83: production build has no demo, development build has every demo marker"
@@ -61,6 +62,15 @@ design-check:
 
 design-baseline:
 	cd $(ROOT) && node scripts/design-check.mjs --update
+
+# PAC-98 AC-13 / AC-17: Paceday has no password sign-in. Fails on a password
+# route (auth/login, auth/register) anywhere in non-test src/, on a password
+# input or password autocomplete on the sign-in surfaces, and when AGENTS.md or
+# docs/lovable-prompts/00-global-context.md loses the PAC-98 rule. A gate, not
+# a sentence, for the same reason as design-check: Lovable's agent edits this
+# repo and only the Makefile binds both agents. Runs its own self-test first.
+signin-guard:
+	cd $(ROOT) && node scripts/check-signin-guard.mjs
 
 test:
 	$(REQUIRE_DEPS)
@@ -115,6 +125,7 @@ verify:
 	@$(SELF) lint          && echo "lint           PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) typecheck     && echo "typecheck      PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) design-check  && echo "design-check   PASS (impeccable, ratcheted)" >> "$(VERIFY_DIR)/steps.txt"
+	@$(SELF) signin-guard  && echo "signin-guard   PASS (PAC-98: no password route or input; self-test)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) openapi-check && if [ "$(OPENAPI_CROSS_REPO)" = "skip" ]; then \
 		echo "openapi-check  PASS (local part; cross-repo check deferred to release)" >> "$(VERIFY_DIR)/steps.txt"; \
 	else echo "openapi-check  PASS" >> "$(VERIFY_DIR)/steps.txt"; fi

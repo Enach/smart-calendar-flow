@@ -10,6 +10,7 @@ You are modifying only the Paceday frontend in the existing repository. The fron
 - Do not add direct fetch calls inside React components.
 - Do not make localStorage the primary source of truth.
 - Do not replace real API behavior with mock data when the API is reachable.
+- Sign-in is provider-only (PAC-98): Google, Microsoft and company SSO, started by the server's `/api/auth/*` provider routes. The server has no password sign-in: no password or registration route (`/api/auth/login` and `/api/auth/register` do not exist) and no stored password. Never add a password field, a "Create account" password form or a call to such a route on the sign-in surfaces without an owner decision (PAC-98); `make verify` (signin-guard) fails if one comes back.
 - Never show invented data after a failure (PAC-83). A timeout, a network error, a non-JSON answer or a gateway error is shown as an error where the action happened ("Can't reach Paceday", with a manual retry for reads; "may or may not have been applied" for writes), never as mock or preview data and never as a fake success. The only made-up data is the explicit demo: non-production builds only, entered from the one "Explore a demo — made-up data" control on the sign-in screen, code under `src/demo/`, reached only through `src/api/demoGate.ts`.
 
 ## Existing frontend boundary

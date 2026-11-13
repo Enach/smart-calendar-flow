@@ -10,6 +10,7 @@ This repository is the Paceday web frontend connected to Lovable. Follow these i
 - Files in `src/api/generated/` are generated from that contract and are read-only. Never edit them and never hand-write a type or zod schema that duplicates one. `make openapi` regenerates them; `src/api/generated/README.md` explains the rest.
 - Do not add direct fetch or axios calls inside React components. Use the existing API client, adapters and React Query hooks.
 - Do not use localStorage as the primary source of truth.
+- Sign-in is provider-only (PAC-98): Google, Microsoft and company SSO, started by the server's `/api/auth/*` provider routes. The server has no password sign-in: no password or registration route (`/api/auth/login` and `/api/auth/register` do not exist) and no stored password. Never add a password field, a "Create account" password form or a call to such a route on the sign-in surfaces without an owner decision (PAC-98); `make verify` (signin-guard) fails if one comes back.
 - Never show invented data after a failure (PAC-83). A timeout, a network error, a non-JSON answer or a gateway error is shown as an error where the action happened ("Can't reach Paceday", with a manual retry for reads; "may or may not have been applied" for writes), never as mock or preview data and never as a fake success. The only made-up data is the explicit demo: non-production builds only, entered from the one "Explore a demo — made-up data" control on the sign-in screen, code under `src/demo/`, reached only through `src/api/demoGate.ts`.
 
 ## Lovable prompt workflow
@@ -26,7 +27,7 @@ Run this from the repository root after frontend changes:
 
 - make verify
 
-It runs lint, typecheck, design-check, openapi-check, test, demo-check and coverage in that order and stops at the first failure. `demo-check` (PAC-83) builds the web in production and development mode and fails if the production build contains any demo marker, or the development build lacks one. `openapi-check` fails when `src/api/generated/` no longer matches the backend contract: regenerate with `make openapi`, never by editing the files. The backend repository exposes the same `make verify`.
+It runs lint, typecheck, design-check, signin-guard, openapi-check, test, demo-check and coverage in that order and stops at the first failure. `signin-guard` (PAC-98) fails on a password route or a password input on the sign-in surfaces, and when the provider-only sign-in rule above disappears from this file or from `docs/lovable-prompts/00-global-context.md`. `demo-check` (PAC-83) builds the web in production and development mode and fails if the production build contains any demo marker, or the development build lacks one. `openapi-check` fails when `src/api/generated/` no longer matches the backend contract: regenerate with `make openapi`, never by editing the files. The backend repository exposes the same `make verify`.
 
 `design-check` runs the Impeccable design detector (deterministic rules for generic AI-generated UI: overused fonts, purple gradients, nested cards, gray text on colour, cramped padding, small touch targets, skipped headings and more) over `src/`. Findings that predate the gate are recorded in `.impeccable/baseline.json`; the gate fails only on new ones. When it fails:
 
