@@ -108,20 +108,26 @@ export function whoCanEnable(nc: Pick<AINotConfigured, "enablers">): string {
   return WHO_CAN_ENABLE;
 }
 
-/** The answer is turned on by confirming the organisation's AI (row 5). */
+/**
+ * The answer is turned on by confirming the organisation's AI: row 5, and
+ * since PAC-87 row 10 (a member on their own provider in an organisation that
+ * forbids personal keys), where confirming moves them onto the organisation's
+ * AI without changing their stored choice.
+ */
 export function asksConfirmation(nc: Pick<AINotConfigured, "reason">): boolean {
   return nc.reason === "organization_unconfirmed";
 }
 
 /**
- * The answer is turned on by choosing "Use my organisation's AI" (row 10, and
- * row 7 for a removed provider), which shows the notice and confirms.
+ * The answer is turned on by choosing "Use my organisation's AI", which shows
+ * the notice, confirms and then rewrites the stored choice: row 7 only (a
+ * removed provider in an organisation that allows personal keys). Row 10 is
+ * never offered this since PAC-87: it confirms without rewriting the choice
+ * (owner OQ-P2-2), and `personal_keys_forbidden` now only comes with the
+ * administrator as enabler (row 11).
  */
-export function offersOrganizationAI(nc: Pick<AINotConfigured, "reason" | "enablers">): boolean {
-  return (
-    nc.reason === "provider_removed_organization_available" ||
-    (nc.reason === "personal_keys_forbidden" && nc.enablers.includes("user"))
-  );
+export function offersOrganizationAI(nc: Pick<AINotConfigured, "reason">): boolean {
+  return nc.reason === "provider_removed_organization_available";
 }
 
 /**
@@ -135,6 +141,39 @@ export function organizationConsentText(provider?: KeyProvider): string {
     `Your text and meeting details (event titles, attendee emails, and the Slack and Notion excerpts used for meeting briefs) ` +
     `are sent to ${account}, which its administrators can access outside Paceday. Nothing is sent until you confirm.`
   );
+}
+
+/**
+ * PAC-87 (spec §3.5, §3.6): in the consent dialog of row 10, the member's own
+ * choice and saved key are kept, and used again if the organisation allows
+ * personal keys. `storedChoice` is the caller's Settings.llmProvider, which
+ * tells row 10 (a provider, or a removed one) from row 5 ("organization").
+ */
+export function keptChoiceText(storedChoice: LLMProvider | string): string {
+  const own = isKeyProvider(storedChoice) ? `Your own choice (${PROVIDER_LABELS[storedChoice]})` : "Your own choice";
+  return `${own} and any key you saved are kept, and are used again if your organisation allows personal keys.`;
+}
+
+/**
+ * PAC-87 row 9: the member's stored choice is their own (or a removed)
+ * provider, and their AI runs on the organisation's configuration because the
+ * organisation forbids personal keys and they confirmed it. Told apart from
+ * row 4 by the stored choice not being "organization" (contract §2).
+ */
+export function runsOnOrganizationAIInsteadOfOwnChoice(s: Pick<Settings, "llm_provider" | "ai_status">): boolean {
+  return (
+    s.ai_status?.configured === true &&
+    s.ai_status.configuration === "organization" &&
+    s.llm_provider !== "organization" &&
+    s.llm_provider !== ""
+  );
+}
+
+/** The Settings line for a member in row 9 (PAC-87 §3.6). */
+export function runsOnOrganizationAIText(provider?: KeyProvider): string {
+  return provider
+    ? `AI runs on your organisation's AI (${PROVIDER_LABELS[provider]}), which you confirmed.`
+    : "AI runs on your organisation's AI, which you confirmed.";
 }
 
 const OFF_PREFIX = "AI features are off: ";

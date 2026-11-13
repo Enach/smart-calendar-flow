@@ -9,12 +9,15 @@ import {
   PROVIDER_LABELS,
   WHO_CAN_ENABLE,
   asksConfirmation,
+  keptChoiceText,
   keyIsSetFor,
   noticeReason,
   offersOrganizationAI,
   organizationConsentText,
   providerOptions,
   providerSwitch,
+  runsOnOrganizationAIInsteadOfOwnChoice,
+  runsOnOrganizationAIText,
   whoCanEnable,
 } from "./aiProviders";
 
@@ -142,13 +145,47 @@ describe("who can turn AI on", () => {
     expect(whoCanEnable({ enablers: ["organization_admin"] })).toBe("An administrator of your organisation can turn them on.");
   });
 
-  it("offers to confirm in row 5, and the organisation's AI in rows 7 and 10 only", () => {
+  // PAC-87 (contract §2, PAC87-AC-16): row 10 arrives as
+  // organization_unconfirmed and is confirmed without rewriting the stored
+  // choice; "Use my organisation's AI" is offered for row 7 only. The former
+  // personal_keys_forbidden + [user] branch is gone (the backend never sends
+  // that pair any more; personal_keys_forbidden is row 11, [organization_admin]).
+  it("offers to confirm in rows 5 and 10, and the organisation's AI in row 7 only", () => {
     expect(asksConfirmation({ reason: "organization_unconfirmed" })).toBe(true);
     expect(asksConfirmation({ reason: "nothing_configured" })).toBe(false);
-    expect(offersOrganizationAI({ reason: "personal_keys_forbidden", enablers: ["user"] })).toBe(true);
-    expect(offersOrganizationAI({ reason: "personal_keys_forbidden", enablers: ["organization_admin"] })).toBe(false);
-    expect(offersOrganizationAI({ reason: "provider_removed_organization_available", enablers: ["user"] })).toBe(true);
-    expect(offersOrganizationAI({ reason: "organization_unconfirmed", enablers: ["user"] })).toBe(false);
+    expect(asksConfirmation({ reason: "personal_keys_forbidden" })).toBe(false);
+    expect(offersOrganizationAI({ reason: "provider_removed_organization_available" })).toBe(true);
+    expect(offersOrganizationAI({ reason: "organization_unconfirmed" })).toBe(false);
+    expect(offersOrganizationAI({ reason: "personal_keys_forbidden" })).toBe(false);
+  });
+
+  // PAC-87 §3.6 / PAC87-AC-15: the kept-choice sentence and the row-9 line
+  // never say read, reads or see.
+  it("the kept-choice sentence and the row-9 line name the provider and never read/reads/see", () => {
+    for (const choice of [...KEY_PROVIDERS, "unsupported"]) {
+      const kept = keptChoiceText(choice);
+      expect(kept).toMatch(/kept, and are used again if your organisation allows personal keys/);
+      expect(kept).not.toMatch(/\b(read|reads|see)\b/i);
+      if (choice !== "unsupported") expect(kept).toContain(`(${PROVIDER_LABELS[choice as (typeof KEY_PROVIDERS)[number]]})`);
+    }
+    for (const p of [...KEY_PROVIDERS, undefined]) {
+      const line = runsOnOrganizationAIText(p);
+      expect(line).toMatch(/^AI runs on your organisation's AI/);
+      expect(line).not.toMatch(/\b(read|reads|see)\b/i);
+      if (p) expect(line).toContain(PROVIDER_LABELS[p]);
+    }
+  });
+
+  // PAC-87 contract §2: row 9 is told apart from row 4 by the stored choice.
+  it("row 9 is the organisation's configured AI with a stored choice that is not the organisation", () => {
+    const org = { configured: true, configuration: "organization" as const, provider: "anthropic" as const, inOrganization: true };
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "openai", ai_status: org })).toBe(true);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "unsupported", ai_status: org })).toBe(true);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "organization", ai_status: org })).toBe(false);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "", ai_status: org })).toBe(false);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "openai", ai_status: { ...org, configuration: "own" } })).toBe(false);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "openai", ai_status: { configured: false, inOrganization: true } })).toBe(false);
+    expect(runsOnOrganizationAIInsteadOfOwnChoice({ llm_provider: "openai" })).toBe(false);
   });
 
   // Owner O-13 / P2-AC-26: the notice says the administrators can ACCESS the

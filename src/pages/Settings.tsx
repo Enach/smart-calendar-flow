@@ -22,7 +22,17 @@ import {
 } from "@/components/ui/alert-dialog";
 import type { Settings } from "@/api/types";
 import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
-import { KEY_HINTS, PROVIDER_LABELS, isKeyProvider, keyIsSetFor, providerOptions, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
+import {
+  KEY_HINTS,
+  PROVIDER_LABELS,
+  isKeyProvider,
+  keyIsSetFor,
+  providerOptions,
+  providerSwitch,
+  removeSavedKey,
+  runsOnOrganizationAIInsteadOfOwnChoice,
+  runsOnOrganizationAIText,
+} from "@/lib/aiProviders";
 import { OrgAIConsentDialog } from "@/components/OrgAIConsentDialog";
 import { OrganizationAISection } from "@/components/settings/OrganizationAISection";
 import { useOrganizationAI } from "@/hooks/useOrganizationAI";
@@ -132,6 +142,9 @@ export default function SettingsPage() {
   const orgAI = useOrganizationAI(inOrganization);
   const personalKeysForbidden = inOrganization && orgAI.data?.personalKeysAllowed === false;
   const [choosingOrgAI, setChoosingOrgAI] = useState(false);
+  // PAC-87 row 9: the stored choice is kept (shown disabled) while AI runs on
+  // the organisation's configuration the member confirmed.
+  const onOrgAIInsteadOfOwn = !!draft && runsOnOrganizationAIInsteadOfOwnChoice(draft);
   /** After a confirmation, the saved choice and AI status replace the draft's. */
   const refreshAIChoice = async () => {
     const fresh = (await refetch()).data;
@@ -624,6 +637,11 @@ export default function SettingsPage() {
               you saved for it are kept but not used.
             </p>
           )}
+          {onOrgAIInsteadOfOwn && (
+            <p className="mb-4 text-sm text-foreground" data-testid="ai-runs-on-org">
+              {runsOnOrganizationAIText(draft.ai_status?.provider)}
+            </p>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="AI provider">
               <select
@@ -786,7 +804,9 @@ export default function SettingsPage() {
               Test connection
             </button>
             <p className="text-[11px] text-muted-foreground">
-              Sends a small probe to the selected provider with the key above, or the key saved for it.
+              {onOrgAIInsteadOfOwn
+                ? "Sends a small probe to your organisation's AI, as your requests use it."
+                : "Sends a small probe to the selected provider with the key above, or the key saved for it."}
             </p>
           </div>
         </Section>

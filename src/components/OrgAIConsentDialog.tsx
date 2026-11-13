@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { apiErrorMessage } from "@/api/client";
 import type { OrganizationAIConfiguration } from "@/api/types";
 import { useConfirmOrganizationAI, useOrganizationAI } from "@/hooks/useOrganizationAI";
-import { PROVIDER_LABELS, organizationConsentText } from "@/lib/aiProviders";
+import { useSettings } from "@/hooks/useSettings";
+import { PROVIDER_LABELS, keptChoiceText, organizationConsentText } from "@/lib/aiProviders";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { effectOf } from "@/api/effects";
 
@@ -24,12 +25,21 @@ interface OrgAIConsentDialogProps {
  * on the organisation's account, tell them and ask once. The notice names the
  * organisation's provider and says its administrators can access the data;
  * nothing is sent before they confirm. Confirming names the version shown:
- * when an administrator changed the configuration meanwhile, nothing is
- * recorded and the current configuration is shown to confirm instead.
+ * when an administrator changed the provider meanwhile, nothing is recorded
+ * and the current configuration is shown to confirm instead.
+ *
+ * PAC-87 (spec §3.6): opened from row 10 (confirming alone while the stored
+ * choice is the member's own or a removed provider, i.e. Settings.llmProvider
+ * is not "organization"), it adds that their own choice and key are kept and
+ * used again if personal keys are allowed. Not when `choose` is set: that
+ * path rewrites the choice to the organisation.
  */
 export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: OrgAIConsentDialogProps) {
   const org = useOrganizationAI(open);
   const confirm = useConfirmOrganizationAI();
+  const settings = useSettings(open && !choose);
+  const storedChoice = settings.data?.llm_provider;
+  const keepsOwnChoice = !choose && storedChoice !== undefined && storedChoice !== "" && storedChoice !== "organization";
   const [changed, setChanged] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // The version displayed is the one confirmed (P2-AC-38): kept from the
@@ -83,11 +93,12 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
           <div className="space-y-3 text-sm text-foreground">
             {changed && (
               <p role="status" data-testid="org-ai-consent-changed" className="rounded-lg border border-border bg-muted/40 p-3">
-                An administrator changed your organisation's AI configuration after it was shown to you. Nothing was
+                An administrator changed your organisation's AI provider after it was shown to you. Nothing was
                 recorded. Review the current configuration below and confirm again.
               </p>
             )}
             <p data-testid="org-ai-consent-text">{organizationConsentText(provider)}</p>
+            {keepsOwnChoice && <p data-testid="org-ai-consent-kept">{keptChoiceText(storedChoice)}</p>}
             {problem && <p className="text-destructive">{problem}</p>}
           </div>
         )}
