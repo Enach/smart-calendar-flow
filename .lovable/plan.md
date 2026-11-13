@@ -59,7 +59,7 @@ src/
 
 ## Out of scope / untouched
 - `vite.config.ts`, `index.html`, Dockerfile, nginx config, backend code
-- No auth UI beyond connect/disconnect (OAuth handled by backend redirect)
+- Sign-in is provider-only (Google, Microsoft, company SSO), started by backend redirects; no password sign-in (PAC-98)
 
 ## Note on repo placement
 Files are created at `src/` (Lovable project root) so the preview works. When integrating into your repo, copy `src/` and the new package.json deps into your `frontend/` directory.
