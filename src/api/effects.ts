@@ -56,6 +56,8 @@ export const OPERATION_EFFECTS = {
   "schedulingLinksApi.deleteLink": "write",
   "schedulingLinksApi.leaveLink": "write",
   "schedulingLinksApi.listBookings": "read",
+  "schedulingLinksApi.listArchive": "read",
+  "schedulingLinksApi.getArchivedLink": "read",
   "schedulingLinksApi.getPublicLink": "read",
   "schedulingLinksApi.getPublicSlots": "read",
   "schedulingLinksApi.bookSlot": "booking",

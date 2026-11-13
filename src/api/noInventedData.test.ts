@@ -74,6 +74,8 @@ const OPERATION_SAMPLES: Record<string, { args: unknown[] }> = {
   "schedulingLinksApi.deleteLink": { args: ["l1"] },
   "schedulingLinksApi.leaveLink": { args: ["l1"] },
   "schedulingLinksApi.listBookings": { args: ["l1"] },
+  "schedulingLinksApi.listArchive": { args: [] },
+  "schedulingLinksApi.getArchivedLink": { args: ["l1"] },
   "schedulingLinksApi.getPublicLink": { args: ["intro-chat"] },
   "schedulingLinksApi.getPublicSlots": { args: ["intro-chat", { date: "2030-03-04", duration: 30 }] },
   "schedulingLinksApi.bookSlot": { args: ["intro-chat", { start: "2030-03-04T09:00:00Z", duration_minutes: 30, name: "Z", email: "z@co.com" }] },

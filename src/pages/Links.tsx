@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays } from "lucide-react";
+import { Link2, Pencil, Trash2, Copy, Check, Plus, LogOut, Sparkles, Hourglass, Infinity as InfinityIcon, Repeat, Zap, AlertCircle, RotateCcw, CalendarDays, Archive } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
@@ -8,8 +9,9 @@ import { Switch } from "@/components/ui/switch";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { LinkEditDrawer } from "@/components/links/LinkEditDrawer";
 import { LinkBookingsDialog } from "@/components/links/LinkBookingsDialog";
+import { ArchiveDeleteDialog } from "@/components/links/ArchiveDeleteDialog";
 import { schedulingLinkKeys, schedulingLinksApi, publicBookingUrl, publicBookingDisplayUrl } from "@/api/schedulingLinks";
-import { apiErrorMessage } from "@/api/client";
+import { apiErrorMessage, isApiHttpError } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { SchedulingLink } from "@/api/types";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
@@ -112,7 +114,10 @@ function LinkCard({
 }) {
 
   return (
-    <article className="rounded-xl border border-border bg-card p-5 shadow-sm transition hover:border-foreground/15">
+    <article
+      data-testid={`link-row-${link.slug}`}
+      className="rounded-xl border border-border bg-card p-5 shadow-sm transition hover:border-foreground/15"
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1 space-y-3">
           <div>
@@ -290,6 +295,17 @@ export default function LinksPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingLink, setEditingLink] = useState<SchedulingLink | null>(null);
   const [bookingsLink, setBookingsLink] = useState<SchedulingLink | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SchedulingLink | null>(null);
+
+  // PAC-40 (contract section 2.4): the archive read carries the server's
+  // BookerErasurePolicy, which the delete confirmation's copy is built from.
+  // Prefetched with the page; while it loads or when it fails, the copy
+  // promises no erasure.
+  const { data: archive, error: archiveError } = useQuery({
+    queryKey: schedulingLinkKeys.archive,
+    queryFn: () => schedulingLinksApi.listArchive(),
+  });
+  const erasurePolicy = archiveError ? undefined : archive?.booker_erasure;
 
   const {
     data,
@@ -312,6 +328,15 @@ export default function LinksPage() {
     qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
   };
 
+  // PAC-40: a link deleted elsewhere (another tab, a co-owner's session) is
+  // 404 on every live path. Say so and refresh, instead of a bare "not found".
+  const isGone = (e: unknown) => isApiHttpError(e) && e.status === 404;
+  const linkGone = () => {
+    toast.info("This link no longer exists. The list has been refreshed.");
+    invalidateAll();
+    qc.invalidateQueries({ queryKey: schedulingLinkKeys.archive });
+  };
+
   const acceptInvite = useMutation({
     mutationFn: (linkId: string) => schedulingLinksApi.acceptInvite(linkId),
     onSuccess: () => {
@@ -332,11 +357,16 @@ export default function LinksPage() {
 
   const deleteLink = useMutation({
     mutationFn: (id: string) => schedulingLinksApi.deleteLink(id),
-    onSuccess: () => {
-      toast.info("Link deleted");
+    onSuccess: (_void, id) => {
+      toast.info("Link deleted. It is in your archive.");
+      // Gone from the list at once, whatever the refetch below answers.
+      qc.setQueryData<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(schedulingLinkKeys.links, (prev) =>
+        prev ? { owned: prev.owned.filter((l) => l.id !== id), shared: prev.shared.filter((l) => l.id !== id) } : prev,
+      );
       invalidateAll();
+      qc.invalidateQueries({ queryKey: schedulingLinkKeys.archive });
     },
-    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.deleteLink"))),
+    onError: (e) => (isGone(e) ? linkGone() : toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.deleteLink")))),
   });
 
   const leaveLink = useMutation({
@@ -355,7 +385,7 @@ export default function LinksPage() {
       toast.success(link.active ? "Link activated" : "Link paused");
       invalidateAll();
     },
-    onError: (e) => toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.updateLink"))),
+    onError: (e) => (isGone(e) ? linkGone() : toast.error(apiErrorMessage(e, effectOf("schedulingLinksApi.updateLink")))),
   });
 
   const pendingInviteId =
@@ -374,9 +404,7 @@ export default function LinksPage() {
   }
 
   function handleDelete(link: SchedulingLink) {
-    if (confirm(`Delete "${link.title}"? People with this link will no longer be able to book.`)) {
-      deleteLink.mutate(link.id);
-    }
+    setDeleteTarget(link);
   }
   function handleLeave(link: SchedulingLink) {
     if (confirm(`Leave "${link.title}"? Your availability will no longer be combined into this link.`)) {
@@ -399,9 +427,16 @@ export default function LinksPage() {
               Share a single URL. People book a time that works for you and any co-hosts you add.
             </p>
           </div>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" /> New link
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline">
+              <Link to="/app/links/archive" data-testid="links-archive-link">
+                <Archive className="h-4 w-4" aria-hidden="true" /> Deleted links
+              </Link>
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4" /> New link
+            </Button>
+          </div>
         </header>
 
         <div className="mb-6">
@@ -464,6 +499,15 @@ export default function LinksPage() {
       </main>
 
       <LinkEditDrawer open={drawerOpen} onOpenChange={setDrawerOpen} link={editingLink} />
+      <ArchiveDeleteDialog
+        link={deleteTarget}
+        policy={erasurePolicy}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        onConfirm={(link) => {
+          setDeleteTarget(null);
+          deleteLink.mutate(link.id);
+        }}
+      />
       <LinkBookingsDialog
         open={!!bookingsLink}
         onOpenChange={(o) => !o && setBookingsLink(null)}
