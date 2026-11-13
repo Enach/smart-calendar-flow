@@ -112,11 +112,15 @@ describe("AuthDialog sign-in routing (PAC-35)", () => {
     expect(fetchMock.mock.calls.some(([u, init]) => String(u).includes("/connect") || init?.method === "POST")).toBe(false);
   });
 
-  it("shows the password step for a generic answer", async () => {
+  // PAC-98 (replaces "shows the password step for a generic answer"): Paceday
+  // has no password sign-in; a generic answer is a personal address and gets
+  // the personal-address step. The full step is pinned in AuthDialog.pac98.test.tsx.
+  it("shows the personal-address step, never a password step, for a generic answer", async () => {
     serve({ type: "generic" });
     renderDialog();
-    await submitEmail("carol@gmail.com");
-    expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+    await submitEmail("carol@yahoo.com");
+    expect(await screen.findByTestId("auth-personal-step")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
     expect(assigned).toHaveLength(0);
   });
 });
