@@ -22,17 +22,18 @@ SELF := $(MAKE) --no-print-directory -f $(ROOT)/Makefile
 REQUIRE_DEPS = @test -d "$(ROOT)/node_modules" || { echo "node_modules missing — run: npm install" >&2; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help lint typecheck design-check design-baseline test coverage openapi openapi-check verify verify-banner verify-summary
+.PHONY: help lint typecheck design-check design-baseline test coverage demo-check openapi openapi-check openapi-check-full verify verify-banner verify-summary
 
 help:
 	@echo "Paceday (web repo) — targets"
-	@echo "  verify         lint, typecheck, design-check, openapi-check, test, coverage — fail-fast, prints a PR-pasteable summary"
+	@echo "  verify         lint, typecheck, design-check, openapi-check, test, demo-check, coverage — fail-fast, prints a PR-pasteable summary"
 	@echo "  lint           eslint (src/api/generated is excluded on purpose)"
 	@echo "  typecheck      tsc against the generated contract types"
 	@echo "  design-check   Impeccable detector over src/, ratcheted against .impeccable/baseline.json"
 	@echo "  design-baseline  rewrite the baseline from the current scan (new entries need a PAC issue)"
 	@echo "  test           vitest run"
 	@echo "  coverage       vitest run --coverage; the floor (ratchet toward 70%) is in vitest.config.ts"
+	@echo "  demo-check     PAC-83: production build has no demo, development build has every demo marker"
 	@echo "  openapi        regenerate src/api/generated from $(CONTRACT)"
 	@echo "  openapi-check  the same, as a gate: fails on any drift"
 	@echo ""
@@ -69,13 +70,40 @@ coverage:
 	$(REQUIRE_DEPS)
 	cd $(ROOT) && npm run coverage
 
+# PAC-83 (owner OQ-1 (c), AC-30): the demo exists only in non-production
+# builds. Builds both modes into temp dirs and searches them for the markers
+# pinned in contracts/features/PAC-83.md §4.3.
+demo-check:
+	$(REQUIRE_DEPS)
+	cd $(ROOT) && node scripts/check-demo-absent.mjs
+
 ## Regenerate the committed types and zod schemas from the api repo's bundle
 openapi:
 	$(REQUIRE_DEPS)
 	CONTRACT="$(CONTRACT)" $(ROOT)/scripts/openapi-gen.sh
 
 ## Gate: the committed generated files match the contract byte for byte
+# Every byte of this check compares this repo with the api repo's bundle, so
+# OPENAPI_CROSS_REPO=skip (set by ci.yml on pushes to main) leaves only the
+# local part: the generated files are present. A paired contract change merges
+# api first and web minutes later, so the two mains disagree in between by
+# design; the api repo's release.yml runs the full check on the exact pair of
+# main SHAs it would publish, and does not publish a pair that fails. PRs keep
+# the full check.
+OPENAPI_CROSS_REPO ?= check
+GENERATED := types.ts schemas.ts schemas.types.d.ts
 openapi-check:
+	@if [ "$(OPENAPI_CROSS_REPO)" = "skip" ]; then \
+		for f in $(GENERATED); do \
+			test -f "$(ROOT)/src/api/generated/$$f" || { echo "FAIL: src/api/generated/$$f is missing; run \`make openapi\` and commit it" >&2; exit 1; }; \
+		done; \
+		echo "OK: src/api/generated present (local part only)"; \
+		echo "::notice title=openapi-check::cross-repo half (generated types vs the api bundle) deferred to the api repo's release.yml (OPENAPI_CROSS_REPO=skip)"; \
+	else \
+		$(SELF) openapi-check-full; \
+	fi
+
+openapi-check-full:
 	$(REQUIRE_DEPS)
 	CONTRACT="$(CONTRACT)" $(ROOT)/scripts/openapi-gen.sh --check
 
@@ -87,8 +115,11 @@ verify:
 	@$(SELF) lint          && echo "lint           PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) typecheck     && echo "typecheck      PASS" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) design-check  && echo "design-check   PASS (impeccable, ratcheted)" >> "$(VERIFY_DIR)/steps.txt"
-	@$(SELF) openapi-check && echo "openapi-check  PASS" >> "$(VERIFY_DIR)/steps.txt"
+	@$(SELF) openapi-check && if [ "$(OPENAPI_CROSS_REPO)" = "skip" ]; then \
+		echo "openapi-check  PASS (local part; cross-repo check deferred to release)" >> "$(VERIFY_DIR)/steps.txt"; \
+	else echo "openapi-check  PASS" >> "$(VERIFY_DIR)/steps.txt"; fi
 	@$(SELF) test          && echo "test           PASS" >> "$(VERIFY_DIR)/steps.txt"
+	@$(SELF) demo-check    && echo "demo-check     PASS (no demo in the production build)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) coverage      && echo "coverage       PASS (ratchet floor in vitest.config.ts, target 70%)" >> "$(VERIFY_DIR)/steps.txt"
 	@$(SELF) verify-summary
 

@@ -10,12 +10,12 @@ export type HealthState =
 /**
  * Polls /api/health every `intervalMs` ms (default 30s).
  *
- * Three outcomes:
- *  - healthy   → backend answered 2xx, preview mode off.
- *  - offline   → network failure / timeout / SPA HTML, preview mode on.
- *  - unhealthy → backend answered an HTTP error (500/502/503...). Preview mode
- *                stays off, cached real data is kept, and the caller shows an
- *                explicit error with a Retry action.
+ * Three outcomes (PAC-83: none of them changes what data calls return):
+ *  - healthy   → backend answered 2xx.
+ *  - offline   → no answer within HEALTH_PROBE_BOUND_MS, network failure,
+ *                non-JSON or gateway answer: the "can't reach" banner.
+ *  - unhealthy → backend answered an HTTP error with a JSON body: cached real
+ *                data is kept and the caller shows an explicit error with Retry.
  */
 export function useHealthPing(intervalMs: number = 30_000) {
   const [state, setState] = useState<HealthState>({ status: "unknown", error: null });

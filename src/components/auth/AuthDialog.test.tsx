@@ -10,7 +10,7 @@ vi.hoisted(() => {
 });
 
 vi.mock("@/contexts/useAuth", () => ({
-  useAuth: () => ({ loginDemo: vi.fn(), refresh: vi.fn() }),
+  useAuth: () => ({ enterDemo: vi.fn(), refresh: vi.fn() }),
 }));
 
 import { AuthDialog } from "./AuthDialog";
@@ -91,6 +91,25 @@ describe("AuthDialog sign-in routing (PAC-35)", () => {
     renderDialog();
     await submitEmail("bob@example.com");
     await waitFor(() => expect(assigned).toEqual(["https://api.paceday.test/api/auth/google?login_hint=bob%40example.com"]));
+  });
+
+  // PAC-71 AC-32: the public sign-in dialog's buttons keep the public sign-in
+  // start (a GET navigation); they never start a connect.
+  it.each([
+    ["Google", "https://api.paceday.test/api/auth/google"],
+    ["Microsoft", "https://api.paceday.test/api/auth/microsoft"],
+  ])("the %s button still navigates to the public sign-in start", async (name, start) => {
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/integrations/availability")) {
+        return jsonResponse({ google: { available: true }, microsoft: { available: true } });
+      }
+      return jsonResponse({ status: "ok" });
+    });
+    renderDialog();
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(`continue with ${name}`, "i") }));
+    await waitFor(() => expect(assigned).toEqual([start]));
+    expect(fetchMock.mock.calls.some(([u, init]) => String(u).includes("/connect") || init?.method === "POST")).toBe(false);
   });
 
   it("shows the password step for a generic answer", async () => {

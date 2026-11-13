@@ -1,0 +1,74 @@
+# CI on GitHub-hosted runners: this repo's gate, `make verify`.
+# The api repo's release workflow publishes a frontend image only for a main
+# commit on which this job ("verify") passed.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Paired PRs (factory: the api PR and its web PR land together): use the
+      # api branch naming the same PAC ticket as this branch, else main.
+      - name: Paired api branch
+        id: pair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          ref=main
+          t=$(grep -oiE 'pac-[0-9]+' <<<"$BRANCH" | head -1 | tr 'A-Z' 'a-z' || true)
+          if [ -n "$t" ]; then
+            m=$(gh api --paginate repos/Enach/clockwise-like/branches --jq '.[].name' | grep -iE "(^|[^a-z0-9])$t([^0-9]|$)" || true)
+            # several (factory/pac-N-spec, impl/pac-N-api...): keep this branch's prefix (impl/)
+            if [ "$(printf '%s\n' "$m" | grep -c .)" -gt 1 ] && [[ $BRANCH == */* ]]; then
+              m=$(printf '%s\n' "$m" | grep -F "${BRANCH%%/*}/" || true)
+            fi
+            if [ "$(printf '%s\n' "$m" | grep -c .)" -eq 1 ]; then ref=$m
+            elif printf '%s\n' "$m" | grep -qxF "$BRANCH"; then ref=$BRANCH
+            elif [ -n "$m" ]; then echo "::warning::several api branches for $t: $(echo $m); using main"; fi
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "api ref: $ref"
+
+      # The contract lives in the api repo (CONTRACT ?= ../clockwise-like/...).
+      - uses: actions/checkout@v4
+        with:
+          repository: Enach/clockwise-like
+          ref: ${{ steps.pair.outputs.ref }}
+          path: api
+      - run: mv api ../clockwise-like
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --legacy-peer-deps
+
+      # Pushes to main skip the cross-repo half of openapi-check: a paired
+      # contract change merges api first and web minutes later, and in between
+      # the two mains disagree by design. The api repo's release.yml runs that check on the
+      # exact pair of main SHAs it would publish. PRs keep the full check.
+      - name: make verify
+        env:
+          OPENAPI_CROSS_REPO: ${{ github.event_name == 'push' && 'skip' || 'check' }}
+        run: make verify
+
+      - name: Verify summary
+        if: always()
+        run: cat .verify/steps.txt 2>/dev/null || true

@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, setMockMode } from "./client";
+import { ApiHttpError } from "./client";
 import type { components } from "./generated/types";
 import { normalizeInvite, teamInvitesApi, teamKeys, teamsApi } from "./teams";
 
@@ -26,7 +26,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 beforeEach(() => {
-  setMockMode(false);
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();

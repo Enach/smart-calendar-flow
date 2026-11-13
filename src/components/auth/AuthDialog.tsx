@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Mail, ArrowRight, ArrowLeft, AlertCircle } from "lucide-react";
 import { z } from "zod";
@@ -15,8 +15,12 @@ import {
   SsoGlyph,
 } from "@/components/auth/ProviderButton";
 import { PacedayMark } from "@/components/auth/AuthLayout";
+import { readRememberedSignInEmail, rememberSignInEmail } from "@/components/auth/rememberedEmail";
 
 import { apiFetch, apiUrl, checkApiAvailability, type ApiError } from "@/lib/api";
+import { ApiUnreachableError, apiErrorMessage, isAnswerLost } from "@/api/client";
+import { ApiErrorNotice } from "@/components/ApiErrorNotice";
+import type { AuthUser } from "@/contexts/AuthContext";
 import type { SsoDetectResponse } from "@/api/generated/schemas";
 import { useAuth } from "@/contexts/useAuth";
 import { useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
@@ -26,23 +30,49 @@ interface AuthDialogProps {
   onOpenChange: (open: boolean) => void;
   /** "signin" or "signup" — only changes copy, not behaviour. */
   mode?: "signin" | "signup";
+  /**
+   * PAC-97 AC-25: opened from a sign-in failure notice. When this tab
+   * remembers the email typed earlier, the dialog starts at the provider
+   * choice for it; otherwise it opens as usual.
+   */
+  offerSwitch?: boolean;
 }
+
+type Provider = "google" | "microsoft";
+
+/**
+ * PAC-83 (owner OQ-1 (c), contract §4.4): the one demo entry, in a
+ * non-production build only, on the initial view only — never after an error.
+ */
+const DemoEntry = __PACEDAY_DEMO_BUILD__ ? lazy(() => import("@/demo/DemoEntry")) : null;
+
+/** A sign-in step that could not reach Paceday, and how to try it again. */
+type SignInFailure = { error: unknown; retry: () => void };
 
 const emailSchema = z.string().trim().email("Enter a valid email address.").max(255);
 
-export function AuthDialog({ open, onOpenChange, mode = "signin" }: AuthDialogProps) {
+export function AuthDialog({ open, onOpenChange, mode = "signin", offerSwitch = false }: AuthDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[440px] gap-0 border-border bg-background p-0">
-        <AuthDialogBody mode={mode} onClose={() => onOpenChange(false)} />
+        <AuthDialogBody mode={mode} offerSwitch={offerSwitch} onClose={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
 }
 
-function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose: () => void }) {
-  const { loginDemo, refresh } = useAuth();
-  const { data: availability } = useIntegrationAvailability();
+function AuthDialogBody({
+  mode,
+  offerSwitch,
+  onClose,
+}: {
+  mode: "signin" | "signup";
+  offerSwitch: boolean;
+  onClose: () => void;
+}) {
+  const { enterDemo, refresh } = useAuth();
+  const availabilityQuery = useIntegrationAvailability();
+  const availability = availabilityQuery.data;
   const navigate = useNavigate();
 
   /** Where to land after a successful login. Honours ?redirect= on the URL. */
@@ -57,30 +87,53 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
     return "/app";
   };
 
-  const [step, setStep] = useState<"discover" | "generic">("discover");
-  const [email, setEmail] = useState("");
+  // Read once, when the dialog opens (its body mounts on every open).
+  const [remembered] = useState<string | null>(() => (offerSwitch ? readRememberedSignInEmail() : null));
+  const [step, setStep] = useState<"discover" | "choose" | "generic">(remembered ? "choose" : "discover");
+  const [email, setEmail] = useState(remembered ?? "");
   const [emailError, setEmailError] = useState<string | null>(null);
   const [pending, setPending] = useState<null | "google" | "microsoft" | "email">(null);
+  /**
+   * PAC-83 §3.4: Paceday could not be reached. The dialog says so with a
+   * retry; nothing starts or offers the demo from here.
+   */
+  const [failure, setFailure] = useState<SignInFailure | null>(null);
+  // The step that held focus is hidden while the failure shows: move focus to
+  // the failure heading so keyboard and screen-reader users land on it.
+  const failureHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (failure) failureHeading.current?.focus();
+  }, [failure]);
 
-  /** Drop into demo mode and close — used when the API is unreachable. */
-  const fallbackDemo = () => {
-    loginDemo();
+  const onDemoStarted = (demoUser: AuthUser) => {
+    enterDemo(demoUser);
     onClose();
     navigate(resolveRedirect(), { replace: true });
   };
 
-  const onSocial = async (provider: "google" | "microsoft") => {
+  /**
+   * Starts the public sign-in with a provider. The top buttons send no hint
+   * (PAC-71 AC-32); the provider choice (PAC-97) sends the typed email.
+   */
+  const onSocial = async (provider: Provider, loginHint?: string) => {
+    setFailure(null);
     setPending(provider);
     const ok = await checkApiAvailability();
     if (!ok) {
-      fallbackDemo();
+      setPending(null);
+      setFailure({
+        error: new ApiUnreachableError("network"),
+        retry: () => void onSocial(provider, loginHint),
+      });
       return;
     }
-    window.location.href = apiUrl(`/api/auth/${provider}`);
+    const query = loginHint ? `?login_hint=${encodeURIComponent(loginHint)}` : "";
+    window.location.href = apiUrl(`/api/auth/${provider}${query}`);
   };
 
-  const onEmailContinue = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onEmailContinue = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    setFailure(null);
     const parsed = emailSchema.safeParse(email);
     if (!parsed.success) {
       setEmailError(parsed.error.issues[0]?.message ?? "Invalid email");
@@ -88,32 +141,48 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
     }
     setEmailError(null);
     setPending("email");
+    // PAC-97 D-10: kept for this tab only, so a failed provider sign-in can
+    // offer the other provider with the same hint.
+    rememberSignInEmail(parsed.data);
 
     try {
       const res = await apiFetch<SsoDetectResponse>("/api/auth/detect", {
         method: "POST",
         json: { email: parsed.data },
       });
-      if (res.type === "google") {
+      const type = res?.type;
+      if (type === "google") {
         window.location.href = apiUrl(`/api/auth/google?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
-      if (res.type === "microsoft") {
+      if (type === "microsoft") {
         window.location.href = apiUrl(`/api/auth/microsoft?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
-      if (res.type === "sso" && res.redirect_url) {
+      if (type === "sso" && res.redirect_url) {
         // redirect_url is a path on the API origin, not this app's (PAC-35,
         // API-010); the typed email goes with it as the IdP's login hint.
         window.location.href = apiUrl(`${res.redirect_url}?login_hint=${encodeURIComponent(parsed.data)}`);
         return;
       }
-      // generic → go to password step
-      setStep("generic");
       setPending(null);
-    } catch {
-      // Network error or backend down → silent demo fallback per T-26.
-      fallbackDemo();
+      if (type === "generic" || type === "sso") {
+        // generic (a consumer or unparseable address) → the password step, as
+        // today. An sso answer without its redirect path also lands here, as
+        // today.
+        setStep("generic");
+        return;
+      }
+      // PAC-97: "choose", or any value this web does not know (AC-22): the
+      // user picks the provider. Never the password step for these.
+      setStep("choose");
+    } catch (err) {
+      setPending(null);
+      if (isAnswerLost(err)) {
+        setFailure({ error: err, retry: () => void onEmailContinue() });
+      } else {
+        setEmailError(apiErrorMessage(err));
+      }
     }
   };
 
@@ -124,8 +193,29 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
         <span className="font-serif text-base leading-none tracking-tight">Paceday</span>
       </div>
 
+      {failure && (
+        <div className="mt-6 space-y-3">
+          <h2
+            ref={failureHeading}
+            tabIndex={-1}
+            data-testid="sign-in-failure-heading"
+            className="font-serif text-2xl leading-tight tracking-tight text-foreground focus:outline-none"
+          >
+            Can't sign in right now
+          </h2>
+          <ApiErrorNotice error={failure.error} effect="read" onRetry={failure.retry} />
+          <Button type="button" variant="ghost" size="sm" onClick={() => setFailure(null)}>
+            <ArrowLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            Back
+          </Button>
+        </div>
+      )}
+
+      <div hidden={failure !== null}>
       {step === "discover" ? (
         <DiscoverStep
+          showDemoEntry={failure === null}
+          onDemoStarted={onDemoStarted}
           mode={mode}
           email={email}
           setEmail={(v) => {
@@ -139,6 +229,19 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
           onSocial={onSocial}
           onEmailContinue={onEmailContinue}
         />
+      ) : step === "choose" ? (
+        <ChooseStep
+          mode={mode}
+          email={email}
+          availabilityLoading={availabilityQuery.isPending}
+          availabilityError={availabilityQuery.isError ? availabilityQuery.error : null}
+          onRetryAvailability={() => void availabilityQuery.refetch()}
+          googleAvailable={availability?.google.available === true}
+          microsoftAvailable={availability?.microsoft.available === true}
+          pending={pending}
+          onPick={(provider) => void onSocial(provider, email.trim())}
+          onBack={() => setStep("discover")}
+        />
       ) : (
         <GenericStep
           email={email}
@@ -148,9 +251,10 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
             onClose();
             navigate(resolveRedirect(), { replace: true });
           }}
-          onApiDown={fallbackDemo}
+          onApiDown={(error, retry) => setFailure({ error, retry })}
         />
       )}
+      </div>
     </div>
   );
 }
@@ -158,6 +262,8 @@ function AuthDialogBody({ mode, onClose }: { mode: "signin" | "signup"; onClose:
 /* ---------- step 1: discover ---------- */
 
 function DiscoverStep({
+  showDemoEntry,
+  onDemoStarted,
   mode,
   email,
   setEmail,
@@ -168,13 +274,15 @@ function DiscoverStep({
   googleAvailable,
   microsoftAvailable,
 }: {
+  showDemoEntry: boolean;
+  onDemoStarted: (user: AuthUser) => void;
   mode: "signin" | "signup";
   email: string;
   setEmail: (v: string) => void;
   emailError: string | null;
   pending: null | "google" | "microsoft" | "email";
-  onSocial: (p: "google" | "microsoft") => void;
-  onEmailContinue: (e: React.FormEvent) => void;
+  onSocial: (p: Provider) => void;
+  onEmailContinue: (e?: React.FormEvent) => void;
   googleAvailable: boolean;
   microsoftAvailable: boolean;
 }) {
@@ -262,7 +370,123 @@ function DiscoverStep({
         <SsoGlyph />
         Single sign-on (SSO) is detected automatically from your email domain.
       </p>
+
+      {__PACEDAY_DEMO_BUILD__ && showDemoEntry && DemoEntry && (
+        <Suspense fallback={null}>
+          <DemoEntry onStarted={onDemoStarted} />
+        </Suspense>
+      )}
     </>
+  );
+}
+
+/* ---------- step 1b: choose a provider (PAC-97) ---------- */
+
+/**
+ * Detection could not tell which provider the domain uses (`choose`, or a
+ * value this web does not know). Offers the providers this deployment has,
+ * each carrying the typed email as the login hint; nothing navigates until
+ * one is picked. Never shows a password field.
+ */
+function ChooseStep({
+  mode,
+  email,
+  availabilityLoading,
+  availabilityError,
+  onRetryAvailability,
+  googleAvailable,
+  microsoftAvailable,
+  pending,
+  onPick,
+  onBack,
+}: {
+  mode: "signin" | "signup";
+  email: string;
+  availabilityLoading: boolean;
+  availabilityError: unknown;
+  onRetryAvailability: () => void;
+  googleAvailable: boolean;
+  microsoftAvailable: boolean;
+  pending: null | "google" | "microsoft" | "email";
+  onPick: (p: Provider) => void;
+  onBack: () => void;
+}) {
+  // The step replaces the one that held focus: land keyboard and
+  // screen-reader users on its heading.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus();
+  }, []);
+  const noneAvailable = !availabilityLoading && availabilityError === null && !googleAvailable && !microsoftAvailable;
+
+  return (
+    <div data-testid="auth-choose-step">
+      <h2
+        ref={heading}
+        tabIndex={-1}
+        className="mt-6 font-serif text-2xl leading-tight tracking-tight text-foreground focus:outline-none"
+      >
+        {mode === "signup" ? "Choose how to sign up" : "Choose how to sign in"}
+      </h2>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Paceday can't tell which provider{" "}
+        <span data-testid="auth-choose-email" className="font-medium text-foreground">
+          {email}
+        </span>{" "}
+        uses. Pick the one your company signs in with.
+      </p>
+
+      <div className="mt-6 space-y-2.5">
+        {availabilityLoading && (
+          <div className="flex justify-center py-2">
+            <Spinner size="xs" />
+          </div>
+        )}
+        {availabilityError !== null && (
+          <ApiErrorNotice error={availabilityError} effect="read" onRetry={onRetryAvailability} />
+        )}
+        {googleAvailable && (
+          <ProviderButton
+            icon={<GoogleGlyph />}
+            label={mode === "signup" ? "Sign up with Google" : "Continue with Google"}
+            onClick={() => onPick("google")}
+            disabled={pending !== null}
+            testId="auth-choose-google"
+          />
+        )}
+        {microsoftAvailable && (
+          <ProviderButton
+            icon={<MicrosoftGlyph />}
+            label={mode === "signup" ? "Sign up with Microsoft" : "Continue with Microsoft"}
+            onClick={() => onPick("microsoft")}
+            disabled={pending !== null}
+            testId="auth-choose-microsoft"
+          />
+        )}
+        {noneAvailable && (
+          <p
+            data-testid="auth-choose-unavailable"
+            className="flex items-start gap-2 rounded-md border border-border bg-card/60 p-3 text-sm text-foreground"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            Sign-in with Google or Microsoft is not available on this deployment.
+          </p>
+        )}
+      </div>
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="mt-6"
+        onClick={onBack}
+        disabled={pending !== null}
+        data-testid="auth-choose-back"
+      >
+        <ArrowLeft className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+        Use a different email
+      </Button>
+    </div>
   );
 }
 
@@ -277,7 +501,7 @@ function GenericStep({
   email: string;
   onBack: () => void;
   onSuccess: () => void;
-  onApiDown: () => void;
+  onApiDown: (error: unknown, retry: () => void) => void;
 }) {
   const [tab, setTab] = useState<"signin" | "signup">("signin");
   const [name, setName] = useState("");
@@ -285,8 +509,8 @@ function GenericStep({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (password.length < 6) {
       setError("Password must be at least 6 characters.");
       return;
@@ -308,14 +532,15 @@ function GenericStep({
       onSuccess();
     } catch (e) {
       const err = e as ApiError;
+      if (isAnswerLost(e)) {
+        // PAC-83: never a demo — the dialog says Paceday can't be reached.
+        onApiDown(e, () => void submit());
+        return;
+      }
       if (err?.status === 401) {
         setError("Incorrect email or password.");
       } else if (err?.status === 404) {
         setError("No account found — try creating one.");
-      } else if (err?.status == null) {
-        // No status → network failure → silent demo fallback.
-        onApiDown();
-        return;
       } else {
         setError("Something went wrong. Please try again.");
       }

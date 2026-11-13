@@ -4,6 +4,7 @@ import { AlertCircle, Loader2, Plus, RotateCcw, Trash2, Video, ExternalLink, Set
 import { api, apiErrorMessage, isValidConferenceUrl } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceLink, ConferenceProvider } from "@/api/types";
+import { effectOf } from "@/api/effects";
 
 const PROVIDER_META: Record<ConferenceProvider, { label: string; emoji: string; cls: string }> = {
   google_meet: { label: "Google Meet", emoji: "🟢", cls: "text-success" },
@@ -63,7 +64,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success(`${PROVIDER_META[provider].label} link added`);
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, effectOf("api.addConference"));
       toast.error(message);
       setLinkError({ message, retry: () => add(provider, url) });
     } finally {
@@ -82,7 +83,7 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
       qc.invalidateQueries({ queryKey: ["events"] });
       toast.success("Meeting link removed");
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, effectOf("api.removeConference"));
       toast.error(message);
       setLinkError({ message, retry: remove });
     } finally {

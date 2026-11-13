@@ -3,7 +3,6 @@ import type {
   AuditEntry,
   AuthStatus,
   CalendarEvent,
-  CalendarProvider,
   ConferenceLink,
   ConferenceProvider,
   ConferenceProviderStatus,
@@ -17,6 +16,7 @@ import type {
   ParseResult,
   PersonalCalendar,
   PersonalCalendarType,
+  ProviderDisconnectResult,
   Room,
   Settings,
   SuggestedSlot,
@@ -65,7 +65,10 @@ export interface ApiPort {
 
   authStatus(): Promise<AuthStatus>;
   integrationAvailability(): Promise<IntegrationAvailability>;
-  authConnectUrl(provider?: CalendarProvider): string;
+  /** PAC-71: POST the connect start; resolves to the provider's authorize_url. */
+  startConnect(provider?: "google" | "outlook"): Promise<string>;
+  /** PAC-71: PATCH /api/settings with only `calendarProvider`, before a connect that changes the work calendar. */
+  saveWorkCalendar(provider: "google" | "outlook"): Promise<Settings>;
   authDisconnect(): Promise<void>;
 
   getSettings(): Promise<Settings>;
@@ -110,5 +113,8 @@ export interface ApiPort {
   removeConference(eventId: string): Promise<void>;
   conferenceProviders(): Promise<ConferenceProviderStatus[]>;
   zoomConnectUrl(): string;
-  zoomDisconnect(): Promise<void>;
+  /** PAC-67: answers what became of the grant at Zoom. */
+  zoomDisconnect(): Promise<ProviderDisconnectResult>;
+  /** PAC-67: POST /api/auth/microsoft/disconnect (the session is kept). */
+  microsoftDisconnect(): Promise<ProviderDisconnectResult>;
 }

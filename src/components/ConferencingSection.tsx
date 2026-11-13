@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Loader2, LogIn, LogOut, RotateCcw, X } from "lucide-react";
-import { api, apiErrorMessage, isUsingMocks, mockZoomConnect } from "@/api/client";
+import { api, apiErrorMessage, disconnectNotice } from "@/api/client";
+import { isDemoSession } from "@/api/demoGate";
 import { toast } from "@/hooks/useToast";
-import type { ConferenceProvider, ConferenceProviderStatus, Settings } from "@/api/types";
+import type { ConferenceProvider, ConferenceProviderStatus, ProviderDisconnectResult, Settings } from "@/api/types";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 const inputCls =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -59,6 +62,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
   const list: ConferenceProviderStatus[] = providers ?? [];
 
   const [zoomBusy, setZoomBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [outlookBusy, setOutlookBusy] = useState(false);
   const [zoomError, setZoomError] = useState<{
     message: string;
     retry: () => void;
@@ -75,15 +79,40 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["conferenceProviders"] });
 
-  const handleZoomConnect = () => {
+  // PAC-67: say what became of the grant at the provider; an unconfirmed
+  // revocation is never shown as a plain success (spec D-2, AC-15, AC-17).
+  const announce = (result: ProviderDisconnectResult) => {
+    const notice = disconnectNotice(result);
+    if (notice.kind === "success") toast.success(notice.message);
+    else toast.info(notice.message);
+  };
+
+  const handleOutlookDisconnect = async () => {
+    if (outlookBusy) return;
+    setOutlookBusy(true);
+    try {
+      announce(await api.microsoftDisconnect());
+      refresh();
+      qc.invalidateQueries({ queryKey: ["auth"] });
+    } catch (e) {
+      toast.error(apiErrorMessage(e, effectOf("api.microsoftDisconnect")));
+    } finally {
+      setOutlookBusy(false);
+    }
+  };
+
+  const handleZoomConnect = async () => {
     if (zoomBusy !== null) return;
     setZoomError(null);
-    // Demo/offline mode only: no OAuth round-trip is possible.
-    if (isUsingMocks()) {
-      mockZoomConnect();
-      toast.success("Zoom connected (demo)");
-      refresh();
-      return;
+    // PAC-83: only an explicit demo session (non-production builds) stays
+    // local; every other "Connect Zoom" starts the real OAuth hand-off.
+    if (__PACEDAY_DEMO_BUILD__) {
+      if (isDemoSession()) {
+        const { demoZoomConnect } = await import("@/demo/zoom");
+        toast.success(demoZoomConnect());
+        refresh();
+        return;
+      }
     }
     // Real API mode: hand off to the backend OAuth entry point.
     setZoomBusy("connect");
@@ -95,11 +124,10 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
     setZoomError(null);
     setZoomBusy("disconnect");
     try {
-      await api.zoomDisconnect();
-      toast.success("Disconnected Zoom");
+      announce(await api.zoomDisconnect());
       refresh();
     } catch (e) {
-      const message = apiErrorMessage(e);
+      const message = apiErrorMessage(e, effectOf("api.zoomDisconnect"));
       toast.error(message);
       setZoomError({ message, retry: handleZoomDisconnect });
     } finally {
@@ -137,7 +165,9 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-semibold text-destructive">Couldn't load conferencing providers</p>
-            <p className="text-[11px] text-destructive/90">{loadError}</p>
+            <p className="text-[11px] text-destructive/90">
+              <ApiErrorText error={error} effect="read" />
+            </p>
           </div>
           <button
             type="button"
@@ -228,6 +258,7 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
               type="button"
               onClick={handleZoomDisconnect}
               disabled={zoomBusy !== null}
+              aria-label="Disconnect Zoom"
               className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
             >
               {zoomBusy === "disconnect" ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
@@ -263,6 +294,17 @@ export function ConferencingSection({ settings, onPatch }: ConferencingSectionPr
                   : "Toggle on to attach Teams links to events"}
             </p>
           </div>
+          {teams?.connected && (
+            <button
+              type="button"
+              onClick={handleOutlookDisconnect}
+              disabled={outlookBusy}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+            >
+              {outlookBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogOut className="h-3 w-3" />}
+              Disconnect Outlook
+            </button>
+          )}
           <Toggle
             label="Attach Microsoft Teams links"
             checked={isOutlook ? true : !!settings.teams_enabled}

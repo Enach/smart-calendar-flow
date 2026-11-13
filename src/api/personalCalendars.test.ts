@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, setMockMode, isUsingMocks, isApiHttpError } from "./client";
+import { api, ApiUnreachableError, isApiHttpError } from "./client";
 import { isValidWebcalUrl } from "@/lib/personalCalendarValidation";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -17,7 +17,6 @@ function requestPath(input: RequestInfo | URL): string {
 
 describe("personal calendars contract", () => {
   beforeEach(() => {
-    setMockMode(false);
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -94,14 +93,12 @@ describe("personal calendars contract", () => {
     await expect(
       api.addPersonalCalendar({ type: "webcal", label: "Bad", url: "webcal://x.test/a.ics" }),
     ).rejects.toSatisfy((e: unknown) => isApiHttpError(e));
-    expect(isUsingMocks()).toBe(false);
   });
 
-  it("falls back to preview data only when the backend is unreachable", async () => {
+  // Inverted (PAC-83 spec §2.5).
+  it("rejects with ApiUnreachableError when the backend is unreachable (no preview calendars)", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    await expect(api.listPersonalCalendars()).resolves.toBeInstanceOf(Array);
-    expect(isUsingMocks()).toBe(true);
-    setMockMode(false);
+    await expect(api.listPersonalCalendars()).rejects.toBeInstanceOf(ApiUnreachableError);
   });
 });
 

@@ -1,12 +1,13 @@
 import { AlertCircle, Loader2, RefreshCw, ScrollText } from "lucide-react";
 
 import { Navbar } from "@/components/Navbar";
-import { MockBanner } from "@/components/MockBanner";
-import { apiErrorMessage, DEFAULT_AUDIT_LIMIT } from "@/api/client";
+import { ServerStatusBanner } from "@/components/ServerStatusBanner";
+import { apiErrorMessage, DEFAULT_AUDIT_LIMIT, describeAuditEntry } from "@/api/client";
 import { useAudit } from "@/hooks/useAudit";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { DATE_TIME, formatDateTime, type TimeFormat } from "@/lib/timeFormat";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 function formatTimestamp(iso: string, tf: TimeFormat) {
   if (!iso) return "Unknown date";
@@ -23,7 +24,7 @@ export default function AuditPage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <MockBanner />
+      <ServerStatusBanner />
       <Navbar />
       <main className="mx-auto w-full max-w-3xl space-y-4 p-4 sm:p-6">
         <div className="mb-2 flex items-end justify-between gap-3">
@@ -52,7 +53,7 @@ export default function AuditPage() {
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
             <div className="flex-1">
               <p className="text-sm font-medium text-foreground">Couldn’t load the audit log</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">{apiErrorMessage(error)}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground"><ApiErrorText error={error} effect="read" /></p>
               {hasCached && (
                 <p className="mt-1 text-xs text-muted-foreground">Showing the last entries loaded successfully.</p>
               )}
@@ -88,19 +89,20 @@ export default function AuditPage() {
 
           {entries.length > 0 && (
             <ul className="divide-y divide-border">
-              {entries.map((entry) => (
-                <li key={entry.id} className="flex flex-col gap-1 px-3 py-3 sm:flex-row sm:items-start sm:gap-4">
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44">
-                    {formatTimestamp(entry.created_at, tf)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-foreground">{entry.action}</p>
-                    {entry.details && (
-                      <p className="mt-0.5 break-words text-xs text-muted-foreground">{entry.details}</p>
-                    )}
-                  </div>
-                </li>
-              ))}
+              {entries.map((entry) => {
+                const { title, detail } = describeAuditEntry(entry.action, entry.details);
+                return (
+                  <li key={entry.id} className="flex flex-col gap-1 px-3 py-3 sm:flex-row sm:items-start sm:gap-4">
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground sm:w-44">
+                      {formatTimestamp(entry.created_at, tf)}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">{title}</p>
+                      {detail && <p className="mt-0.5 break-words text-xs text-muted-foreground">{detail}</p>}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

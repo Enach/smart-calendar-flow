@@ -1,16 +1,30 @@
 import type { components } from "./generated/types";
 
 export type CalendarProvider = "google" | "outlook" | "webcal";
+
+/** PAC-67: the 200 of disconnectMicrosoft and disconnectZoom (generated). */
+export type ProviderDisconnectResult = components["schemas"]["ProviderDisconnectResult"];
 export type PersonalCalendarType = "google" | "outlook" | "webcal";
-/** The server's llmProvider values (contract Settings.llmProvider); "" means none. */
-export type LLMProvider =
-  | ""
-  | "openai"
-  | "anthropic"
-  | "ollama"
-  | "bedrock"
-  | "azure_openai"
-  | "vertex";
+/**
+ * The AI choice as the server reads it (contract Settings.llmProvider): "" is
+ * off, "organization" follows the organisation, "unsupported" is a stored
+ * provider Paceday no longer supports, and the rest are the five key-based
+ * providers (NEW-llm-bring-your-own). Taken from the generated types, never
+ * hand-written (AC-33).
+ */
+export type LLMProvider = components["schemas"]["Settings"]["llmProvider"];
+/** The five key-based providers (contract AIStatus.provider / LLMApiKeysSet). */
+export type KeyProvider = NonNullable<components["schemas"]["AIStatus"]["provider"]>;
+/** Why AI is not configured for the caller, and who can change that (generated). */
+export type AINotConfigured = components["schemas"]["AINotConfigured"];
+/** Whether AI works for the caller now (generated, read-only on the settings document). */
+export type AIStatus = components["schemas"]["AIStatus"];
+/** Per provider, whether a key bound to it is on file (generated). */
+export type LLMApiKeysSet = components["schemas"]["LLMApiKeysSet"];
+/** PAC-73 Part 2: the organisation's AI configuration as every member reads it (generated; never the key). */
+export type OrganizationAIConfiguration = components["schemas"]["OrganizationAIConfiguration"];
+/** PAC-73 Part 2: the body of patchOrganizationAI (generated). */
+export type OrganizationAIConfigurationUpdate = components["schemas"]["OrganizationAIConfigurationUpdate"];
 export type IntegrationProvider = "google" | "microsoft" | "zoom" | "slack" | "notion" | "webcal";
 
 export interface IntegrationAvailabilityStatus {
@@ -73,25 +87,35 @@ export interface Settings {
   auto_schedule_cron: string;
   llm_provider: LLMProvider | string;
   llm_model: string;
-  /** Write-only: never returned by the server; set only when the user types or clears a key. */
+  /**
+   * Write-only: never returned by the server; set only when the user types or
+   * clears a key. The server binds it to the provider chosen after the write.
+   */
   llm_api_key?: string;
-  /** Whether a provider key is on file (backend: llmApiKeySet). */
+  /** Whether a key bound to the saved provider is on file (backend: llmApiKeySet). */
   llm_api_key_set?: boolean;
+  /** Per provider, whether a key bound to it is on file (backend: llmApiKeysSet, read-only). */
+  llm_api_keys_set?: LLMApiKeysSet;
+  /** A key saved before keys were bound to providers; never used (backend: llmUnboundApiKeySet). */
+  llm_unbound_api_key_set?: boolean;
+  /** Write-only: "" removes the unbound key (backend: llmUnboundApiKey). */
+  llm_unbound_api_key?: "";
+  /** Whether AI works for the caller now and, if not, why (backend: aiStatus, read-only). */
+  ai_status?: AIStatus;
+  /** Optional OpenAI/Anthropic gateway base URL (backend: llmBaseUrl). */
   llm_base_url?: string;
   calendar_id?: string;
   // Work calendar provider
   calendar_provider?: CalendarProvider;
   webcal_url?: string;
-  // LLM: AWS Bedrock
+  // LLM: AWS Bedrock (Bedrock API key)
   aws_region?: string;
-  aws_profile?: string;
-  // LLM: Azure OpenAI
+  bedrock_model?: string;
+  // LLM: Azure OpenAI (API key)
   azure_endpoint?: string;
   azure_deployment?: string;
   azure_api_version?: string;
-  // LLM: Google Vertex AI
-  gcp_project?: string;
-  gcp_location?: string;
+  // LLM: Google Vertex AI (express-mode API key)
   vertex_model?: string;
   // Conferencing
   /** Backend conferencingProvider (meet|zoom|teams), mapped to the app's names. */
@@ -205,6 +229,8 @@ export interface ParseResult {
   range_end?: string;
   constraints?: string;
   error?: string;
+  /** Present only when AI is not configured for the caller (NEW-llm-bring-your-own); nothing was sent. */
+  not_configured?: AINotConfigured;
   suggested_slots?: SuggestedSlot[];
   /** Optional coverage summary applied to ALL suggested_slots (T-40). */
   coverage?: CoverageSummary;
@@ -299,6 +325,18 @@ export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
  */
 export type LinkUsageType = "reusable" | "recurring" | "single_use";
 
+/**
+ * The link owner's choice of 409 body for refused public bookings (PAC-72,
+ * owner decisions D-2/D-5): one generic message (default) or the specific
+ * reason. The contract's BookingRefusalMessage.
+ */
+export type BookingRefusalMessage = components["schemas"]["BookingRefusalMessage"];
+
+/** PAC-72 D-1: the horizon's bounds and default (contract booking_horizon_days). */
+export const BOOKING_HORIZON_MIN_DAYS = 1;
+export const BOOKING_HORIZON_MAX_DAYS = 365;
+export const BOOKING_HORIZON_DEFAULT_DAYS = 60;
+
 export interface SchedulingLink {
   id: string;
   owner_id: string;
@@ -325,6 +363,15 @@ export interface SchedulingLink {
   is_owner: boolean;
   /** Status of the current user vs this link (for "Shared with me"). */
   my_status?: CoHostStatus;
+  /** PAC-72 D-1: days ahead the link can be booked, counting today (1..365). */
+  booking_horizon_days: number;
+  /** PAC-72 D-2/D-5: the 409 body visitors get when a booking is refused. */
+  refusal_message: BookingRefusalMessage;
+  /**
+   * PAC-72 D-9, read-only: the zone the link's days and hours are in (the
+   * owner's profile time zone, UTC when none). Absent in preview data.
+   */
+  time_zone?: string;
 }
 
 export interface CoHostInvite {
@@ -351,6 +398,13 @@ export interface PublicLinkInfo {
   usage_type?: LinkUsageType;
   /** Per-duration coverage of the hosts whose calendars we could read (T-40). */
   coverage?: CoverageSummary;
+  /**
+   * PAC-88: the link's zone (`PublicLinkInfo.time_zone`), the page's default
+   * display zone. Absent only from a server before PAC-72 (shown as UTC).
+   */
+  time_zone?: string;
+  /** PAC-88: the link's booking horizon in days (PAC-72 D-1), kept by the mapper. */
+  booking_horizon_days?: number;
 }
 
 export interface BookingConfirmation {

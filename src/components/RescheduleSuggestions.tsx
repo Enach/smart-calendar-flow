@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ChevronDown, ChevronUp, Loader2, Minus, TrendingDown, TrendingUp } from "lucide-react";
-import { api } from "@/api/client";
+import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarEvent } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
+import { effectOf } from "@/api/effects";
 
 interface Props {
   event: CalendarEvent;
@@ -244,8 +245,8 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
       qc.invalidateQueries({ queryKey: ["events"] });
       qc.invalidateQueries({ queryKey: ["focusBlocks"] });
       onMoved();
-    } catch {
-      toast.error("Failed to move event");
+    } catch (e) {
+      toast.error(apiErrorMessage(e, effectOf("api.updateEvent")));
     } finally {
       setMovingKey(null);
     }

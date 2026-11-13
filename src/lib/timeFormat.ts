@@ -37,6 +37,15 @@ export function formatTime(value: DateLike, format: TimeFormat, hour: "2-digit" 
 }
 
 /**
+ * The booking page's time of day in a given IANA zone (PAC-88): always
+ * 12-hour, numeric hour ("9:00 AM"), as the page has shown since PAC-55 §5.
+ * `zone` must be formattable (src/lib/timeZone.ts canFormatZone).
+ */
+export function formatTimeInZone(value: DateLike, zone: string): string {
+  return toDate(value).toLocaleTimeString(UI_LOCALE, { hour: "numeric", minute: "2-digit", timeZone: zone });
+}
+
+/**
  * A date with a time of day. `options` are the call site's own date and time
  * options (or none, for the locale's full default); on 24h only the clock
  * changes: two-digit hour, no AM/PM, any seconds kept.

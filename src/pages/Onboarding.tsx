@@ -9,6 +9,8 @@ import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { CalendarProvider } from "@/api/types";
 import { integrationProviderForCalendar, useIntegrationAvailability } from "@/hooks/useIntegrationAvailability";
+import { useCalendarConnect } from "@/hooks/useCalendarConnect";
+import { effectOf } from "@/api/effects";
 
 type Step = "connect" | "profile";
 
@@ -39,6 +41,7 @@ export default function Onboarding() {
   const [role, setRole] = useState<"ic" | "manager" | null>(null);
   const [busy, setBusy] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
+  const { connect } = useCalendarConnect();
 
   const availableProviders = useMemo(
     () =>
@@ -77,16 +80,16 @@ export default function Onboarding() {
     }
     setBusy(true);
     try {
-      const url = api.authConnectUrl(provider);
-      // For mock mode, just pretend it succeeded and advance.
-      // For a real backend, this redirects to the OAuth flow that returns
-      // back to /auth/callback → which lands on /app/onboarding again.
+      // This starts a connect (PAC-71: a signed-in POST,
+      // never the sign-in start) whose provider step returns to
+      // /auth/callback → which lands on /app/onboarding again.
       const status = await api.authStatus().catch(() => ({ connected: false }));
       if (status.connected || provider === "webcal") {
         setStep("profile");
-      } else {
-        window.location.href = url;
+        return;
       }
+      // PAC-71: save the chosen work calendar first; the connect never sets it.
+      await connect(provider, { setWorkCalendar: true });
     } finally {
       setBusy(false);
     }
@@ -103,7 +106,7 @@ export default function Onboarding() {
         onboarding_profile_selected: true,
       });
     } catch (e) {
-      setProfileError(apiErrorMessage(e)); // keep the selected role
+      setProfileError(apiErrorMessage(e, effectOf("manager.setProfile"))); // keep the selected role
       setBusy(false);
       return;
     }

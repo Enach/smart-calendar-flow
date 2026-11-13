@@ -1,14 +1,26 @@
 import { useState } from "react";
 import { Send, Loader2, Sparkles } from "lucide-react";
 
+import type { AINotConfigured } from "@/api/types";
+import { AINotConfiguredNotice } from "./AINotConfiguredNotice";
+import { ApiErrorNotice } from "./ApiErrorNotice";
+import { StillWorking } from "./StillWorking";
+
+/** PAC-83 (spec §3.2): said from submit until the answer. */
+export const AI_PROGRESS_MESSAGE = "Asking the AI — this can take up to a minute.";
+
 interface NLPBarProps {
   initialValue?: string;
   loading?: boolean;
   error?: string | null;
+  /** The parse answered "AI not configured" (NEW-llm-bring-your-own): shown instead of an error. */
+  notConfigured?: AINotConfigured | null;
+  /** PAC-83: the parse call failed (a read): shown with its kind and a retry. */
+  failure?: unknown;
   onSubmit: (text: string) => void;
 }
 
-export function NLPBar({ initialValue, loading, error, onSubmit }: NLPBarProps) {
+export function NLPBar({ initialValue, loading, error, notConfigured, failure, onSubmit }: NLPBarProps) {
   const [text, setText] = useState(initialValue ?? "");
 
   return (
@@ -38,8 +50,28 @@ export function NLPBar({ initialValue, loading, error, onSubmit }: NLPBarProps) 
           <span>{loading ? "Thinking…" : "Send"}</span>
         </button>
       </form>
-      {error && (
-        <p className="px-3 text-xs font-medium text-destructive">{error}</p>
+      {loading && (
+        <div className="space-y-1 px-3">
+          <p role="status" aria-live="polite" data-testid="ai-progress" className="text-sm text-muted-foreground">
+            {AI_PROGRESS_MESSAGE}
+          </p>
+          <StillWorking active={!!loading} />
+        </div>
+      )}
+      {!loading && failure !== undefined && failure !== null && (
+        <ApiErrorNotice
+          error={failure}
+          effect="read"
+          shorten="the request text"
+          onRetry={() => text.trim() && onSubmit(text.trim())}
+        />
+      )}
+      {notConfigured ? (
+        // PAC-73 Part 2 (spec §3.6): once the user confirms the organisation's
+        // AI from the notice, the request they made is sent.
+        <AINotConfiguredNotice notConfigured={notConfigured} onResolved={() => text.trim() && onSubmit(text.trim())} />
+      ) : (
+        error && <p className="px-3 text-xs font-medium text-destructive">{error}</p>
       )}
     </div>
   );

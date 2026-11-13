@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2, Save, Zap, ScrollText, User, Users } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
-import { MockBanner } from "@/components/MockBanner";
+import { ServerStatusBanner } from "@/components/ServerStatusBanner";
 import { WorkCalendarConnection } from "@/components/WorkCalendarConnection";
 import { PersonalCalendarsSection } from "@/components/PersonalCalendarsSection";
 import { ConferencingSection } from "@/components/ConferencingSection";
@@ -20,8 +20,25 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { LLMProvider, Settings } from "@/api/types";
+import type { Settings } from "@/api/types";
+import { AINotConfiguredNotice } from "@/components/AINotConfiguredNotice";
+import {
+  KEY_HINTS,
+  PROVIDER_LABELS,
+  isKeyProvider,
+  keyIsSetFor,
+  providerOptions,
+  providerSwitch,
+  removeSavedKey,
+  runsOnOrganizationAIInsteadOfOwnChoice,
+  runsOnOrganizationAIText,
+} from "@/lib/aiProviders";
+import { OrgAIConsentDialog } from "@/components/OrgAIConsentDialog";
+import { OrganizationAISection } from "@/components/settings/OrganizationAISection";
+import { useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { LunchBreaksEditor, WorkingHoursEditor } from "@/components/settings/WorkingHoursEditor";
+import { SsoAdminStepupSection } from "@/components/settings/SsoAdminStepupSection";
+import { AddressStandingNotice } from "@/components/settings/AddressStandingNotice";
 import {
   SCHEDULING_TEMPLATES,
   applyDefaultInterval,
@@ -37,6 +54,7 @@ import {
   workingHoursCapacity,
   type SchedulingTemplateId,
 } from "@/lib/schedulingPresets";
+import { effectOf } from "@/api/effects";
 
 
 const TIMEZONES = [
@@ -55,21 +73,9 @@ const TIMEZONES = [
   "Pacific/Auckland",
 ];
 
-const LLM_PROVIDERS: Array<{ value: LLMProvider; label: string }> = [
-  { value: "", label: "None (AI features off)" },
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "ollama", label: "Ollama (local)" },
-  { value: "bedrock", label: "AWS Bedrock (Claude)" },
-  { value: "azure_openai", label: "Azure OpenAI (ChatGPT)" },
-  { value: "vertex", label: "Google Vertex AI (Gemini)" },
-];
-
-const BEDROCK_MODELS = [
-  "claude-opus-4-5",
-  "claude-sonnet-4-5",
-  "claude-haiku-4-5-20251001",
-];
+// NEW-llm-bring-your-own D-16: the server's default Bedrock model, shown as
+// the placeholder of the Bedrock model field (bedrockModel).
+const DEFAULT_BEDROCK_MODEL = "anthropic.claude-sonnet-4-5-20251001-v1:0";
 
 function fmtHM(min: number) {
   const h = Math.floor(min / 60);
@@ -79,9 +85,9 @@ function fmtHM(min: number) {
   return `${h} h ${m} min`;
 }
 
-function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+function Section({ id, title, description, children }: { id?: string; title: string; description?: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+    <section id={id} className="scroll-mt-20 rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
       <div className="mb-4">
         <h2 className="text-base font-semibold tracking-tight text-foreground">{title}</h2>
         {description && <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>}
@@ -127,9 +133,23 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function SettingsPage() {
-  const { data, isLoading } = useSettings();
+  const { data, isLoading, refetch } = useSettings();
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<Settings | null>(null);
+  // PAC-73 Part 2: members are offered their organisation's AI; choosing it
+  // shows the one-time notice and confirms the version displayed (P2-AC-38).
+  const inOrganization = !!data?.ai_status?.inOrganization;
+  const orgAI = useOrganizationAI(inOrganization);
+  const personalKeysForbidden = inOrganization && orgAI.data?.personalKeysAllowed === false;
+  const [choosingOrgAI, setChoosingOrgAI] = useState(false);
+  // PAC-87 row 9: the stored choice is kept (shown disabled) while AI runs on
+  // the organisation's configuration the member confirmed.
+  const onOrgAIInsteadOfOwn = !!draft && runsOnOrganizationAIInsteadOfOwnChoice(draft);
+  /** After a confirmation, the saved choice and AI status replace the draft's. */
+  const refreshAIChoice = async () => {
+    const fresh = (await refetch()).data;
+    if (fresh) setDraft((d) => (d ? { ...d, llm_provider: fresh.llm_provider, ai_status: fresh.ai_status } : d));
+  };
 
   useEffect(() => {
     if (data && !draft) {
@@ -213,7 +233,7 @@ export default function SettingsPage() {
       setDraft({ ...saved });
       toast.success("Settings saved");
     } catch (e) {
-      toast.error(apiErrorMessage(e));
+      toast.error(apiErrorMessage(e, effectOf("api.updateSettings")));
     }
   };
 
@@ -231,7 +251,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-muted/30">
-      <MockBanner />
+      <ServerStatusBanner />
       <Navbar />
       <main className="mx-auto w-full max-w-3xl space-y-4 p-4 sm:p-6">
         <div className="mb-2 flex items-end justify-between gap-3">
@@ -248,6 +268,8 @@ export default function SettingsPage() {
             Save changes
           </button>
         </div>
+
+        <AddressStandingNotice />
 
         <ProfileSection />
 
@@ -599,37 +621,84 @@ export default function SettingsPage() {
           <ConferencingSection settings={draft} onPatch={patchDraft} />
         </Section>
 
-        <Section title="AI / NLP" description="The model used to interpret natural-language scheduling commands.">
+        <Section
+          id="ai"
+          title="AI"
+          description="The scheduling bar and meeting briefs run on an AI provider account and API key you bring. Paceday supplies none."
+        >
+          {draft.ai_status && !draft.ai_status.configured && draft.ai_status.notConfigured && (
+            <div className="mb-4">
+              <AINotConfiguredNotice notConfigured={draft.ai_status.notConfigured} showLink={false} onResolved={refreshAIChoice} />
+            </div>
+          )}
+          {personalKeysForbidden && isKeyProvider(draft.llm_provider) && (
+            <p className="mb-4 text-sm text-muted-foreground" data-testid="ai-personal-keys-forbidden">
+              Your organisation does not allow personal API keys. Your own choice ({PROVIDER_LABELS[draft.llm_provider]}) and any key
+              you saved for it are kept but not used.
+            </p>
+          )}
+          {onOrgAIInsteadOfOwn && (
+            <p className="mb-4 text-sm text-foreground" data-testid="ai-runs-on-org">
+              {runsOnOrganizationAIText(draft.ai_status?.provider)}
+            </p>
+          )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Provider">
+            <Field label="AI provider">
               <select
                 value={draft.llm_provider}
-                onChange={(e) => set("llm_provider", e.target.value)}
+                onChange={(e) => {
+                  if (e.target.value === "organization" && inOrganization && data?.llm_provider !== "organization") {
+                    setChoosingOrgAI(true);
+                    return;
+                  }
+                  patchDraft(providerSwitch(e.target.value, data));
+                }}
                 className={inputCls}
               >
-                {LLM_PROVIDERS.map((p) => (
-                  <option key={p.value} value={p.value}>
+                {providerOptions(draft.llm_provider, { inOrganization, personalKeysForbidden }).map((p) => (
+                  <option key={p.value || "off"} value={p.value} disabled={p.disabled}>
                     {p.label}
                   </option>
                 ))}
               </select>
             </Field>
 
-            {draft.llm_provider === "bedrock" ? (
-              <Field label="Model">
-                <select
+            {(draft.llm_provider === "openai" || draft.llm_provider === "anthropic") && (
+              <Field label="Model" hint="Leave empty for the provider's default model.">
+                <input
+                  type="text"
                   value={draft.llm_model}
                   onChange={(e) => set("llm_model", e.target.value)}
                   className={inputCls}
-                >
-                  {BEDROCK_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={draft.llm_provider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001"}
+                />
               </Field>
-            ) : draft.llm_provider === "vertex" ? (
+            )}
+
+            {draft.llm_provider === "bedrock" && (
+              <>
+                <Field label="Bedrock model ID">
+                  <input
+                    type="text"
+                    value={draft.bedrock_model ?? ""}
+                    onChange={(e) => set("bedrock_model", e.target.value)}
+                    className={inputCls}
+                    placeholder={DEFAULT_BEDROCK_MODEL}
+                  />
+                </Field>
+                <Field label="AWS Region" hint="The region your Bedrock API key was created in.">
+                  <input
+                    type="text"
+                    value={draft.aws_region ?? ""}
+                    onChange={(e) => set("aws_region", e.target.value)}
+                    className={inputCls}
+                    placeholder="us-east-1"
+                  />
+                </Field>
+              </>
+            )}
+
+            {draft.llm_provider === "vertex" && (
               <Field label="Model">
                 <input
                   type="text"
@@ -639,49 +708,8 @@ export default function SettingsPage() {
                   placeholder="gemini-2.0-flash-001"
                 />
               </Field>
-            ) : draft.llm_provider === "" ? null : (
-              <Field label="Model">
-                <input
-                  type="text"
-                  value={draft.llm_model}
-                  onChange={(e) => set("llm_model", e.target.value)}
-                  className={inputCls}
-                  placeholder={
-                    draft.llm_provider === "ollama"
-                      ? "llama3"
-                      : draft.llm_provider === "azure_openai"
-                        ? "gpt-4o"
-                        : "gpt-4o-mini"
-                  }
-                />
-              </Field>
             )}
 
-            {/* Bedrock-specific */}
-            {draft.llm_provider === "bedrock" && (
-              <>
-                <Field label="AWS Region">
-                  <input
-                    type="text"
-                    value={draft.aws_region ?? ""}
-                    onChange={(e) => set("aws_region", e.target.value)}
-                    className={inputCls}
-                    placeholder="us-east-1"
-                  />
-                </Field>
-                <Field label="AWS Profile" hint="Optional — leave empty to use the default credential chain.">
-                  <input
-                    type="text"
-                    value={draft.aws_profile ?? ""}
-                    onChange={(e) => set("aws_profile", e.target.value)}
-                    className={inputCls}
-                    placeholder="default"
-                  />
-                </Field>
-              </>
-            )}
-
-            {/* Azure-specific */}
             {draft.llm_provider === "azure_openai" && (
               <>
                 <Field label="Azure Endpoint">
@@ -714,57 +742,35 @@ export default function SettingsPage() {
               </>
             )}
 
-            {/* Vertex-specific */}
-            {draft.llm_provider === "vertex" && (
-              <>
-                <Field label="GCP Project">
-                  <input
-                    type="text"
-                    value={draft.gcp_project ?? ""}
-                    onChange={(e) => set("gcp_project", e.target.value)}
-                    className={inputCls}
-                    placeholder="my-project"
-                  />
-                </Field>
-                <Field label="GCP Location">
-                  <input
-                    type="text"
-                    value={draft.gcp_location ?? ""}
-                    onChange={(e) => set("gcp_location", e.target.value)}
-                    className={inputCls}
-                    placeholder="us-central1"
-                  />
-                </Field>
-              </>
-            )}
-
-            {/* Ollama-specific */}
-            {draft.llm_provider === "ollama" && (
-              <Field label="Base URL">
+            {(draft.llm_provider === "openai" || draft.llm_provider === "anthropic") && (
+              <Field
+                label="Base URL"
+                hint={`Optional. Leave empty to use ${draft.llm_provider === "openai" ? "api.openai.com" : "api.anthropic.com"}; only a gateway your administrator approved works.`}
+              >
                 <input
                   type="text"
                   value={draft.llm_base_url ?? ""}
                   onChange={(e) => set("llm_base_url", e.target.value)}
                   className={inputCls}
-                  placeholder="http://localhost:11434"
+                  placeholder={draft.llm_provider === "openai" ? "https://api.openai.com" : "https://api.anthropic.com"}
                 />
               </Field>
             )}
 
-            {/* Legacy API key for openai/anthropic */}
-            {(draft.llm_provider === "openai" || draft.llm_provider === "anthropic") && (
-              <Field label="API key">
+            {isKeyProvider(draft.llm_provider) && (
+              <Field label="API key" hint={`${KEY_HINTS[draft.llm_provider]} It is stored for ${PROVIDER_LABELS[draft.llm_provider]} only and never shown again.`}>
                 <input
                   type="password"
+                  autoComplete="off"
                   value={draft.llm_api_key ?? ""}
                   onChange={(e) => set("llm_api_key", e.target.value)}
                   className={inputCls}
-                  placeholder={draft.llm_api_key_set ? "A key is saved — type to replace it" : "Paste an API key"}
+                  placeholder={keyIsSetFor(draft, draft.llm_provider) ? "A key is saved. Type to replace it" : "Paste an API key"}
                 />
-                {draft.llm_api_key_set && draft.llm_api_key === undefined && (
+                {keyIsSetFor(draft, draft.llm_provider) && draft.llm_api_key === undefined && (
                   <button
                     type="button"
-                    onClick={() => setDraft((d) => (d ? { ...d, llm_api_key: "", llm_api_key_set: false } : d))}
+                    onClick={() => setDraft((d) => (d ? removeSavedKey(d) : d))}
                     className="mt-1 text-[11px] text-muted-foreground underline hover:text-foreground"
                   >
                     Remove saved key
@@ -773,6 +779,19 @@ export default function SettingsPage() {
               </Field>
             )}
           </div>
+
+          {draft.llm_unbound_api_key_set && draft.llm_unbound_api_key === undefined && (
+            <div className="mt-4 flex flex-col gap-2 rounded-lg border border-border bg-background/50 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <p>An API key saved before keys were tied to a provider is still on file. Paceday never uses it.</p>
+              <button
+                type="button"
+                onClick={() => setDraft((d) => (d ? { ...d, llm_unbound_api_key: "", llm_unbound_api_key_set: false } : d))}
+                className="shrink-0 font-medium text-foreground underline underline-offset-4"
+              >
+                Remove old key
+              </button>
+            </div>
+          )}
 
           <div className="mt-4 flex items-center gap-3">
             <button
@@ -785,11 +804,25 @@ export default function SettingsPage() {
               Test connection
             </button>
             <p className="text-[11px] text-muted-foreground">
-              Sends a small probe to the selected provider using the values above.
+              {onOrgAIInsteadOfOwn
+                ? "Sends a small probe to your organisation's AI, as your requests use it."
+                : "Sends a small probe to the selected provider with the key above, or the key saved for it."}
             </p>
           </div>
         </Section>
+
+        <OrganizationAISection inOrganization={inOrganization} />
+
+        <SsoAdminStepupSection />
       </main>
+      {choosingOrgAI && (
+        <OrgAIConsentDialog
+          open
+          onOpenChange={(open) => !open && setChoosingOrgAI(false)}
+          choose
+          onConfirmed={refreshAIChoice}
+        />
+      )}
     </div>
   );
 }

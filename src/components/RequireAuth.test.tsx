@@ -14,7 +14,7 @@ const authValue: AuthContextValue = {
   loading: false,
   sessionStale: false,
   refresh: async () => {},
-  loginDemo: () => {},
+  enterDemo: () => {},
   exitDemo: () => {},
   logout: async () => {},
 };

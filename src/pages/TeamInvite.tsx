@@ -8,6 +8,8 @@ import { apiErrorMessage } from "@/api/client";
 import { teamInvitesApi, teamKeys, type TeamInvite as TeamInviteModel } from "@/api/teams";
 import { toast } from "@/hooks/useToast";
 import { UI_LOCALE } from "@/lib/locale";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { effectOf } from "@/api/effects";
 
 /** "Invited by Name (email)", by name or email alone, or nothing when neither was read. */
 function InviterLine({ invite }: { invite: TeamInviteModel }) {
@@ -85,7 +87,7 @@ export default function TeamInvite() {
             <div className="mt-4 space-y-3">
               <p role="alert" className="flex items-start gap-2 text-sm text-foreground">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B91C1C]" />
-                {apiErrorMessage(inviteQ.error)}
+                <ApiErrorText error={inviteQ.error} effect="read" />
               </p>
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => inviteQ.refetch()}>
                 <RefreshCw className="h-3.5 w-3.5" /> Retry
@@ -109,7 +111,7 @@ export default function TeamInvite() {
               {acceptMut.error && (
                 <p role="alert" className="mt-4 flex items-start gap-2 text-sm text-destructive">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                  {apiErrorMessage(acceptMut.error)}
+                  <ApiErrorText error={acceptMut.error} effect={effectOf("teamInvitesApi.accept")} />
                 </p>
               )}
 

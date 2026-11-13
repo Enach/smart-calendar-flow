@@ -33,7 +33,7 @@ Formal-team endpoints:
 
 ## Implement
 
-- Use `managerApi.remote` and `teamsApi.remote` through React Query. Keep the existing fallback only for explicit mock/preview mode.
+- Use `managerApi.remote` and `teamsApi.remote` through React Query. A failed call is an error with a retry; made-up data exists only in the explicit demo (PAC-83).
 - Make profile detection, member CRUD, cadence editing, gap display and schedule-prefill actions reflect pending and error states.
 - Make formal-team creation, rename, deletion, invite, member removal, no-meeting-zone CRUD, availability and analytics usable from the existing routes.
 - Invalidate the smallest relevant query keys after each mutation. Never leave stale counts or analytics visible without an indication that a refresh is pending.

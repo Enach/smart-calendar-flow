@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "@/contexts/useAuth";
@@ -8,6 +8,10 @@ import { Button } from "@/components/ui/button";
 import { managerApi, managerKeys } from "@/api/manager";
 import { apiErrorMessage } from "@/api/client";
 import { TimeFormatProvider } from "@/contexts/TimeFormatContext";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
+
+/** PAC-83: the demo label exists only in a non-production build (contract §4.2). */
+const DemoLabel = __PACEDAY_DEMO_BUILD__ ? lazy(() => import("@/demo/DemoLabel")) : null;
 
 /**
  * Gate that wraps any route requiring an authenticated user (or a demo
@@ -25,7 +29,7 @@ export function RequireAuth({
   children: ReactNode;
   requireOnboarding?: boolean;
 }) {
-  const { user, isDemo, loading } = useAuth();
+  const { user, isDemo, loading, sessionStale, refresh } = useAuth();
   const location = useLocation();
 
   const onboardingRoute = location.pathname.startsWith("/app/onboarding");
@@ -42,6 +46,21 @@ export function RequireAuth({
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <Spinner size="lg" label="Loading…" />
+      </div>
+    );
+  }
+
+  if (!user && !isDemo && sessionStale) {
+    // PAC-71 (spec §3 "Sessions", AC-48): the server could not tell whether
+    // the session is valid (a 5xx such as "session generation unavailable",
+    // or no answer). That is not "signed out" — only a 401/403 is — so the
+    // user is not sent to the landing page; they can retry.
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+        <p className="max-w-md text-sm text-muted-foreground">
+          Paceday could not check your session right now. Try again in a moment.
+        </p>
+        <Button onClick={() => void refresh()}>Retry</Button>
       </div>
     );
   }
@@ -69,7 +88,7 @@ export function RequireAuth({
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background px-6 text-center">
           <p className="max-w-md text-sm text-muted-foreground">
-            {apiErrorMessage(profileQuery.error)}
+            <ApiErrorText error={profileQuery.error} effect="read" />
           </p>
           <Button onClick={() => profileQuery.refetch()}>Retry</Button>
         </div>
@@ -81,5 +100,14 @@ export function RequireAuth({
     }
   }
 
-  return <TimeFormatProvider>{children}</TimeFormatProvider>;
+  return (
+    <TimeFormatProvider>
+      {__PACEDAY_DEMO_BUILD__ && isDemo && DemoLabel && (
+        <Suspense fallback={null}>
+          <DemoLabel />
+        </Suspense>
+      )}
+      {children}
+    </TimeFormatProvider>
+  );
 }
