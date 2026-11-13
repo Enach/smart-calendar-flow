@@ -22,6 +22,8 @@ vi.mock("@/components/PersonalCalendarsSection", () => ({ PersonalCalendarsSecti
 vi.mock("@/components/ConferencingSection", () => ({ ConferencingSection: () => null }));
 vi.mock("@/components/settings/OrganizationAISection", () => ({ OrganizationAISection: () => null }));
 vi.mock("@/components/settings/SsoAdminStepupSection", () => ({ SsoAdminStepupSection: () => null }));
+// PAC-71's sign-in address notice reads the auth context; not under test here.
+vi.mock("@/components/settings/AddressStandingNotice", () => ({ AddressStandingNotice: () => null }));
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({ data: state.settings, isLoading: false, refetch: async () => ({ data: state.settings }) }),
   useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),
