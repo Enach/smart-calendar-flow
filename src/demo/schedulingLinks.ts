@@ -5,9 +5,13 @@
  * src/api/demoGate.ts in a demo session of a non-production build.
  */
 import { BOOKING_HORIZON_DEFAULT_DAYS } from "@/api/types";
+import { ApiHttpError } from "@/api/client";
 import type { PublicSlotsAnswer, PublicSlotsParams } from "@/api/schedulingLinks";
 import { addDaysToKey, dateKeyInZone, groupStartsByDay, offsetMinutes, wallTimeInZone } from "@/lib/timeZone";
 import type {
+  ArchivedSchedulingLinkBooking,
+  ArchivedSchedulingLinkDetail,
+  ArchivedSchedulingLinkListResponse,
   BookingConfirmation,
   BookingRefusalMessage,
   BookingSlot,
@@ -64,6 +68,8 @@ interface MockState {
   bookings: BookingConfirmation[];
   takenSlots: Set<string>; // key: `${slug}|${startIso}`
   nextId: number;
+  /** PAC-40: links the demo user deleted, most recent first. */
+  archive: ArchivedSchedulingLinkDetail[];
 }
 
 const mockState: MockState = {
@@ -72,7 +78,46 @@ const mockState: MockState = {
   bookings: [],
   takenSlots: new Set(),
   nextId: 1,
+  archive: [],
 };
+
+/**
+ * PAC-40: the demo archive mirrors the part-A server: deleting moves an owned
+ * link and its bookings to the archive, nothing is ever erased and no erasure
+ * is promised (booker_erasure.enabled is false).
+ */
+function archiveDemoLink(link: SchedulingLink): void {
+  const bookings: ArchivedSchedulingLinkBooking[] = mockState.bookings
+    .filter((b) => b.link_slug === link.slug)
+    .map((b) => ({
+      id: b.id,
+      link_id: link.id,
+      booker_name: b.booker_name,
+      booker_email: b.booker_email,
+      booker_erased_at: null,
+      start_time: b.start,
+      end_time: b.end,
+      status: "confirmed",
+      notes: b.notes ?? "",
+      created_at: b.start,
+    }));
+  const ends = bookings.map((b) => b.end_time).sort();
+  const lastEnd = ends.length ? ends[ends.length - 1] : null;
+  mockState.archive.unshift({
+    link: {
+      id: link.id,
+      title: link.title,
+      slug: link.slug,
+      deleted_at: new Date().toISOString(),
+      bookings_count: bookings.length,
+      last_booking_end_at: lastEnd,
+      erasure_state: bookings.length ? "awaiting_erasure" : "no_bookings",
+      erasure_due_at: null,
+      erased_at: null,
+    },
+    bookings,
+  });
+}
 
 function seedMockLinks() {
   if (mockState.links.length) return;
@@ -340,7 +385,20 @@ export const demoSchedulingLinksOps = {
       },
 
   deleteLink: (id: string) => {
+        const link = mockState.links.find((l) => l.id === id);
+        if (link?.is_owner) archiveDemoLink(link);
         mockState.links = mockState.links.filter((l) => l.id !== id);
+      },
+
+  listArchive: (): ArchivedSchedulingLinkListResponse => ({
+        links: mockState.archive.map((entry) => ({ ...entry.link })),
+        booker_erasure: { enabled: false, retention_days: 90 },
+      }),
+
+  getArchivedLink: (id: string): ArchivedSchedulingLinkDetail => {
+        const entry = mockState.archive.find((e) => e.link.id === id);
+        if (!entry) throw new ApiHttpError(404, { error: "not found" });
+        return { link: { ...entry.link }, bookings: entry.bookings.map((b) => ({ ...b })) };
       },
 
   leaveLink: (id: string) => {

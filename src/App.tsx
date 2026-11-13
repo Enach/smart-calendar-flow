@@ -8,6 +8,7 @@ import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import AuthCallback from "./pages/AuthCallback";
 import LinksPage from "./pages/Links";
+import LinksArchivePage from "./pages/LinksArchive";
 import Team from "./pages/Team";
 import TeamInvite from "./pages/TeamInvite";
 
@@ -65,6 +66,14 @@ const App = () => (
               element={
                 <RequireAuth>
                   <LinksPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/app/links/archive"
+              element={
+                <RequireAuth>
+                  <LinksArchivePage />
                 </RequireAuth>
               }
             />

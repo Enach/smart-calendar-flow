@@ -46,6 +46,7 @@ vi.mock("@/pages/Audit", async () => ({ default: await h.counted("Audit") }));
 vi.mock("@/pages/SignIn", async () => ({ default: await h.counted("SignIn") }));
 vi.mock("@/pages/SignUp", async () => ({ default: await h.counted("SignUp") }));
 vi.mock("@/pages/Links", async () => ({ default: await h.counted("Links") }));
+vi.mock("@/pages/LinksArchive", async () => ({ default: await h.counted("LinksArchive") }));
 vi.mock("@/pages/Team", async () => ({ default: await h.counted("Team") }));
 vi.mock("@/pages/TeamInvite", async () => ({ default: await h.counted("TeamInvite") }));
 vi.mock("@/pages/Onboarding", async () => ({ default: await h.counted("Onboarding") }));
@@ -72,6 +73,8 @@ const NON_BOOKING_ROUTES: Array<[path: string, components: string[]]> = [
   ["/signup", ["SignUp"]],
   ["/app", ["RequireAuth", "Dashboard"]],
   ["/settings", ["RequireAuth", "Settings"]],
+  // PAC-40: the owner's archive of deleted links is a non-booking route too.
+  ["/app/links/archive", ["RequireAuth", "LinksArchive"]],
   ["/app/team/invite/tok-123", ["RequireAuth", "TeamInvite"]],
   ["/logout", ["Logout"]],
   ["/auth/callback", ["AuthCallback"]],
@@ -83,7 +86,7 @@ const NON_BOOKING_ROUTES: Array<[path: string, components: string[]]> = [
 ];
 
 const ALL_ROUTE_COMPONENTS = [
-  "Index", "Dashboard", "Settings", "Audit", "SignIn", "SignUp", "Links", "Team", "TeamInvite",
+  "Index", "Dashboard", "Settings", "Audit", "SignIn", "SignUp", "Links", "LinksArchive", "Team", "TeamInvite",
   "Onboarding", "NotFound", "Logout", "AuthCallback", "PublicBooking", "RequireAuth",
 ];
 
@@ -227,7 +230,7 @@ describe("PAC-91 FrameGuard: the booking page and the unframed app are unchanged
     },
   );
 
-  it.each(NON_BOOKING_ROUTES.slice(0, 9))("AC-11: unframed on %s, no notice and the app routes as today", async (path, components) => {
+  it.each(NON_BOOKING_ROUTES.slice(0, 10))("AC-11: unframed on %s, no notice and the app routes as today", async (path, components) => {
     framed(false);
     open(path);
     await settle();
@@ -252,7 +255,7 @@ describe("PAC-91 FrameGuard off in a non-production build (Lovable preview, PAC-
     vi.mocked(frameGuardEnabled).mockReturnValue(false);
   });
 
-  it.each(NON_BOOKING_ROUTES.slice(0, 9))("framed on %s, no notice and the route renders as unframed", async (path, components) => {
+  it.each(NON_BOOKING_ROUTES.slice(0, 10))("framed on %s, no notice and the route renders as unframed", async (path, components) => {
     framed(true);
     open(path);
     await settle();
