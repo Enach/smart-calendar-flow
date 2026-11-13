@@ -557,9 +557,13 @@ const Index = ({ initialAuth }: IndexProps = {}) => {
   void logo;
   const [authOpen, setAuthOpen] = useState<boolean>(!!initialAuth);
   const [authMode, setAuthMode] = useState<"signin" | "signup">(initialAuth ?? "signin");
+  // PAC-97 AC-25: the dialog was opened from a failure notice, so it offers
+  // the provider choice for the email this tab remembers (if any).
+  const [authOfferSwitch, setAuthOfferSwitch] = useState(false);
 
-  const openAuth = (mode: "signin" | "signup") => {
+  const openAuth = (mode: "signin" | "signup", offerSwitch = false) => {
     setAuthMode(mode);
+    setAuthOfferSwitch(offerSwitch);
     setAuthOpen(true);
   };
 
@@ -579,7 +583,7 @@ const Index = ({ initialAuth }: IndexProps = {}) => {
   };
   const retrySignIn = () => {
     clearParam("error");
-    openAuth("signin");
+    openAuth("signin", true);
   };
   const navigate = useNavigate();
   const continueToApp = () => {
@@ -600,7 +604,7 @@ const Index = ({ initialAuth }: IndexProps = {}) => {
       <Benefits />
       <FinalCTA onOpenAuth={openAuth} />
       <Footer />
-      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} mode={authMode} />
+      <AuthDialog open={authOpen} onOpenChange={setAuthOpen} mode={authMode} offerSwitch={authOfferSwitch} />
     </main>
   );
 };

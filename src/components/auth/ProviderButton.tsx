@@ -5,14 +5,17 @@ interface ProviderButtonProps {
   label: string;
   onClick?: () => void;
   disabled?: boolean;
+  /** An e2e hook (`data-testid`), on the button itself. */
+  testId?: string;
 }
 
-export function ProviderButton({ icon, label, onClick, disabled }: ProviderButtonProps) {
+export function ProviderButton({ icon, label, onClick, disabled, testId }: ProviderButtonProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      data-testid={testId}
       className="group inline-flex h-11 w-full items-center justify-center gap-2.5 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-60"
     >
       <span className="flex h-4 w-4 items-center justify-center">{icon}</span>
