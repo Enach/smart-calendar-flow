@@ -467,7 +467,7 @@ export type SsoDetectRequest = __TypedOpenapi.Schemas.SsoDetectRequest;
 export const SsoDetectRequest = z.object({ email: z.string() }).catchall(z.unknown());
 
 export type SsoDetectResponse = __TypedOpenapi.Schemas.SsoDetectResponse;
-export const SsoDetectResponse = z.strictObject({ type: z.enum(["google", "microsoft", "sso", "generic"]), provider_name: z.string().optional(), redirect_url: z.string().optional() });
+export const SsoDetectResponse = z.strictObject({ type: z.enum(["google", "microsoft", "sso", "generic", "choose"]), provider_name: z.string().optional(), redirect_url: z.string().optional() });
 
 export type SsoProviderState = __TypedOpenapi.Schemas.SsoProviderState;
 export const SsoProviderState = z.enum(["active", "suspended"]);

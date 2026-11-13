@@ -9,6 +9,7 @@ import {
 
 import { apiFetch, type ApiError } from "@/lib/api";
 import { clearDemoSession, isDemoSession, restoreStoresAfterDemo } from "@/api/demoGate";
+import { forgetSignInEmail } from "@/components/auth/rememberedEmail";
 import { AuthContext } from "./auth-context";
 import type { components } from "@/api/generated/types";
 import type { AuthContextValue } from "./auth-context";
@@ -49,6 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async (): Promise<AuthUser | null | undefined> => {
     try {
       const me = (await apiFetch<AuthUser>("/api/auth/me", { method: "GET" })) ?? null;
+      // PAC-97 AC-26: a completed sign-in no longer needs the email the
+      // sign-in dialog remembered for a provider switch.
+      if (me) forgetSignInEmail();
       if (mounted.current) {
         setUser(me);
         setSessionStale(false);
@@ -110,6 +114,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // PAC-97 AC-26: signing out forgets the email remembered for a switch.
+    forgetSignInEmail();
     if (isDemo) {
       exitDemo();
       return;
