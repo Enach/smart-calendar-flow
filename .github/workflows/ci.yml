@@ -60,7 +60,13 @@ jobs:
 
       - run: npm ci --legacy-peer-deps
 
+      # Pushes to main skip the cross-repo half of openapi-check: a paired
+      # contract change merges api first and web minutes later, and in between
+      # the two mains disagree by design. The api repo's release.yml runs that check on the
+      # exact pair of main SHAs it would publish. PRs keep the full check.
       - name: make verify
+        env:
+          OPENAPI_CROSS_REPO: ${{ github.event_name == 'push' && 'skip' || 'check' }}
         run: make verify
 
       - name: Verify summary
