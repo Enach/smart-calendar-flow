@@ -149,8 +149,7 @@ const FORBIDDEN = {
   "password input, braced": ["src/components/auth/Pw2.tsx", "<input type={'password'} />"],
   "password input via props object": ["src/pages/SignUp.tsx", 'createElement("input", { type: "password" })'],
   "show/hide toggle": ["src/components/auth/Toggle.tsx", '<Input type={show ? "text" : "password"} />'],
-  "constant": ["src/components/auth/Const.tsx", "const T = 'password';
-export const F = () => <input type={T} />;"],
+  "constant": ["src/components/auth/Const.tsx", "const T = 'password';\nexport const F = () => <input type={T} />;"],
   "setAttribute": ["src/components/auth/Dom.ts", 'el.setAttribute("type", "password");'],
   "current-password autocomplete": ["src/components/auth/Ac.tsx", '<Input autoComplete="current-password" />'],
   "new-password autocomplete on a sign-in page": ["src/pages/Index.tsx", '<input autocomplete="new-password" />'],
