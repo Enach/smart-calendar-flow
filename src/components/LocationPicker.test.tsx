@@ -130,6 +130,28 @@ describe("LocationPicker rooms (PAC-41)", () => {
     expect(onChange).toHaveBeenLastCalledWith({ location: "", room_resource_email: undefined });
   });
 
+  it("a11y: the search and the selected room are described by the booking notice; the leave notice is a status", async () => {
+    vi.spyOn(api, "searchRooms").mockResolvedValue([HELSINKI]);
+    renderPicker();
+    await openRoomBooking();
+
+    const notice = screen.getByTestId("room-booking-notice");
+    expect(notice.id).not.toBe("");
+    const input = screen.getByTestId("room-search-input");
+    expect(input).toHaveAttribute("aria-describedby", notice.id);
+    expect(input).toHaveAccessibleDescription(BOOKING_NOTICE);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Helsinki" }));
+    const card = await screen.findByRole("group", { name: "Selected room" });
+    expect(card).toBe(screen.getByTestId("room-selected"));
+    expect(card).toHaveAttribute("aria-describedby", screen.getByTestId("room-booking-notice").id);
+    expect(card).toHaveAccessibleDescription(BOOKING_NOTICE);
+
+    fireEvent.click(screen.getByRole("button", { name: "Free text" }));
+    expect(screen.getByRole("status")).toHaveTextContent(LEFT_NOTICE);
+    expect(screen.getByRole("status")).toBe(screen.getByTestId("room-left-notice"));
+  });
+
   it("AC-13: a user who never entered room booking sees neither notice", () => {
     renderPicker({ location: "Café" });
     fireEvent.click(screen.getByRole("button", { name: "Free text" }));
@@ -167,8 +189,13 @@ describe("LocationPicker rooms (PAC-41)", () => {
     });
 
     it("a failed lookup of the held room says so and leaves the address alone", async () => {
-      vi.spyOn(api, "searchRooms").mockRejectedValue(new ApiHttpError(401, { error: "calendar not connected" }));
+      // Only the held-room lookup fails; the debounced search never answers,
+      // so the message can come from nothing but the lookup's own handler.
+      const search = vi.spyOn(api, "searchRooms").mockImplementation((q: string) =>
+        q === "c_1888helsinki" ? Promise.reject(new ApiHttpError(401, { error: "calendar not connected" })) : new Promise<CalendarRoom[]>(() => {}),
+      );
       const { onChange } = renderPicker({ roomEmail: HELSINKI.id });
+      await waitFor(() => expect(search).toHaveBeenCalledWith("c_1888helsinki"));
 
       expect(await screen.findByTestId("room-list-error")).toHaveTextContent(ROOM_LIST_FAILURE_TEXT["calendar-not-connected"]);
       expect(onChange).not.toHaveBeenCalled();
@@ -183,11 +210,16 @@ describe("LocationPicker rooms (PAC-41)", () => {
       await openRoomBooking();
 
       const alert = await screen.findByTestId("room-list-error");
-      fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+      const tryAgain = within(alert).getByRole("button", { name: "Try again" });
+      tryAgain.focus(); // as a keyboard or pointer user leaves it
+      expect(tryAgain).toHaveFocus();
+      fireEvent.click(tryAgain);
 
       expect(await screen.findByRole("button", { name: "Helsinki" })).toBeInTheDocument();
       expect(screen.queryByTestId("room-list-error")).toBeNull();
       expect(search).toHaveBeenCalledTimes(2);
+      // The "Try again" button is gone, so focus returns to the search.
+      expect(screen.getByTestId("room-search-input")).toHaveFocus();
     });
   });
 });

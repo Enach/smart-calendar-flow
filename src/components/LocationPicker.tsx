@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Loader2, MapPin, Building2, Search, X, Pencil } from "lucide-react";
 import { api, ROOM_LIST_FAILURE_TEXT, roomListFailure, type RoomListFailure } from "@/api/client";
 import type { CalendarRoom } from "@/api/types";
@@ -39,6 +39,11 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
   const [enteredRoom, setEnteredRoom] = useState(Boolean(roomEmail));
   const [leftRoom, setLeftRoom] = useState(false);
   const debounceRef = useRef<number | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  // Set by "Try again": focus returns to the search once the rooms are back,
+  // since the button that held it is gone.
+  const retryingRef = useRef(false);
+  const bookingNoticeId = useId();
 
   // Show the room the form already holds as selected (AC-4). The room's
   // identifier is its address, so the match is on `id`; the search text is the
@@ -78,7 +83,12 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
         const rs = await api.searchRooms(query);
         setResults(rs);
         setFailure(null);
+        if (retryingRef.current) {
+          retryingRef.current = false;
+          searchRef.current?.focus();
+        }
       } catch (e) {
+        retryingRef.current = false;
         // A failure is said, never shown as "no rooms" (AC-16). It does not
         // touch the room address the form holds.
         const f = roomListFailure(e);
@@ -173,6 +183,9 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
         </div>
       ) : selected ? (
         <div
+          role="group"
+          aria-label="Selected room"
+          aria-describedby={bookingNoticeId}
           className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2"
           data-testid="room-selected"
         >
@@ -198,6 +211,8 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search rooms by name or address…"
               aria-label="Search rooms"
+              aria-describedby={bookingNoticeId}
+              ref={searchRef}
               data-testid="room-search-input"
               className={`${inputCls} pl-8`}
               autoFocus
@@ -212,7 +227,10 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
               {failure === "unavailable" && (
                 <button
                   type="button"
-                  onClick={() => setAttempt((n) => n + 1)}
+                  onClick={() => {
+                    retryingRef.current = true;
+                    setAttempt((n) => n + 1);
+                  }}
                   className="text-xs font-medium text-foreground underline underline-offset-2"
                 >
                   Try again
@@ -247,12 +265,12 @@ export function LocationPicker({ location, roomEmail, onChange }: LocationPicker
       )}
 
       {mode === "room" && (
-        <p className="text-[11px] text-muted-foreground" data-testid="room-booking-notice">
+        <p id={bookingNoticeId} className="text-[11px] text-muted-foreground" data-testid="room-booking-notice">
           {ROOM_NOTICE_TEXT.booking}
         </p>
       )}
       {showLeftNotice && (
-        <p className="text-[11px] text-muted-foreground" data-testid="room-left-notice">
+        <p role="status" className="text-[11px] text-muted-foreground" data-testid="room-left-notice">
           {ROOM_NOTICE_TEXT.left}
         </p>
       )}
