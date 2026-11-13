@@ -48,8 +48,11 @@ export const GUIDANCE_FILES = ["AGENTS.md", "docs/lovable-prompts/00-global-cont
 
 const ROUTE = /auth\/(login|register)\b/i;
 const PASSWORD_INPUT = [
-  // type="password", type={'password'}, type: "password", type={`password`}
-  /\btype\s*[=:]\s*\{?\s*["'`]password["'`]/i,
+  // Any quoted "password" string literal on a sign-in surface: type="password",
+  // type={'password'}, type: "password", a show/hide toggle
+  // (type={show ? "text" : "password"}) and a constant (const T = "password";
+  // type={T}). A sign-in surface has no reason to hold that literal at all.
+  /["'`]password["'`]/i,
   // el.setAttribute("type", "password")
   /setAttribute\(\s*["'`]type["'`]\s*,\s*["'`]password["'`]/i,
   // autoComplete="current-password" / "new-password" (any attribute spelling)
