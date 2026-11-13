@@ -191,6 +191,55 @@ describe("OrganizationAISection (PAC-73 Part 2)", () => {
     expect(screen.getByTestId("org-ai-forbid-warning")).toHaveTextContent("will have no AI until it is set up");
   });
 
+  // PAC-87 (spec §3.6, PAC87-AC-17): before saving, the form says whether
+  // members will be asked again; the OQ-P2-3 warning is unchanged.
+  it("before saving: a provider change says members are asked again", async () => {
+    serve(configured);
+    renderAt("/settings?stepup=granted&purpose=llm_org_key_write");
+    await screen.findByTestId("org-ai-form");
+    expect(screen.queryByTestId("org-ai-presave")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Organisation AI provider/), { target: { value: "anthropic" } });
+    expect(screen.getByTestId("org-ai-presave-provider_changed")).toHaveTextContent("will be asked to confirm again before anything is sent to the new provider");
+    fireEvent.change(screen.getByLabelText(/Organisation AI provider/), { target: { value: "" } });
+    expect(screen.getByTestId("org-ai-presave-provider_removed")).toHaveTextContent("will be asked to confirm again");
+    expect(sent.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+
+  it("before saving: a key or gateway change says members are not asked and who gains access", async () => {
+    serve(configured);
+    renderAt("/settings?stepup=granted&purpose=llm_org_key_write");
+    await screen.findByTestId("org-ai-form");
+    fireEvent.change(screen.getByLabelText(/Organisation API key/), { target: { value: "sk-rotated" } });
+    const kd = screen.getByTestId("org-ai-presave-key_or_destination");
+    expect(kd).toHaveTextContent("Members are not asked to confirm again: they agreed to OpenAI");
+    expect(kd).toHaveTextContent("another OpenAI account or to a gateway run by someone else");
+    expect(kd.textContent).not.toMatch(/\b(read|reads|see)\b/i);
+    fireEvent.change(screen.getByLabelText(/Organisation API key/), { target: { value: "" } });
+    expect(screen.queryByTestId("org-ai-presave")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Organisation base URL/), { target: { value: "https://other-gw.example" } });
+    expect(screen.getByTestId("org-ai-presave-key_or_destination")).toBeInTheDocument();
+  });
+
+  it("before saving: forbidding on a complete configuration says members are asked once and keep their settings", async () => {
+    serve(configured);
+    renderAt("/settings?stepup=granted&purpose=llm_org_key_write");
+    await screen.findByTestId("org-ai-form");
+    fireEvent.click(screen.getByLabelText(/allow members to use their own api keys/i));
+    expect(screen.getByTestId("org-ai-presave-forbid_complete")).toHaveTextContent("asked once to confirm");
+    expect(screen.queryByTestId("org-ai-forbid-warning")).not.toBeInTheDocument();
+  });
+
+  it("before saving: forbidding on an incomplete configuration shows only the existing warning", async () => {
+    serve(incomplete);
+    renderAt("/settings?stepup=granted&purpose=llm_org_key_write");
+    await screen.findByTestId("org-ai-form");
+    fireEvent.click(screen.getByLabelText(/allow members to use their own api keys/i));
+    expect(screen.getByTestId("org-ai-forbid-warning")).toHaveTextContent(
+      "Your organisation's AI is not set up completely. If you turn personal keys off now, every member except those who turned AI off will have no AI until it is set up.",
+    );
+    expect(screen.queryByTestId("org-ai-presave-forbid_complete")).not.toBeInTheDocument();
+  });
+
   it("a break-glass operator's second change in one sign-in is told to sign in again", async () => {
     serve(configured, () => json({ error: "organization_ai_write_requires_fresh_login" }, 403));
     renderAt("/settings?stepup=granted&purpose=llm_org_key_write");

@@ -56,7 +56,7 @@ import type {
   Settings,
   SuggestedSlot,
 } from "./types";
-import { isKeyProvider } from "@/lib/aiProviders";
+import { isKeyProvider, runsOnOrganizationAIInsteadOfOwnChoice } from "@/lib/aiProviders";
 
 /**
  * The apply request's proposal (snake_case, three fields) for a proposal the
@@ -923,8 +923,15 @@ export function settingsPatchBody(s: Settings, previous?: Settings): Record<stri
  * stored key (contract challenge rev. 2, non-blocking 6). An untouched key
  * field (`undefined`) sends nothing, so the stored key bound to the provider
  * is tested.
+ *
+ * PAC-87 (factory decision, contract §4, PAC87-AC-14): a member in row 9 (own
+ * or removed provider stored, organisation forbids personal keys, confirmed)
+ * sends `{}`, so the probe tests the organisation's AI their requests
+ * actually use. Naming their own provider would only be refused as "personal
+ * keys are not allowed", and a model or key would be refused with `{}` too.
  */
 export function llmTestBody(s: Settings): Record<string, string> {
+  if (runsOnOrganizationAIInsteadOfOwnChoice(s)) return {};
   const provider = String(s.llm_provider ?? "");
   // PAC-73 Part 2: a model or key is never combined with the organisation's
   // configuration (the server refuses it), so "organization", off and a

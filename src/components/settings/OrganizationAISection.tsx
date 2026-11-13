@@ -14,7 +14,15 @@ import type { SsoStepupProvider } from "@/api/generated/schemas";
 import type { OrganizationAIConfiguration } from "@/api/types";
 import { useOrganizationAI, usePatchOrganizationAI } from "@/hooks/useOrganizationAI";
 import { KEY_PROVIDERS, PROVIDER_LABELS } from "@/lib/aiProviders";
-import { formFrom, isOrgAIStepupLanding, orgAIChangeBody, type OrgAIForm } from "@/lib/orgAI";
+import {
+  forbidsWhileIncomplete,
+  formFrom,
+  isOrgAIStepupLanding,
+  orgAIChangeBody,
+  preSaveNoticeText,
+  preSaveNotices,
+  type OrgAIForm,
+} from "@/lib/orgAI";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { effectOf } from "@/api/effects";
 
@@ -73,7 +81,7 @@ function ReadView({ c }: { c: OrganizationAIConfiguration }) {
     ["Model", c.provider === "azure_openai" ? "Named by the deployment" : c.provider ? c.model || "The provider's default" : "None"],
     ["Destination", destinationText(c)],
     ["API key", c.keySet ? "A key is set" : "No key is set"],
-    ["Personal API keys", c.personalKeysAllowed ? "Allowed: a member's own key is used for them" : "Not allowed: members use the organisation's AI"],
+    ["Personal API keys", c.personalKeysAllowed ? "Allowed: a member's own key is used for them" : "Not allowed: members use the organisation's AI after confirming once"],
   ];
   return (
     <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-[10rem_1fr]" data-testid="org-ai-read">
@@ -173,7 +181,9 @@ function EditForm({ shown, onDone }: { shown: OrganizationAIConfiguration; onDon
   const set = <K extends keyof OrgAIForm>(k: K, v: OrgAIForm[K]) => setForm((f) => ({ ...f, [k]: v }));
   const p = form.provider;
   const providerChanged = p !== (base.provider ?? "");
-  const forbiddingIncomplete = !form.personalKeysAllowed && base.personalKeysAllowed && !(p && (base.configured || form.apiKey));
+  const forbiddingIncomplete = forbidsWhileIncomplete(base, form);
+  const notices = preSaveNotices(base, form);
+  const keptLabel = base.provider ? PROVIDER_LABELS[base.provider] : "your organisation's provider";
 
   const submit = async () => {
     setMessage(null);
@@ -285,6 +295,15 @@ function EditForm({ shown, onDone }: { shown: OrganizationAIConfiguration; onDon
           Your organisation's AI is not set up completely. If you turn personal keys off now, every member except those who
           turned AI off will have no AI until it is set up.
         </p>
+      )}
+      {notices.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3 text-sm text-foreground" data-testid="org-ai-presave">
+          {notices.map((n) => (
+            <p key={n} data-testid={`org-ai-presave-${n}`}>
+              {preSaveNoticeText(n, keptLabel)}
+            </p>
+          ))}
+        </div>
       )}
       {message && (
         <p role={message.kind === "error" ? "alert" : "status"} className={message.kind === "error" ? "text-sm text-destructive" : "text-sm text-foreground"}>
