@@ -137,20 +137,24 @@ describe("PAC-83 sign-in dialog", () => {
     await expectErrorViewWithoutDemo();
   });
 
-  it("AC-14: a failed password sign-in shows an error with a retry, never the demo", async () => {
-    serve({ "/api/auth/detect": () => json({ type: "generic" }), "/api/auth/login": down });
+  // PAC-98 AC-16 (replaces the password-step case: Paceday has no password
+  // sign-in). The personal-address step's Google start while Paceday is
+  // unreachable shows the failure view with a retry, never the demo; the
+  // retry starts Google with the same hint.
+  it("AC-14 / PAC-98 AC-16: Google from the personal-address step while unreachable shows an error with a retry, never the demo", async () => {
+    serve({ "/api/auth/detect": () => json({ type: "generic" }), "/api/health": down });
     renderDialog();
-    fireEvent.change(await screen.findByLabelText("Work email"), { target: { value: "a@acme.com" } });
+    fireEvent.change(await screen.findByLabelText("Work email"), { target: { value: "dave@yahoo.com" } });
     fireEvent.click(screen.getByRole("button", { name: /continue$/i }));
-    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "secret12" } });
-    fireEvent.click(screen.getAllByRole("button", { name: /^sign in$/i }).find((b) => b.getAttribute("type") === "submit")!);
+    fireEvent.click(await screen.findByTestId("auth-personal-google"));
     await expectErrorViewWithoutDemo();
-    // Retry re-sends the sign-in the user made.
-    serve({ "/api/auth/login": () => json({ ok: true }) });
-    const before = fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/api/auth/login")).length;
+    expect(assigned).toHaveLength(0);
+    expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
+
+    serve({ "/api/health": () => json({ status: "ok" }) });
     fireEvent.click(screen.getByTestId("api-error-retry"));
     await waitFor(() =>
-      expect(fetchMock.mock.calls.filter(([u]) => String(u).endsWith("/api/auth/login")).length).toBe(before + 1),
+      expect(assigned).toEqual(["https://api.paceday.test/api/auth/google?login_hint=dave%40yahoo.com"]),
     );
   });
 

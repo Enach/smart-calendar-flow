@@ -19,7 +19,7 @@ vi.mock("@/contexts/useAuth", () => ({
 }));
 
 import { AuthDialog } from "./AuthDialog";
-import { readRememberedSignInEmail, rememberSignInEmail } from "./rememberedEmail";
+import { readRememberedSignInEmail, rememberSignInEmail, rememberSignInEmailKind } from "./rememberedEmail";
 import { resetApiAvailability } from "@/lib/api";
 
 const API = "https://api.paceday.test";
@@ -242,8 +242,11 @@ describe("AuthDialog provider choice (PAC-97)", () => {
   });
 
   // AC-25 (dialog half): opened from a failure notice with a remembered email.
+  // PAC-98 AC-15 changes the setup only: the tab records the company kind
+  // with the email (as the dialog does after detection); the assertions stay.
   it("opened from a failure notice, offers both providers for the remembered email", async () => {
     rememberSignInEmail("alice@gorgias.com");
+    rememberSignInEmailKind("company");
     serve({ type: "google" });
     renderDialog({ offerSwitch: true });
 

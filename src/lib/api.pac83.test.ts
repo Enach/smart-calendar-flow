@@ -26,7 +26,7 @@ describe("apiFetch (PAC-83)", () => {
     vi.unstubAllGlobals();
   });
 
-  it.each(["/api/auth/me", "/api/auth/detect", "/api/auth/login", "/api/auth/logout"])(
+  it.each(["/api/auth/me", "/api/auth/detect", "/api/auth/disconnect", "/api/auth/logout"])(
     "AC-3: %s is still waiting at 131 s and lost at CLIENT_REQUEST_BOUND_MS",
     async (path) => {
       vi.useFakeTimers();
