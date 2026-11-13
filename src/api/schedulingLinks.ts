@@ -10,6 +10,11 @@ import { requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
 import type { components, operations } from "./generated/types";
 import {
+  ArchivedSchedulingLinkDetail as ArchivedSchedulingLinkDetailSchema,
+  ArchivedSchedulingLinkListResponse as ArchivedSchedulingLinkListResponseSchema,
+} from "./generated/schemas";
+import type { ArchivedSchedulingLinkDetail, ArchivedSchedulingLinkListResponse } from "./types";
+import {
   BOOKING_HORIZON_DEFAULT_DAYS,
   BOOKING_HORIZON_MAX_DAYS,
   BOOKING_HORIZON_MIN_DAYS,
@@ -192,7 +197,23 @@ export const schedulingLinkKeys = {
   links: ["scheduling-links"] as const,
   invites: ["scheduling-link-invites"] as const,
   bookings: (linkId: string) => ["scheduling-link-bookings", linkId] as const,
+  /** PAC-40: the owner's archive of deleted links (list + erasure policy). */
+  archive: ["scheduling-link-archive"] as const,
+  archivedLink: (linkId: string) => ["scheduling-link-archive", linkId] as const,
 };
+
+/**
+ * PAC-40 (contract section 7, challenge K4-7): the archive answered 200 but its
+ * body does not match the generated schema (for example a field added by a
+ * later server). The archive is then unavailable: nothing is shown from it and
+ * no erasure is promised. Never a reason to fall back to other data.
+ */
+export class ArchiveUnavailableError extends Error {
+  constructor() {
+    super("archive unavailable");
+    this.name = "ArchiveUnavailableError";
+  }
+}
 
 
 export interface LinkFormValues {
@@ -422,6 +443,37 @@ export const schedulingLinksApi = {
           notes: b.notes,
           };
         });
+      }),
+
+  /**
+   * PAC-40: GET /scheduling-links/archive, the caller's deleted links (most
+   * recently deleted first) and the server's BookerErasurePolicy. Parsed
+   * strictly with the generated schema; a body that fails it is
+   * ArchiveUnavailableError (K4-7). An HTTP or transport failure is the
+   * caller's error as for every other read (PAC-83).
+   */
+  listArchive: () =>
+    demoOrReal<ArchivedSchedulingLinkListResponse>("schedulingLinksApi.listArchive", [], async () => {
+        const raw = await requestApi<unknown>("GET", "/scheduling-links/archive");
+        const parsed = ArchivedSchedulingLinkListResponseSchema.safeParse(raw);
+        if (!parsed.success) throw new ArchiveUnavailableError();
+        // Validated above; the cast only bridges zod's inferred type (nullable
+        // fields) to the generated contract type it was generated from.
+        return parsed.data as ArchivedSchedulingLinkListResponse;
+      }),
+
+  /**
+   * PAC-40: GET /scheduling-links/archive/:id, one deleted link and every one
+   * of its bookings. 404 (unknown, live, paused or not the caller's) reaches the
+   * caller as an ApiHttpError; a body that fails the schema is
+   * ArchiveUnavailableError.
+   */
+  getArchivedLink: (id: string) =>
+    demoOrReal<ArchivedSchedulingLinkDetail>("schedulingLinksApi.getArchivedLink", [id], async () => {
+        const raw = await requestApi<unknown>("GET", `/scheduling-links/archive/${encodeURIComponent(id)}`);
+        const parsed = ArchivedSchedulingLinkDetailSchema.safeParse(raw);
+        if (!parsed.success) throw new ArchiveUnavailableError();
+        return parsed.data as ArchivedSchedulingLinkDetail;
       }),
 
 

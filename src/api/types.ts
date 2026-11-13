@@ -414,3 +414,16 @@ export interface BookingConfirmation {
   booker_email: string;
   notes?: string;
 }
+
+/**
+ * PAC-40 (contract section 2): the owner's archive of deleted links. These are
+ * the generated contract types, re-exported under the names the app uses; no
+ * field is redeclared here.
+ */
+export type {
+  ArchivedSchedulingLink,
+  ArchivedSchedulingLinkBooking,
+  ArchivedSchedulingLinkDetail,
+  ArchivedSchedulingLinkListResponse,
+  BookerErasurePolicy,
+} from "./generated/schemas";
