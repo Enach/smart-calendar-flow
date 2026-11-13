@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { TOP_LEVEL_LINK_TARGET, isFramed } from "./framing";
+import { TOP_LEVEL_LINK_TARGET, frameGuardEnabled, isFramed } from "./framing";
 
 describe("PAC-91 framing helpers (contract section 3.1)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("the guard is enforced in a production build (__PACEDAY_DEMO_BUILD__ false)", () => {
+    vi.stubGlobal("__PACEDAY_DEMO_BUILD__", false);
+    expect(frameGuardEnabled()).toBe(true);
+  });
+
+  it("the guard is off in a non-production build (__PACEDAY_DEMO_BUILD__ true: Lovable preview, dev)", () => {
+    vi.stubGlobal("__PACEDAY_DEMO_BUILD__", true);
+    expect(frameGuardEnabled()).toBe(false);
   });
 
   it("the shared link target is the top-level browsing context (OQ-1 default)", () => {

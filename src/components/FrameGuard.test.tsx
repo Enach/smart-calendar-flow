@@ -3,6 +3,8 @@
  * App: its BrowserRouter, its routes, the real AuthProvider and RequireAuth.
  *
  * - isFramed() is stubbed (contract 3.1: never jsdom's window.top alone).
+ * - frameGuardEnabled() is stubbed: true (production build) for AC-6..11,
+ *   false (non-production build: Lovable preview, dev) in the last block.
  * - Every route component is replaced by a stub, or wrapped when its own
  *   behaviour matters (Logout, AuthCallback, PublicBooking, RequireAuth), so a
  *   render counter proves the route never rendered — not even once before the
@@ -15,7 +17,7 @@ import { act, render, screen } from "@testing-library/react";
 
 import App from "@/App";
 import { schedulingLinksApi, type PublicSlotsParams } from "@/api/schedulingLinks";
-import { TOP_LEVEL_LINK_TARGET, isFramed } from "@/lib/framing";
+import { TOP_LEVEL_LINK_TARGET, frameGuardEnabled, isFramed } from "@/lib/framing";
 
 const h = vi.hoisted(() => {
   const renders: Record<string, number> = {};
@@ -34,6 +36,7 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/framing", async (orig) => ({
   ...(await orig<typeof import("@/lib/framing")>()),
   isFramed: vi.fn(() => false),
+  frameGuardEnabled: vi.fn(() => true),
 }));
 
 vi.mock("@/pages/Index", async () => ({ default: await h.counted("Index") }));
@@ -112,6 +115,7 @@ function listing(params: PublicSlotsParams) {
 }
 
 beforeEach(() => {
+  vi.mocked(frameGuardEnabled).mockReturnValue(true);
   for (const k of Object.keys(h.renders)) delete h.renders[k];
   requests = [];
   vi.stubGlobal(
@@ -240,5 +244,40 @@ describe("PAC-91 FrameGuard: the booking page and the unframed app are unchanged
       expect(rendersOf(components)).toBeGreaterThan(0);
     }
     expect(apiRequests().some((u) => u.includes("/api/auth/me"))).toBe(true);
+  });
+});
+
+describe("PAC-91 FrameGuard off in a non-production build (Lovable preview, PAC-83 demo)", () => {
+  beforeEach(() => {
+    vi.mocked(frameGuardEnabled).mockReturnValue(false);
+  });
+
+  it.each(NON_BOOKING_ROUTES.slice(0, 9))("framed on %s, no notice and the route renders as unframed", async (path, components) => {
+    framed(true);
+    open(path);
+    await settle();
+
+    expect(screen.queryByTestId("frame-notice")).not.toBeInTheDocument();
+    if (components[0] === "RequireAuth") {
+      expect(h.renders.RequireAuth).toBeGreaterThan(0);
+      expect(window.location.pathname).toBe("/");
+      expect(screen.getByText("page:Index")).toBeInTheDocument();
+    } else {
+      expect(rendersOf(components)).toBeGreaterThan(0);
+    }
+    expect(apiRequests().some((u) => u.includes("/api/auth/me"))).toBe(true);
+  });
+
+  it("framed on the booking page, a client-side navigation to /signin renders the sign-in page", async () => {
+    framed(true);
+    open("/book/intro");
+    await screen.findByRole("heading", { name: "Intro call" });
+    await act(async () => {
+      window.history.pushState(null, "", "/signin");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await settle();
+    expect(screen.queryByTestId("frame-notice")).not.toBeInTheDocument();
+    expect(screen.getByText("page:SignIn")).toBeInTheDocument();
   });
 });

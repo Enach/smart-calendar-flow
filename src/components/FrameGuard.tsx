@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { matchPath, useLocation } from "react-router-dom";
 
-import { BOOKING_ROUTE_PATH, TOP_LEVEL_LINK_TARGET, isFramed } from "@/lib/framing";
+import { BOOKING_ROUTE_PATH, TOP_LEVEL_LINK_TARGET, frameGuardEnabled, isFramed } from "@/lib/framing";
 
 /**
  * PAC-91 (contract section 3.3). Mounted inside BrowserRouter and above
@@ -10,11 +10,12 @@ import { BOOKING_ROUTE_PATH, TOP_LEVEL_LINK_TARGET, isFramed } from "@/lib/frami
  * notice renders. No effect and no state, so no route component, no session
  * probe and no redirect ever runs first (spec D-7); the location is read on
  * every render, so a client-side navigation away from the booking page is
- * caught too (AC-10).
+ * caught too (AC-10). Enforced in production builds only (frameGuardEnabled):
+ * a non-production build renders as before, framed or not.
  */
 export function FrameGuard({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  if (!isFramed() || matchPath(BOOKING_ROUTE_PATH, pathname)) return <>{children}</>;
+  if (!frameGuardEnabled() || !isFramed() || matchPath(BOOKING_ROUTE_PATH, pathname)) return <>{children}</>;
   return <FrameNotice />;
 }
 

@@ -19,6 +19,18 @@ export const BOOKING_ROUTE_PATH = "/book/:slug";
 export const TOP_LEVEL_LINK_TARGET = "_top";
 
 /**
+ * Whether the frame guard is enforced: in production builds only. Non-production
+ * builds (the Lovable preview, which its editor shows in an iframe, and dev)
+ * keep the PAC-83 demo reachable there, so they are keyed on the same literal
+ * build flag as the demo (factory decision on the PAC-91 review, option (a);
+ * owner PAC-83 OQ-1). nginx still refuses framing of every non-booking route
+ * in every deployment. A function, not a constant, so tests can mock it.
+ */
+export function frameGuardEnabled(): boolean {
+  return !__PACEDAY_DEMO_BUILD__;
+}
+
+/**
  * True when this window is not the top-level browsing context. It compares
  * window identities only and never reads anything from the embedder, so it
  * cannot throw across origins; should a browser throw anyway, it answers
