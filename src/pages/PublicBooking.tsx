@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, CalendarDays, CheckCircle2, Clock, Globe, Loader2, Users } from "lucide-react";
@@ -13,31 +13,27 @@ import { CoveragePill } from "@/components/CoveragePill";
 import { apiErrorMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { StillWorking } from "@/components/StillWorking";
-import { schedulingLinksApi } from "@/api/schedulingLinks";
+import { TimeZoneSwitcher } from "@/components/booking/TimeZoneSwitcher";
+import { downloadIcs } from "@/components/booking/ics";
+import { schedulingLinksApi, type PublicSlotsAnswer } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
-import { UI_LOCALE } from "@/lib/locale";
-import { formatTime } from "@/lib/timeFormat";
-
-function pad(n: number) {
-  return n < 10 ? `0${n}` : `${n}`;
-}
-function dateOnlyStr(d: Date) {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-function fmtTime(iso: string) {
-  // Always 12-hour: the booker has no account and no preference (PAC-55 §5).
-  return formatTime(iso, "12h", "numeric");
-}
-function fmtDateLong(iso: string) {
-  return new Date(iso).toLocaleDateString(UI_LOCALE, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
+import { formatTimeInZone } from "@/lib/timeFormat";
+import {
+  browserTimeZone,
+  dateKeyInZone,
+  formatDateKeyLong,
+  formatDateLongInZone,
+  hostDisplayZone,
+  keyToLocalDate,
+  localDateToKey,
+  monthGrid,
+  monthOfKey,
+  zoneLabel,
+  zoneNoonInstant,
+  zoneOffsetLabel,
+} from "@/lib/timeZone";
 
 // NEW-booking-rate-limit: the server answers 429 when one client books or
 // looks up times too often. The booker sees a plain wait-and-retry message, not
@@ -48,16 +44,38 @@ const BOOKING_RATE_LIMITED_MESSAGE =
 const SLOTS_RATE_LIMITED_MESSAGE =
   "Too many requests for available times. Please wait a minute, then retry.";
 
+/** PAC-88 (contract section 2.4): the server's 400 for a zone its tz database lacks. */
+const DISPLAY_ZONE_REFUSED = "invalid display_time_zone, use an IANA time zone name";
+/** PAC-88 (spec 3.8): the link's zone changed and re-reading it did not settle it. */
+const ZONE_CHANGED_MESSAGE = "The host's time zone just changed. Try again to see the times.";
+
 function httpStatus(e: unknown): number | undefined {
   return isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
 }
 
-function browserTimezone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  } catch {
-    return "UTC";
-  }
+function isDisplayZoneRefusal(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 400 && (e.data as { error?: string } | undefined)?.error === DISPLAY_ZONE_REFUSED;
+}
+
+/**
+ * PAC-88 (contract sections 3.2 and 5): an answer is rendered only when it is
+ * in the zone the page asked for and was computed in the link zone the page
+ * holds. "legacy": the server did not echo `display_time_zone` (a server
+ * without PAC-88): link-zone mode for the rest of the visit. "stale-zone": the
+ * host changed zone since link info was read: re-read it (AC-26).
+ */
+type AnswerCheck = "ok" | "legacy" | "stale-zone";
+function checkAnswer(
+  answer: PublicSlotsAnswer | undefined,
+  sentZone: string,
+  linkZone: string | undefined,
+  legacy: boolean,
+): AnswerCheck | undefined {
+  if (!answer) return undefined;
+  if (legacy) return "ok";
+  if (answer.display_time_zone !== sentZone) return "legacy";
+  if (linkZone !== undefined && answer.time_zone !== linkZone) return "stale-zone";
+  return "ok";
 }
 
 function hostsLabel(hosts: PublicLinkInfo["hosts"]): string {
@@ -68,48 +86,9 @@ function hostsLabel(hosts: PublicLinkInfo["hosts"]): string {
   return `${names[0]} + ${names.length - 1} others`;
 }
 
-function buildIcs(conf: BookingConfirmation): string {
-  const dt = (s: string) => new Date(s).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-  const lines = [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "PRODID:-//Paceday//Booking//EN",
-    "CALSCALE:GREGORIAN",
-    "METHOD:PUBLISH",
-    "BEGIN:VEVENT",
-    `UID:${conf.id}@paceday.com`,
-    `DTSTAMP:${dt(new Date().toISOString())}`,
-    `DTSTART:${dt(conf.start)}`,
-    `DTEND:${dt(conf.end)}`,
-    `SUMMARY:${conf.title}`,
-    `DESCRIPTION:Booked via Paceday${conf.notes ? `\\n\\n${conf.notes.replace(/\n/g, "\\n")}` : ""}`,
-    `ORGANIZER;CN=${conf.hosts[0]?.name || conf.hosts[0]?.email}:mailto:${conf.hosts[0]?.email || ""}`,
-    ...conf.hosts.map(
-      (h) =>
-        `ATTENDEE;CN=${h.name || h.email};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${h.email}`,
-    ),
-    `ATTENDEE;CN=${conf.booker_name};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${conf.booker_email}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-  ];
-  return lines.join("\r\n");
-}
-
-function downloadIcs(conf: BookingConfirmation) {
-  const blob = new Blob([buildIcs(conf)], { type: "text/calendar" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${conf.link_slug}-${dateOnlyStr(new Date(conf.start))}.ics`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export default function PublicBooking() {
   const { slug = "" } = useParams<{ slug: string }>();
-  const tz = useMemo(browserTimezone, []);
+  const browserZone = useMemo(browserTimeZone, []);
 
   const linkQuery = useQuery({
     queryKey: ["public-link", slug],
@@ -120,7 +99,8 @@ export default function PublicBooking() {
   const link = linkQuery.data;
   const isCollective = (link?.hosts.length ?? 0) > 1;
   const [duration, setDuration] = useState<number | null>(null);
-  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  /** The selected day: a calendar date (YYYY-MM-DD) in the displayed zone. */
+  const [selectedDay, setSelectedDay] = useState<string | undefined>(undefined);
   const [selectedSlot, setSelectedSlot] = useState<BookingSlot | null>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -140,6 +120,29 @@ export default function PublicBooking() {
   const [unconfirmedSlot, setUnconfirmedSlot] = useState<BookingSlot | null>(null);
   const [confirmation, setConfirmation] = useState<BookingConfirmation | null>(null);
 
+  // ----- PAC-88: the displayed zone. Page state only, never stored (owner OQ-2). -----
+  /** The host's zone the page opens in: the link's zone, UTC when none or unformattable. */
+  const hostZone = hostDisplayZone(link?.time_zone);
+  /** The visitor's choice; null = follow the host's zone. */
+  const [chosenZone, setChosenZone] = useState<string | null>(null);
+  /** The zone shown before the last switch, to return to after a 400 (contract 3.2). */
+  const [previousZone, setPreviousZone] = useState<string | null>(null);
+  /** Link-zone mode against a server without PAC-88 (contract section 5). */
+  const [legacy, setLegacy] = useState(false);
+  const displayZone = legacy || !chosenZone ? hostZone : chosenZone;
+  const [unsupportedZone, setUnsupportedZone] = useState<string | null>(null);
+  /** The polite live region's text: set only by a change the visitor caused. */
+  const [announcement, setAnnouncement] = useState("");
+  /** After a switch, the selected day is re-checked against the new overview. */
+  const [dayCheckPending, setDayCheckPending] = useState(false);
+  /** The zone the confirmed booking was made in (AC-21, AC-30). */
+  const [bookedZone, setBookedZone] = useState<string | null>(null);
+  const [month, setMonth] = useState<Date | undefined>(undefined);
+
+  const todayKey = dateKeyInZone(Date.now(), displayZone);
+  const shownMonth = month ?? monthOfKey(todayKey);
+  const grid = monthGrid(shownMonth);
+
   // Default duration once link loads.
   useEffect(() => {
     if (link && duration == null) {
@@ -147,33 +150,159 @@ export default function PublicBooking() {
     }
   }, [link, duration]);
 
-  // Slots for the selected day. The backend answers per date; `available_dates`
-  // is only used when the backend actually returns it.
-  const dateStr = selectedDate ? dateOnlyStr(selectedDate) : undefined;
-  const slotsQuery = useQuery({
-    queryKey: ["public-slots", slug, dateStr, duration],
-    queryFn: () => schedulingLinksApi.getPublicSlots(slug, { date: dateStr!, duration: duration! }),
-    enabled: !!dateStr && !!duration,
-    placeholderData: (prev) => prev,
+  // The day overview of the visible grid (at most 42 days, contract 3.2). The
+  // zone, the grid, the duration and the link zone are in the key, and no
+  // answer is kept as a placeholder, so another zone's days are never shown.
+  const overviewQuery = useQuery({
+    queryKey: ["public-slots-overview", slug, duration, displayZone, link?.time_zone, legacy, grid.from, grid.to],
+    queryFn: () =>
+      schedulingLinksApi.getPublicSlots(slug, {
+        from: grid.from,
+        to: grid.to,
+        duration: duration!,
+        displayTimeZone: displayZone,
+      }),
+    enabled: !!link && !!duration,
     retry: false,
   });
-  const slots = slotsQuery.data?.slots ?? [];
-  const availableDates = useMemo(() => {
-    const s = new Set<string>();
-    (slotsQuery.data?.available_dates ?? []).forEach((d) => s.add(d));
-    return s;
-  }, [slotsQuery.data]);
+
+  // The selected day's times: one answer per displayed day (AC-16).
+  const daySlotsQuery = useQuery({
+    queryKey: ["public-slots", slug, selectedDay, duration, displayZone, link?.time_zone, legacy],
+    queryFn: () =>
+      schedulingLinksApi.getPublicSlots(slug, { date: selectedDay!, duration: duration!, displayTimeZone: displayZone }),
+    enabled: !!link && !!selectedDay && !!duration,
+    retry: false,
+  });
+
+  const overviewCheck = checkAnswer(overviewQuery.data, displayZone, link?.time_zone, legacy);
+  const dayCheck = checkAnswer(daySlotsQuery.data, displayZone, link?.time_zone, legacy);
+
+  const availableDates = useMemo(
+    () => new Set(overviewCheck === "ok" ? overviewQuery.data?.available_dates ?? [] : []),
+    [overviewCheck, overviewQuery.data],
+  );
+  const slots = useMemo(() => (dayCheck === "ok" ? daySlotsQuery.data?.slots ?? [] : []), [dayCheck, daySlotsQuery.data]);
+  const isSelectable = (key: string) => key >= todayKey && availableDates.has(key);
+
+  // Newer web, older server: link-zone mode for the rest of the visit.
+  useEffect(() => {
+    if (!legacy && (overviewCheck === "legacy" || dayCheck === "legacy")) {
+      setLegacy(true);
+      setChosenZone(null);
+      setPreviousZone(null);
+    }
+  }, [legacy, overviewCheck, dayCheck]);
+
+  // The host changed zone (AC-26): re-read link info once per mismatch; the
+  // new zone is in the query keys, so the listing is asked again in it.
+  const staleZone =
+    overviewCheck === "stale-zone"
+      ? overviewQuery.data?.time_zone
+      : dayCheck === "stale-zone"
+        ? daySlotsQuery.data?.time_zone
+        : undefined;
+  const rereadFor = useRef<string | null>(null);
+  const staleKey = staleZone === undefined ? null : `${staleZone}|${link?.time_zone}`;
+  const refetchLink = linkQuery.refetch;
+  useEffect(() => {
+    if (staleKey === null || rereadFor.current === staleKey) return;
+    rereadFor.current = staleKey;
+    void refetchLink();
+  }, [staleKey, refetchLink]);
+  const zoneStuck = staleKey !== null && rereadFor.current === staleKey && !linkQuery.isFetching;
+
+  // A zone the server's tz database lacks: back to the zone shown before,
+  // never times in the refused zone (contract 3.2).
+  const zoneRefused =
+    displayZone !== hostZone &&
+    ((overviewQuery.isError && isDisplayZoneRefusal(overviewQuery.error)) ||
+      (daySlotsQuery.isError && isDisplayZoneRefusal(daySlotsQuery.error)));
+  useEffect(() => {
+    if (!zoneRefused) return;
+    const back = previousZone && previousZone !== displayZone ? previousZone : hostZone;
+    setUnsupportedZone(displayZone);
+    setChosenZone(back === hostZone ? null : back);
+    setPreviousZone(null);
+    if (selectedSlot) setSelectedDay(dateKeyInZone(selectedSlot.start, back));
+    setAnnouncement(`Times can't be shown in ${displayZone}. Choose another time zone.`);
+  }, [zoneRefused, previousZone, displayZone, hostZone, selectedSlot]);
+
+  // After a switch, a selected day with no time in the new zone is dropped
+  // and the visitor is told to pick a date (AC-14, spec 3.9). The visible
+  // grid's overview decides only for a day inside that grid; a selected day
+  // the visitor has paged away from is decided by its own answer in the new
+  // zone (review of #144: the overview of another month knows nothing of it).
+  const selectedInGrid = !!selectedDay && selectedDay >= grid.from && selectedDay <= grid.to;
+  useEffect(() => {
+    if (!dayCheckPending || !selectedDay) return;
+    let hasTimes: boolean;
+    if (selectedInGrid) {
+      if (overviewCheck !== "ok" || overviewQuery.isFetching) return;
+      hasTimes = availableDates.has(selectedDay);
+    } else {
+      if (dayCheck !== "ok" || daySlotsQuery.isFetching) return;
+      hasTimes = slots.length > 0;
+    }
+    setDayCheckPending(false);
+    if (!(selectedDay >= todayKey && hasTimes)) {
+      const dropped = selectedDay;
+      setSelectedDay(undefined);
+      setAnnouncement((a) => `${a} ${formatDateKeyLong(dropped)} has no times in ${displayZone}. Pick a date.`.trim());
+    }
+  }, [
+    dayCheckPending,
+    selectedDay,
+    selectedInGrid,
+    overviewCheck,
+    overviewQuery.isFetching,
+    availableDates,
+    dayCheck,
+    daySlotsQuery.isFetching,
+    slots,
+    todayKey,
+    displayZone,
+  ]);
+
+  const overviewFailed =
+    overviewQuery.isError && classifyApiFailure(overviewQuery.error) !== "cancelled" && !zoneRefused;
   // PAC-83 AC-11: a failed listing is an error with a retry — never an empty
   // list and never "no time available" (and never the previous day's times).
-  const slotsFailed = slotsQuery.isError && classifyApiFailure(slotsQuery.error) !== "cancelled";
+  const slotsFailed = daySlotsQuery.isError && classifyApiFailure(daySlotsQuery.error) !== "cancelled" && !zoneRefused;
 
-  // Reset slot selection when date / duration change.
-  useEffect(() => {
+  function resetChoice() {
     setSelectedSlot(null);
     setSubmitError(null);
     setSubmitFailure(null);
     setUnconfirmedSlot(null);
-  }, [dateStr, duration]);
+  }
+
+  function pickDay(date: Date | undefined) {
+    setSelectedDay(date ? localDateToKey(date) : undefined);
+    setDayCheckPending(false);
+    resetChoice();
+  }
+
+  function pickDuration(d: number) {
+    if (d === duration) return;
+    setDuration(d);
+    resetChoice();
+  }
+
+  function switchZone(zone: string) {
+    if (legacy || zone === displayZone) return;
+    setPreviousZone(displayZone);
+    setChosenZone(zone === hostZone ? null : zone);
+    setUnsupportedZone(null);
+    if (selectedSlot) {
+      // The chosen time stays chosen and is shown again in the new zone (AC-15).
+      setSelectedDay(dateKeyInZone(selectedSlot.start, zone));
+    } else if (selectedDay) {
+      setDayCheckPending(true);
+    }
+    const at = selectedSlot ? selectedSlot.start : selectedDay ? zoneNoonInstant(selectedDay, zone) : new Date();
+    setAnnouncement(`Times are now shown in ${zone}, ${zoneOffsetLabel(at, zone)}.`);
+  }
 
   const bookMutation = useMutation({
     mutationFn: () =>
@@ -186,6 +315,7 @@ export default function PublicBooking() {
       }),
     retry: false,
     onSuccess: (conf) => {
+      setBookedZone(displayZone);
       setConfirmation(conf);
       setSubmitError(null);
       setSubmitFailure(null);
@@ -201,10 +331,10 @@ export default function PublicBooking() {
       } else if (status === 409) {
         setSubmitError(detail ?? "This slot was just taken — please pick another time.");
         setSelectedSlot(null);
-        slotsQuery.refetch();
+        daySlotsQuery.refetch();
       } else if (status === 422) {
         setSubmitError(detail ?? "This time can't be booked — the host requires more advance notice.");
-        slotsQuery.refetch();
+        daySlotsQuery.refetch();
       } else if (status === 400) {
         setSubmitError(detail ?? "Please check your details and try again.");
       } else if (status === 410) {
@@ -219,7 +349,7 @@ export default function PublicBooking() {
         setSubmitFailure(e);
         setUnconfirmedSlot(selectedSlot);
         setSelectedSlot(null);
-        void slotsQuery.refetch();
+        void daySlotsQuery.refetch();
       } else {
         setSubmitError(apiErrorMessage(e));
         toast.error("Booking failed");
@@ -285,6 +415,8 @@ export default function PublicBooking() {
 
   // ---------- Render: confirmation ----------
   if (confirmation) {
+    // In the zone shown when the visitor booked (AC-21).
+    const zone = bookedZone ?? displayZone;
     return (
       <div className="min-h-screen bg-background">
         <div className="mx-auto max-w-2xl px-4 py-12 sm:py-20">
@@ -306,25 +438,28 @@ export default function PublicBooking() {
               <div className="flex items-start gap-3">
                 <CalendarDays className="mt-0.5 h-5 w-5 text-muted-foreground" />
                 <div>
-                  <p className="text-sm font-medium text-foreground">{fmtDateLong(confirmation.start)}</p>
+                  <p className="text-sm font-medium text-foreground">{formatDateLongInZone(confirmation.start, zone)}</p>
                   <p className="text-sm text-muted-foreground">
-                    {fmtTime(confirmation.start)} – {fmtTime(confirmation.end)} · {confirmation.duration_minutes} min
+                    {formatTimeInZone(confirmation.start, zone)} – {formatTimeInZone(confirmation.end, zone)} ·{" "}
+                    {confirmation.duration_minutes} min
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{tz}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{zoneLabel(zone, confirmation.start)}</p>
                 </div>
               </div>
             </div>
 
             <div className="mt-6 flex flex-col items-center gap-3">
-              <Button onClick={() => downloadIcs(confirmation)}>
+              <Button onClick={() => downloadIcs(confirmation, zone)}>
                 <CalendarDays className="h-4 w-4" /> Add to calendar
               </Button>
               <button
                 type="button"
                 onClick={() => {
+                  // The chosen zone stays for the visit (AC-21, AC-25).
                   setConfirmation(null);
+                  setBookedZone(null);
                   setSelectedSlot(null);
-                  setSelectedDate(undefined);
+                  setSelectedDay(undefined);
                   setName("");
                   setEmail("");
                   setNotes("");
@@ -351,8 +486,24 @@ export default function PublicBooking() {
   }
 
   // ---------- Render: main booking flow ----------
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const labelInstant = selectedSlot
+    ? selectedSlot.start
+    : selectedDay
+      ? zoneNoonInstant(selectedDay, displayZone)
+      : new Date();
+  const dayPending =
+    daySlotsQuery.isLoading ||
+    (daySlotsQuery.isFetching && slots.length === 0) ||
+    (!!daySlotsQuery.data && dayCheck !== "ok" && !zoneStuck);
+  const slotOffsets = slots.map((s) => zoneOffsetLabel(s.start, displayZone));
+  // A transition day: each time carries its own offset (spec 3.2, AC-17, AC-18).
+  const mixedOffsets = new Set(slotOffsets).size > 1;
+  const retryAfterZoneChange = () => {
+    rereadFor.current = null;
+    void linkQuery.refetch();
+    void overviewQuery.refetch();
+    if (selectedDay) void daySlotsQuery.refetch();
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -385,7 +536,7 @@ export default function PublicBooking() {
                       <button
                         key={d}
                         type="button"
-                        onClick={() => setDuration(d)}
+                        onClick={() => pickDuration(d)}
                         className={cn(
                           "min-h-[44px] rounded-full border px-4 py-2 text-sm font-medium transition",
                           on
@@ -407,8 +558,8 @@ export default function PublicBooking() {
                 <span>{duration ?? link.durations[0]} minutes</span>
               </div>
               <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4" />
-                <span>{tz}</span>
+                <Globe className="h-4 w-4" aria-hidden="true" />
+                <span data-testid="booking-tz-label">{zoneLabel(displayZone, labelInstant)}</span>
               </div>
               {isCollective && (
                 <div className="flex items-center gap-2">
@@ -434,6 +585,23 @@ export default function PublicBooking() {
                 </div>
               )}
             </div>
+
+            <TimeZoneSwitcher
+              value={displayZone}
+              linkZone={link.time_zone}
+              hostZone={hostZone}
+              browserZone={browserZone}
+              disabled={legacy}
+              onChange={switchZone}
+            />
+            {unsupportedZone && (
+              <p data-testid="booking-tz-unsupported" className="text-sm text-destructive">
+                Times can't be shown in {unsupportedZone}. Choose another time zone.
+              </p>
+            )}
+            <div data-testid="booking-tz-announcer" role="status" aria-live="polite" className="sr-only">
+              {announcement}
+            </div>
           </aside>
 
           {/* RIGHT — 3-step flow */}
@@ -443,24 +611,44 @@ export default function PublicBooking() {
                 <CoveragePill coverage={link.coverage} compactPrivate />
               </div>
             )}
+            {zoneStuck && (
+              <ApiErrorNotice
+                className="mb-3"
+                error={new Error(ZONE_CHANGED_MESSAGE)}
+                effect="read"
+                message={ZONE_CHANGED_MESSAGE}
+                onRetry={retryAfterZoneChange}
+                retrying={linkQuery.isFetching}
+              />
+            )}
             {!selectedSlot ? (
               <div className="grid gap-6 sm:grid-cols-[auto_1fr]">
                 <div>
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Pick a date
                   </p>
+                  {/* AC-16a: a failed overview leaves no day selectable. */}
+                  {overviewFailed && (
+                    <ApiErrorNotice
+                      className="mb-3"
+                      error={overviewQuery.error}
+                      effect="read"
+                      message={httpStatus(overviewQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
+                      onRetry={() => void overviewQuery.refetch()}
+                      retrying={overviewQuery.isFetching}
+                    />
+                  )}
                   <Calendar
                     mode="single"
-                    selected={selectedDate}
-                    onSelect={setSelectedDate}
-                    disabled={(date) => {
-                      if (date < today) return true;
-                      // Only grey out days when the backend actually told us
-                      // which dates are open; otherwise every future day is
-                      // selectable and availability is resolved per-day.
-                      if (availableDates.size === 0) return false;
-                      return !availableDates.has(dateOnlyStr(date));
-                    }}
+                    fixedWeeks
+                    month={shownMonth}
+                    onMonthChange={setMonth}
+                    today={keyToLocalDate(todayKey)}
+                    selected={selectedDay ? keyToLocalDate(selectedDay) : undefined}
+                    onSelect={pickDay}
+                    // Days are days of the displayed zone; only a day the
+                    // overview lists, from today (displayed zone), is selectable.
+                    disabled={(date) => !isSelectable(localDateToKey(date))}
                     className="pointer-events-auto rounded-md border border-border bg-background p-3"
                   />
                 </div>
@@ -468,7 +656,7 @@ export default function PublicBooking() {
                 {/* Step 2 — Slots */}
                 <div>
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {selectedDate ? fmtDateLong(selectedDate.toISOString()) : "Available times"}
+                    {selectedDay ? formatDateKeyLong(selectedDay) : "Available times"}
                   </p>
                   {/* A 409 (or 422) on submit clears the chosen slot and returns
                       here, so the reason must be shown here too: it used to live
@@ -483,31 +671,32 @@ export default function PublicBooking() {
                     <div className="mb-3 space-y-2">
                       <ApiErrorNotice error={submitFailure} effect="booking" />
                       <p className="text-sm text-muted-foreground" data-testid="unconfirmed-booking-time">
-                        You had chosen {fmtDateLong(unconfirmedSlot.start)}, {fmtTime(unconfirmedSlot.start)}. If you still want a
-                        time, pick one again below — your details are kept.
+                        You had chosen {formatDateLongInZone(unconfirmedSlot.start, displayZone)},{" "}
+                        {formatTimeInZone(unconfirmedSlot.start, displayZone)}. If you still want a time, pick one again
+                        below — your details are kept.
                       </p>
                     </div>
                   )}
                   {slotsFailed && (
                     <ApiErrorNotice
                       className="mb-3"
-                      error={slotsQuery.error}
+                      error={daySlotsQuery.error}
                       effect="read"
-                      message={httpStatus(slotsQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
-                      onRetry={() => void slotsQuery.refetch()}
-                      retrying={slotsQuery.isFetching}
+                      message={httpStatus(daySlotsQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
+                      onRetry={() => void daySlotsQuery.refetch()}
+                      retrying={daySlotsQuery.isFetching}
                     />
                   )}
-                  {!selectedDate ? (
+                  {!selectedDay ? (
                     <p className="text-sm text-muted-foreground">Select a date to see available times.</p>
-                  ) : slotsQuery.isLoading || (slotsQuery.isFetching && (slots.length === 0 || slotsQuery.isPlaceholderData)) ? (
+                  ) : dayPending ? (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" /> Finding times…
                       </div>
-                      <StillWorking active={slotsQuery.isFetching} />
+                      <StillWorking active={daySlotsQuery.isFetching} />
                     </div>
-                  ) : slotsFailed ? null : slots.length === 0 ? (
+                  ) : slotsFailed || zoneStuck ? null : slots.length === 0 ? (
                     (
                       <p className="rounded-lg border border-dashed border-border bg-muted/40 p-4 text-sm text-muted-foreground">
                         {isCollective
@@ -517,19 +706,30 @@ export default function PublicBooking() {
                     )
                   ) : (
                     <div className="grid max-h-[360px] grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
-                      {slots.map((s) => (
-                        <button
-                          key={s.start}
-                          type="button"
-                          onClick={() => {
-                            setSelectedSlot(s);
-                            setSubmitError(null);
-                          }}
-                          className="min-h-[44px] rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary hover:bg-primary-muted"
-                        >
-                          {fmtTime(s.start)}
-                        </button>
-                      ))}
+                      {slots.map((s, i) => {
+                        const time = formatTimeInZone(s.start, displayZone);
+                        return (
+                          <div key={s.start} className="flex flex-col">
+                            <button
+                              type="button"
+                              // Date, time and zone with its offset (spec 3.9, AC-27).
+                              aria-label={`${formatDateLongInZone(s.start, displayZone)}, ${time}, ${displayZone} ${slotOffsets[i]}`}
+                              onClick={() => {
+                                setSelectedSlot(s);
+                                setSubmitError(null);
+                              }}
+                              className="min-h-[44px] rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary hover:bg-primary-muted"
+                            >
+                              {time}
+                            </button>
+                            {mixedOffsets && (
+                              <span aria-hidden="true" className="mt-0.5 text-center text-xs text-muted-foreground">
+                                {slotOffsets[i]}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -542,8 +742,10 @@ export default function PublicBooking() {
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Confirm</p>
                     <p className="mt-1 text-sm font-medium text-foreground">
-                      {fmtDateLong(selectedSlot.start)} · {fmtTime(selectedSlot.start)} – {fmtTime(selectedSlot.end)}
+                      {formatDateLongInZone(selectedSlot.start, displayZone)} · {formatTimeInZone(selectedSlot.start, displayZone)} –{" "}
+                      {formatTimeInZone(selectedSlot.end, displayZone)}
                     </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{zoneLabel(displayZone, selectedSlot.start)}</p>
                   </div>
                   <Button
                     variant="ghost"

@@ -2,6 +2,7 @@ import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./cont
 import {
   AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  ConnectStartResponse as ConnectStartResponseSchema,
   OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
   OrganizationAIConsentConflict as OrganizationAIConsentConflictSchema,
   OrganizationAIWriteFreshLoginRequired,
@@ -355,6 +356,23 @@ export async function confirmOrganizationAI(configurationVersion: number): Promi
   }
 }
 
+/**
+ * PAC-71: the conferencing 400s that tell the user to (re)connect Outlook
+ * for Teams, in the server's exact words (contract: createConferenceLink,
+ * addEventConference), and how the app says them. They point to Settings,
+ * where the connect is a signed-in step, never to a sign-in start.
+ */
+const TEAMS_CONNECT_TEXT: ReadonlyMap<string, string> = new Map([
+  [
+    "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)",
+    "Microsoft Teams is not connected. Connect Outlook in Settings to add Teams links.",
+  ],
+  [
+    "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)",
+    "The Microsoft Teams connection was lost. Reconnect Outlook in Settings to add Teams links.",
+  ],
+]);
+
 // ---------- PAC-83: classification and the user-facing wording ----------
 
 export type ApiFailureKind = "cancelled" | "budget" | "too-large" | "lost" | "http";
@@ -415,6 +433,8 @@ function httpErrorMessage(e: unknown): string {
   if (isApiHttpError(e)) {
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
+    const teams = e.status === 400 && detail ? TEAMS_CONNECT_TEXT.get(detail) : undefined;
+    if (teams) return teams;
     if (detail) return detail;
     switch (e.status) {
       case 401:
@@ -432,6 +452,28 @@ function httpErrorMessage(e: unknown): string {
     }
   }
   return e instanceof Error ? e.message : "Unexpected error.";
+}
+
+/** The two calendars a connect can attach (PAC-71): Google and Outlook (Microsoft). */
+export type ConnectProvider = Extract<CalendarProvider, "google" | "outlook">;
+
+/** PAC-71: the connect start's path for a calendar provider. */
+export function connectStartPath(provider: ConnectProvider): string {
+  return provider === "outlook" ? "/auth/microsoft/connect" : "/auth/google/connect";
+}
+
+/**
+ * PAC-71: POST the connect start and return where to send the window. The
+ * answer is parsed strictly (ConnectStartResponse); a URL that is not https
+ * is refused rather than followed.
+ */
+async function startConnect(provider: ConnectProvider): Promise<string> {
+  const raw = await requestApi<unknown>("POST", connectStartPath(provider));
+  const { authorize_url } = ConnectStartResponseSchema.parse(raw);
+  if (new URL(authorize_url).protocol !== "https:") {
+    throw new Error("The connect start answered an address that is not a secure web address.");
+  }
+  return authorize_url;
 }
 
 /**
@@ -997,8 +1039,26 @@ export const api = {
   integrationAvailability: () =>
     demoOrReal<IntegrationAvailability>("api.integrationAvailability", [], () => requestApi<IntegrationAvailability>("GET", "/integrations/availability")),
 
-  authConnectUrl: (provider: CalendarProvider = "google") =>
-    `${API_BASE}/auth/${provider === "outlook" ? "microsoft" : provider}`,
+  /**
+   * PAC-71: start a calendar connect for the signed-in user. POST
+   * /api/auth/google/connect or /api/auth/microsoft/connect (no body) answers
+   * 200 ConnectStartResponse; the caller sends the window to `authorize_url`.
+   * A connect is never a GET start: those are sign-in only (spec §3, AC-32).
+   * Every failure is thrown, never replaced with demo data (PAC-83).
+   */
+  startConnect: (provider: ConnectProvider = "google") =>
+    demoOrReal("api.startConnect", [provider], () => startConnect(provider)),
+  /**
+   * PAC-71: save the work calendar, and only it, before a connect from a
+   * control that changes it (spec §3: "by the user's explicit choice in that
+   * control before the connect starts"). The connect itself never sets it.
+   * PATCH /api/settings with `{ calendarProvider }`. A failure is thrown,
+   * never replaced with demo data (PAC-83), so the caller does not connect.
+   */
+  saveWorkCalendar: (provider: ConnectProvider): Promise<Settings> =>
+    demoOrReal("api.saveWorkCalendar", [provider], async () =>
+      normalizeSettings(await requestApi<unknown>("PATCH", "/settings", { calendarProvider: provider })),
+    ),
 
   authDisconnect: () =>
     demoOrReal("api.authDisconnect", [], () => requestApi<void>("DELETE", "/auth/disconnect")),

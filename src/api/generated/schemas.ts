@@ -109,6 +109,9 @@ export const ConferenceMeetingDetails = z.strictObject({ provider: z.enum(["meet
 export type ConferenceProviderStatus = __TypedOpenapi.Schemas.ConferenceProviderStatus;
 export const ConferenceProviderStatus = z.strictObject({ provider: z.enum(["google_meet", "zoom", "teams", "custom"]), connected: z.boolean(), email: z.string().optional(), enabled: z.boolean().optional(), auto_with: z.enum(["google", "outlook"]).optional() });
 
+export type ConnectStartResponse = __TypedOpenapi.Schemas.ConnectStartResponse;
+export const ConnectStartResponse = z.strictObject({ authorize_url: z.url() });
+
 export type CreateConferenceRequest = __TypedOpenapi.Schemas.CreateConferenceRequest;
 export const CreateConferenceRequest = z.strictObject({ title: z.string().min(1).regex(new RegExp("\\S")), start: z.iso.datetime(), end: z.iso.datetime() });
 
@@ -122,7 +125,7 @@ export type OrgSummary = __TypedOpenapi.Schemas.OrgSummary;
 export const OrgSummary = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.string(), createdAt: z.iso.datetime() });
 
 export type CurrentUserResponse = __TypedOpenapi.Schemas.CurrentUserResponse;
-export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
+export const CurrentUserResponse = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), addressStanding: z.enum(["domain_confirmed", "unconfirmed"]), org: OrgSummary.optional(), createdAt: z.iso.datetime() });
 
 export type DailyRecapPatch = __TypedOpenapi.Schemas.DailyRecapPatch;
 export const DailyRecapPatch = z.strictObject({ enabled: z.boolean(), send_time: z.string().regex(new RegExp("^([01][0-9]|2[0-3]):[0-5][0-9]$")), send_to: z.enum(["dm", "channel"]), channel_id: z.string(), include_briefs: z.boolean(), include_focus_blocks: z.boolean(), include_habits: z.boolean() }).partial();
@@ -389,7 +392,7 @@ export type PublicLinkInfo = __TypedOpenapi.Schemas.PublicLinkInfo;
 export const PublicLinkInfo = z.strictObject({ slug: z.string(), title: z.string(), durations: z.array(z.number().int()), hosts: z.array(PublicHost), min_notice_minutes: z.number().int(), usage_type: z.enum(["reusable", "recurring", "single_use"]), coverage: PublicLinkCoverage, time_zone: z.string(), booking_horizon_days: z.number().int().min(1).max(365) });
 
 export type PublicSlotsResponse = __TypedOpenapi.Schemas.PublicSlotsResponse;
-export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBookingSlot), available_dates: z.array(z.iso.date()) });
+export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBookingSlot), available_dates: z.array(z.iso.date()), time_zone: z.string(), display_time_zone: z.string(), range_from: z.iso.date(), range_to: z.iso.date() });
 
 export type RawGoogleFreeBusyMap = __TypedOpenapi.Schemas.RawGoogleFreeBusyMap;
 export const RawGoogleFreeBusyMap = z.record(z.string(), z.array(RawGoogleBusyWindow));

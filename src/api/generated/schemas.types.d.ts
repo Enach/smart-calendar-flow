@@ -587,6 +587,21 @@ export type ConferenceProviderStatus = {
   auto_with?: ("google" | "outlook");
 }
 /**
+ * New in PAC-71. The answer of `startGoogleConnect` and
+ * `startMicrosoftConnect`: where to send the window to continue the
+ * connect. Readable only by the web app's own origin (another site
+ * cannot read it, which is the point; spec §3 "Cross-site request
+ * model").
+ */
+export type ConnectStartResponse = {
+  /**
+   * The provider's authorization URL, carrying this connect's state.
+   * Single browser, 300 seconds, today's scope set. Never contains a
+   * Paceday session token.
+   */
+  authorize_url: string;
+}
+/**
  * POST /api/conference/create. Since PAC-67 (API-052) all three fields are required and validated before any provider is called; a body that fails is the 400 "invalid body". Before PAC-67 every field silently defaulted to the Go zero value when absent and was forwarded to the provider.
  */
 export type CreateConferenceRequest = {
@@ -740,8 +755,29 @@ export type CurrentUserResponse = {
    * handlers_sso.go "sso"; tests and the e2e seed write "google").
    * A CHECK constraint is not added (spec PAC-35 section 7: no
    * migration).
+   * Unchanged by PAC-71 (spec §6): it is NOT the provider of the
+   * account's bound identity, which this response does not expose
+   * (listing sign-in methods is follow-up F1).
    */
   provider: ("google" | "microsoft" | "sso");
+  /**
+   * New in PAC-71 (spec §3 "Evidence and address standing", D-5).
+   * `domain_confirmed`: the sign-in that bound this account's
+   * identity carried AUTHORITATIVE evidence for `email` (Google
+   * verified with matching `hd` or a Google consumer domain; a
+   * Microsoft tenant that verifies the domain; the SSO issuer
+   * configured for the domain). `unconfirmed`: everything else,
+   * including every account created before PAC-71 that has not bound
+   * yet and every account bound with MAILBOX evidence. Only a
+   * `domain_confirmed` address acts as a person at the granting sites
+   * (team-invite acceptance, scheduling-link co-host invitations,
+   * the manager's member add, roster import and roster entries,
+   * break-glass); an `unconfirmed` one works fully for its own user
+   * but resolves to nobody there. It changes only when the account
+   * binds (sign-in) or through the operator procedure; never on an
+   * ordinary sign-in, a connect or a refusal.
+   */
+  addressStanding: ("domain_confirmed" | "unconfirmed");
   org?: OrgSummary;
   createdAt: string;
 }
@@ -1443,7 +1479,7 @@ export type MemberAnalyticsSummary = {
   focus_score: number;
 }
 /**
- * A JSON literal delivered with a text/plain Content-Type, because the handler sets application/json and http.Error then overwrites the header. Every producer of this exact body in backend/api/ is an `http.Error` with the literal `{"error":"unauthorized"}`: the three in `requireAuth` (backend/api/middleware.go — one per rejection reason: no token, a token that fails `auth.ValidateToken`, a `UserID` claim that is not a UUID; cited by function because this description is emitted into generated files in both repos), `orgHandlers.members` (backend/api/handlers_org.go:21), and `meHandlers.me` (backend/api/handlers_me.go:19, reached at `GET /api/auth/me`). The falsifying command, excluding the generated package, is `grep -rn error.:.unauthorized --include=*.go backend/api/`, which returns exactly those five lines. The third is listed for completeness only: `getCurrentUser` declares its 401 against `PlainTextError`, not this schema, and lives in paths/auth.yaml, which PAC-23 does not own and does not touch.
+ * A JSON literal delivered with a text/plain Content-Type, because the handler sets application/json and http.Error then overwrites the header. Every producer of this exact body in backend/api/ is an `http.Error` with the literal `{"error":"unauthorized"}`: the three in `requireAuth` (backend/api/middleware.go — one per rejection reason: no token, a token that fails `auth.ValidateToken`, a `UserID` claim that is not a UUID; cited by function because this description is emitted into generated files in both repos), `orgHandlers.members` (backend/api/handlers_org.go:21), and `meHandlers.me` (backend/api/handlers_me.go:19, reached at `GET /api/auth/me`). The falsifying command, excluding the generated package, is `grep -rn error.:.unauthorized --include=*.go backend/api/`, which returns exactly those five lines. Since PAC-71 the same bytes are also written, with the same headers, for a session whose `gen` claim is not the account's current session generation: by `requireAuth` and by the in-request re-check on account data (security scheme `bearerAuth`, SESSION GENERATION). The grep then also returns those producers; the response itself is unchanged. The third is listed for completeness only: `getCurrentUser` declares its 401 against `PlainTextError`, not this schema, and lives in paths/auth.yaml, which PAC-23 does not own and does not touch.
  * 
  * Precisely, because PAC-23 AC-12 requires this response to be unchanged: as net/http's `http.Error` produces it the header is `text/plain; charset=utf-8`, `X-Content-Type-Options: nosniff` is set, and the message is written with `Fprintln`, so the body is 25 bytes — the example below, trailing newline included. The two headers are stated here because the sibling `PlainTextError` states them and "exactly as today" includes them.
  * 
@@ -1985,7 +2021,7 @@ export type PublicLinkInfo = {
   usage_type: ("reusable" | "recurring" | "single_use");
   coverage: PublicLinkCoverage;
   /**
-   * IANA name of the zone the link's days, hours, "today" and booking horizon are evaluated in (PAC-72 revision 2, owner decision D-9): the link owner's profile time zone, or `UTC` when the owner has no settings row or its stored name is not a loadable IANA zone. It is the zone actually used by `getPublicBookingSlots` and `createPublicBooking` for this link at the time of the read, so a booking page can show times in it by default (display and the visitor's zone switcher are PAC-88). Never empty. Disclosed to anyone who has the link, on every link: owner decision D-9 makes the owner's zone the page's default display. A failed read of the owner's settings is the operation's 500, never `UTC`.
+   * IANA name of the zone the link's days, hours, "today" and booking horizon are evaluated in (PAC-72 revision 2, owner decision D-9): the link owner's profile time zone, or `UTC` when the owner has no settings row or its stored name is not a loadable IANA zone. It is the zone actually used by `getPublicBookingSlots` and `createPublicBooking` for this link at the time of the read, so a booking page can show times in it by default (display and the visitor's zone switcher are PAC-88; `getPublicBookingSlots` states the zone it used in `PublicSlotsResponse.time_zone`). Never empty. Disclosed to anyone who has the link, on every link: owner decision D-9 makes the owner's zone the page's default display. A failed read of the owner's settings is the operation's 500, never `UTC`.
    */
   time_zone: string;
   /**
@@ -1994,17 +2030,33 @@ export type PublicLinkInfo = {
   booking_horizon_days: number;
 }
 /**
- * Both keys are always present. Exactly one is populated depending on whether the `date` query parameter was supplied.
+ * Every key is always present. Exactly one list is populated depending on whether the `date` query parameter was supplied. `time_zone`, `display_time_zone`, `range_from` and `range_to` are PAC-88. A server without them (before PAC-88, or after its rollback) ignores `display_time_zone`, `from` and `to`; a client that sent `display_time_zone` and finds `display_time_zone` absent from the answer, or different from what it sent, must not read the answer's days as days of the zone it asked for (contract PAC-88 section 5).
  */
 export type PublicSlotsResponse = {
   /**
-   * Populated only when `date` was given; otherwise the empty array.
+   * Populated only when `date` was given: the offered slots whose start falls on `date` in `display_time_zone`, in ascending start order; otherwise the empty array.
    */
   slots: Array<PublicBookingSlot>;
   /**
-   * Populated only when `date` was omitted; YYYY-MM-DD strings (calendar days in the link's zone, `PublicLinkInfo.time_zone`), in ascending order, for days within the link's booking horizon (today in that zone and the next `booking_horizon_days` - 1 days) that are among the link's `days_of_week` and have at least one offered slot. Otherwise the empty array.
+   * Populated only when `date` was omitted; YYYY-MM-DD strings (calendar days in `display_time_zone`), ascending, without duplicates: the days from `range_from` to `range_to` on which at least one offered slot starts in that zone (an offered slot is within the link's horizon, on one of its `days_of_week` and inside its hours, all in the link's zone). Otherwise the empty array.
    */
   available_dates: Array<string>;
+  /**
+   * PAC-88 (spec AC-31): IANA name of the link's zone this answer was computed in (days, hours, grid, "today", horizon), read in this request by the same rule as `PublicLinkInfo.time_zone`, so the two are equal when read at the same moment. A client holding a different `PublicLinkInfo.time_zone` re-reads the link (the host changed zone, spec AC-26). Never empty.
+   */
+  time_zone: string;
+  /**
+   * PAC-88: the day zone of `date`, `available_dates`, `range_from` and `range_to`: the request's `display_time_zone` exactly as sent when it was given, otherwise equal to `time_zone`. Never empty.
+   */
+  display_time_zone: string;
+  /**
+   * PAC-88: first day (day zone) the answer covers: `date` with `date`, otherwise the overview's resolved `from`.
+   */
+  range_from: string;
+  /**
+   * PAC-88: last day (day zone) the answer covers: `date` with `date`, otherwise the overview's resolved `to` (at most `range_from` + 41 days).
+   */
+  range_to: string;
 }
 /**
  * Response of GET /api/calendar/freebusy: `map[string][]calendar.TimeSlot` keyed by the calendar id Google echoed back (normally the attendee email).
@@ -2924,7 +2976,9 @@ export type SsoWriteDomainMismatch = { error: "provider_domain_mismatch" }
  */
 export type SsoWriteStepupRequired = { error: "sso_write_requires_admin_stepup", stepup_scopes: SsoStepupScopes, without_stepup: SsoWithoutStepup, stepup_url: SsoStepupUrl }
 /**
- * The caller's email is on the deployment's break-glass list but the
+ * The caller's account holds an address on the deployment's
+ * break-glass list domain-confirmed (PAC-71: the account's stored
+ * address and standing, not the session's email claim) but the
  * session JWT was issued 10 minutes ago or more, or carries an issue
  * time more than one minute in the future (beyond that clock-skew
  * allowance a token is not fresh). The client sends the user through
@@ -3250,12 +3304,21 @@ export type UserProfileGoStruct = {
  *       Every 400 and 403 above happens before this step and leaves
  *       the grant live; a failure after it (the store-time 400 of step
  *       6, the 500 below) leaves it consumed.
- *    b. break-glass: the caller's session email is listed in the
- *       deployment's `PACEDAY_ADMIN_EMAILS` (exact, lower-cased) AND the
+ *    b. break-glass: the caller's ACCOUNT holds a listed address
+ *       DOMAIN-CONFIRMED, i.e. the address stored on the session's
+ *       account (`users.email`, compared lower-cased) is listed in the
+ *       deployment's `PACEDAY_ADMIN_EMAILS` (exact, lower-cased) and
+ *       that account's `addressStanding` is `domain_confirmed`
+ *       (PAC-71, spec §3 "PAC-50 admin step-up and break-glass", D-13,
+ *       AC-38; before PAC-71 the session's `email` CLAIM was compared,
+ *       which a session of an account that no longer carries the
+ *       address, or carries it unconfirmed, could pass) AND the
  *       session JWT was issued less than 10 minutes ago and not more
  *       than one minute in the future (a token stamped further ahead is
- *       not fresh). Listed without such a session gives 403
- *       `sso_write_requires_fresh_login`.
+ *       not fresh). Qualifying except for freshness gives 403
+ *       `sso_write_requires_fresh_login`. An account that carries a
+ *       listed address UNCONFIRMED, or whose session claim is listed
+ *       but whose stored address is not, is not break-glass at all.
  *    (a) is tried first: a break-glass caller who also holds a live
  *    grant consumes that grant on the write.
  *    Neither gives 403 `sso_write_requires_admin_stepup` with
@@ -3469,6 +3532,24 @@ export type get_StartSsoAdminStepup = {
  *    Microsoft `wids` (or, when absent, the directory-role lookup)
  *    containing a qualifying role template id (spec §4.4). Anything
  *    else, including a lookup error, gives `not_admin`.
+ * 4b. (PAC-71, spec §3 "PAC-50 admin step-up and break-glass", D-13,
+ *    AC-21) When the caller's account is bound to an identity at the
+ *    step-up's authority (Google; or Microsoft with the same tenant as
+ *    the step-up token's `tid`), the step-up token's identity must be
+ *    that bound identity: Google `sub` equal to the bound Google
+ *    subject; Microsoft `oid` equal to the bound object id. Else
+ *    `identity_mismatch`. When the account's binding is at another
+ *    authority (another provider, another tenant, an SSO issuer) or
+ *    it has none, this check does not apply and today's checks 0 to 4
+ *    decide alone. It runs after every existing check, so a step-up
+ *    that fails one of them keeps today's reason. The step-up's scopes
+ *    and consent are unchanged. It relies on two provider facts that
+ *    are a merge condition of PAC-71 (PAC-71.md §3, §8): the step-up
+ *    ID token's Google `sub` equals the v2 userinfo `id` recorded at
+ *    sign-in, and the Microsoft `oid` equals Graph `/me` `id`. If
+ *    either did not hold, this check would fail closed
+ *    (`identity_mismatch`) for every bound administrator at that
+ *    provider.
  * 5. A grant for (caller, caller's org, provider) is issued with the
  *    purpose bound in the state (`sso_write` unless the start named
  *    `llm_org_key_write`; NEW-llm-bring-your-own Part 2), valid for 10
@@ -3570,6 +3651,7 @@ export type get_GetSsoStepupOptions = {
 400: Schemas.ErrorResponse,
 401: Schemas.PlainTextError,
 403: Schemas.SsoWriteMembershipRequired,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3775,6 +3857,7 @@ export type post_RecomputeAnalytics = {
       parameters: never,
       responses: {202: Schemas.AnalyticsRecomputeAck,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -3898,24 +3981,122 @@ export type get_ListAuditEntries = {
       
     }
 /**
- * Validates the `oauth_state` cookie against the `state` query param,
- * exchanges the code, upserts the user, stores the OAuth token, associates
- * the org, issues the `auth_token` JWT cookie, then redirects to
- * `<FRONTEND_URL>/auth/callback`.
- * Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
- * the session cookie was actually set. If the session cannot be issued
- * (empty signing secret, or token generation fails) the user is sent to
- * the sign-in failure state instead; see the `302` response.
+ * Since PAC-71 this one redirect target serves two flows, and ONLY the
+ * state cookie that the `state` query parameter matches decides which
+ * (spec §3 "Connecting a calendar", D-24):
+ * - it equals the `google_connect_state` cookie, which only
+ *   `startGoogleConnect` sets: the CONNECT branch;
+ * - otherwise it equals the `oauth_state` cookie, which only
+ *   `startGoogleOAuth` sets: the SIGN-IN branch;
+ * - neither cookie is present or equal: the 400 "invalid state", as
+ *   today. Nothing is exchanged or written.
+ * The two cookies hold independent random values, so at most one can
+ * match. A session cookie, an Authorization header or any other query
+ * parameter never selects a branch: a flow that `startGoogleConnect`
+ * did not start is a sign-in, wherever it was started (spec AC-14,
+ * PAC-47 D-18).
  * 
- * Since PAC-67 a successful Google sign-in is also the Google RECONNECT
- * (spec PAC-67 AC-12, AC-24): storing the new token ends any recorded
- * loss of the Google connection for the user it resolves to, so
- * `getAuthStatus` (Google calendar provider) and the `google_meet` row of
- * `listConferenceProviders` report connected again, and a later loss of
- * the new credential is a new loss with its own `connection_lost`
- * activity entry. The user is still resolved by the Google account's
- * email, exactly as before (spec PAC-67 OQ-10: sign-in matching is not
- * changed). No response of this operation changes.
+ * SIGN-IN branch (spec §3 "Identities", "The sign-in rule", migration
+ * rules (a) and (b)). Steps 1 to 3 are today's; the rest is PAC-71's.
+ * 1. `oauth_state` checked (400) and expired; the code is exchanged
+ *    (500 on failure).
+ * 2. Google's v2 userinfo is read with the access token (500 on
+ *    failure, as today). Sign-in still requests exactly `calendar` and
+ *    `userinfo.email` (PAC-50 AC-24, spec D-14). From the answer:
+ *    `id` is the Google subject (identity = authority `google` +
+ *    `id`); `email` is the reported address; `verified_email` and
+ *    `hd` are evidence (spec OQ-3 item 5; see PAC-71.md §3 for what is
+ *    and is not established).
+ * 3. Evidence for the reported address: AUTHORITATIVE when
+ *    `verified_email` is true and either `hd` equals the address's
+ *    domain (exact, case-insensitive; a subdomain does not count) or
+ *    the domain is `gmail.com` or `googlemail.com`; MAILBOX when
+ *    `verified_email` is true otherwise; NONE when it is false or
+ *    absent.
+ * 4. The account is chosen ONLY by identity, never by address for a
+ *    bound identity. Addresses are compared case-insensitively.
+ *    a. The identity is bound to an account: that account, whatever
+ *       address Google now reports. Its stored address and address
+ *       standing are not changed (spec D-7).
+ *    b. Otherwise, if two or more accounts carry the address in any
+ *       letter case (a case collision): REFUSED.
+ *    c. Otherwise, if one account carries the address and it is bound
+ *       (to any other identity, at any authority): REFUSED.
+ *    d. Otherwise, if one account carries the address and it is
+ *       unbound (created before PAC-71), it binds to this identity in
+ *       ONE atomic step (lock the account, re-check every condition,
+ *       write the binding and standing, advance the session generation;
+ *       all or nothing) when:
+ *       - rule (a): the account's recorded identifier (`users.provider_id`)
+ *         has the Google format `^[0-9]{1,255}$`, equals `id`, and the
+ *         evidence is MAILBOX or AUTHORITATIVE; or
+ *       - rule (b): the evidence is AUTHORITATIVE and the account is
+ *         EMPTY (PAC-71.md §6: no account data of any kind, every
+ *         setting at its named default in normal form).
+ *       The standing is DOMAIN_CONFIRMED for AUTHORITATIVE evidence,
+ *       UNCONFIRMED for MAILBOX. If neither rule holds, or the re-check
+ *       under the lock fails (a competing binding or write won):
+ *       REFUSED, and the account stays unbound with nothing stored.
+ *    e. Otherwise (no account carries the address): with AUTHORITATIVE
+ *       evidence an account is created, bound, DOMAIN_CONFIRMED; with
+ *       MAILBOX evidence created, bound, UNCONFIRMED; with NONE:
+ *       REFUSED. Creation is atomic against a concurrent creation for
+ *       the same address in any letter case: the loser is REFUSED.
+ * 5. For the chosen, created or newly bound account (never another):
+ *    the Google token is stored on it (ending a recorded Google loss,
+ *    PAC-67), PAC-68's organisation rule is evaluated for it, name and
+ *    picture are overwritten as today, and a session is issued whose
+ *    `gen` is the account's current generation (after any advance in
+ *    step 4). A binding writes the subject into `users.provider_id`
+ *    (spec §7 "Re-applying"); a bound sign-in leaves it alone.
+ *    `users.provider` keeps meaning "provider of the first sign-in".
+ *    A migration binding never changes the work calendar.
+ * 
+ * REFUSED (spec §3 "Refusal"): the one fixed redirect
+ * `<FRONTEND_URL>/?error=signin_refused`, the same for every cause, so
+ * it never reveals whether an account exists for the address (spec
+ * D-6). A refusal creates no account, binds nothing, stores no token,
+ * changes no organisation, work calendar, standing or generation, and
+ * neither sets nor expires `auth_token`: a session the browser already
+ * holds is kept. The cause, and the account it concerns, go to the
+ * server log only.
+ * 
+ * CONNECT branch (spec §3 "Connecting a calendar", PAC-47 §3 item 3,
+ * D-4, D-24). Checks run in this order; the first failure decides:
+ * 1. The state is one `startGoogleConnect` issued, at most 300 seconds
+ *    ago, for provider google; it names the user U and the generation
+ *    g that the starting session carried. Else: NOT CREDITED.
+ * 2. The request's session (the `auth_token` cookie, validated as
+ *    requireAuth validates it; a provider redirect carries no
+ *    Authorization header) is valid, names U, and carries `gen` g.
+ *    Else (no session, another user's, or another generation):
+ *    NOT CREDITED.
+ * 3. U's current generation is read, uncached, and equals g. Else:
+ *    NOT CREDITED. If it cannot be read: the 500 below.
+ * 4. `code` is present and non-empty. Else (the provider returned
+ *    without a code, typically `error=access_denied` because the user
+ *    cancelled or the provider refused): NOT CREDITED, nothing is
+ *    exchanged. The user lands on the web app, never on a JSON page of
+ *    the API origin.
+ * 5. The code is exchanged (500 on failure). Userinfo is not read and
+ *    nothing about the Google account's identity or address is used:
+ *    whatever identity and address it has, nothing is bound.
+ * 6. The token is stored on U, in one transaction that re-reads U's
+ *    current generation and stores only while it still equals g
+ *    (spec AC-47). If it moved: nothing is stored, NOT CREDITED.
+ *    Storing ends a recorded Google loss of U (PAC-67 AC-12).
+ * 7. CREDITED.
+ * A connect, credited or not, binds no identity, adds no sign-in
+ * method, creates no account, issues no session, never sets or
+ * expires `auth_token`, evaluates no organisation membership, and
+ * changes nothing else on any account: not U's name, picture,
+ * address, standing, recorded identifier, work calendar (spec D-15) or
+ * generation. Every connect-branch response, the redirects and the
+ * 500 alike, expires the `google_connect_state` cookie, so a state is
+ * used at most once.
+ * The SIGN-IN branch keeps today's behaviour for a missing `code` (the
+ * exchange of an empty code fails: the 500 below); PAC-71 does not
+ * change it.
  */
 export type get_GoogleOAuthCallback = {
       method: "GET",
@@ -3923,7 +4104,7 @@ export type get_GoogleOAuthCallback = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query:  { state: string, code: string },
+            query:  { state: string, code?: string, error?: string },
         
         
         
@@ -3946,6 +4127,34 @@ export type get_GoogleOAuthCallback = {
  * user goes to the sign-in failure state (see `302`).
  * Inconsistent error encoding: the 404 and 500 use the JSON helpers while
  * the 400s and the 403 use http.Error (text/plain).
+ * 
+ * Since PAC-71 (spec §3 "Identities", "The sign-in rule", D-10) the
+ * account is no longer found by email. After the PAC-45 domain check
+ * (the 403 below, unchanged), the identity is authority = the issuer
+ * the ID token was verified against (its `iss`) + subject = its `sub`.
+ * Two issuers are two authorities even when one asserts the other's
+ * subjects. Evidence for the asserted email is AUTHORITATIVE unless the
+ * ID token carries `email_verified` with the value false, which is
+ * NONE. Then:
+ * - the identity is bound to an account: that account, whatever email
+ *   the IdP now asserts (its stored address and standing unchanged);
+ * - otherwise, if any account carries the email in any letter case
+ *   (bound or not, created before PAC-71 or not): REFUSED. An issuer
+ *   is never authoritative over an existing account, and SSO never
+ *   binds an account created before PAC-71 (migration rules (a) and (b)
+ *   are Google and Microsoft only; spec D-10, owner question OQ-2,
+ *   factory default "no");
+ * - otherwise: AUTHORITATIVE creates an account bound to the identity,
+ *   DOMAIN_CONFIRMED (atomic against a concurrent creation for the
+ *   same address; the loser is REFUSED); NONE is REFUSED.
+ * The session issued carries the account's current `gen`. A binding or
+ * creation writes the subject into `users.provider_id`; it is never
+ * used for migration rule (a).
+ * REFUSED is the same fixed redirect as the other two callbacks,
+ * `<FRONTEND_URL>/?error=signin_refused`, with the same guarantees
+ * (nothing created, bound or stored; no organisation, standing or
+ * generation change; `auth_token` neither set nor expired). The SSO
+ * flow has no connect branch.
  */
 export type get_SsoOidcCallback = {
       method: "GET",
@@ -4048,6 +4257,11 @@ export type delete_DisconnectCalendar = {
  * account the user typed is preselected. Google still shows its consent
  * screen every time (`oauth2.ApprovalForce`); the hint chooses the
  * account, it does not skip the screen.
+ * Since PAC-71 this is the SIGN-IN start only (spec §3 "Connecting a
+ * calendar"): a flow it starts is always a sign-in, whether or not the
+ * browser holds a session. The signed-in "connect a calendar" controls
+ * use `startGoogleConnect` instead. The scope set is unchanged
+ * (exactly `calendar` and `userinfo.email`, PAC-50 AC-24).
  */
 export type get_StartGoogleOAuth = {
       method: "GET",
@@ -4067,9 +4281,73 @@ export type get_StartGoogleOAuth = {
 },
     }
 /**
+ * New in PAC-71 (spec §3 "Connecting a calendar", AC-12 to AC-14,
+ * AC-32, D-4, D-24). Protected by requireAuth, so it carries the
+ * SESSION GENERATION rules of the security scheme. It is the only way
+ * to start a Google CONNECT; the four signed-in controls (Settings
+ * work-calendar control, connection status control, Dashboard
+ * "Connect calendar" banner, onboarding calendar step) call it instead
+ * of navigating to `startGoogleOAuth`.
+ * 
+ * Takes no request body (any body is ignored) and no parameter. It
+ * answers 200 with the provider authorization URL in a JSON body; it
+ * NEVER redirects. The web app then navigates the window to
+ * `authorize_url`. This is what makes a start by another site useless
+ * (spec §3 "Cross-site request model"): another site can make the
+ * victim's browser send this POST with the victim's cookie (a form
+ * post), but cannot read the response, so it never learns the URL or
+ * the state; a GET (navigation, GET form, image, script, frame) is not
+ * this operation and starts nothing; and the state it would need is
+ * bound to the victim's browser by the `google_connect_state` cookie
+ * and to the victim's account and generation by the server.
+ * INVARIANT this argument rests on: the API never answers a
+ * cross-origin request with `Access-Control-Allow-Credentials: true`
+ * for an origin other than the one configured web origin (today
+ * `corsMiddleware`, backend/api/middleware.go: `*` without
+ * credentials, or exactly `FRONTEND_URL` with credentials). A change
+ * that reflects an arbitrary origin with credentials breaks it and
+ * must revise this contract.
+ * 
+ * Effects: the server issues a new opaque state bound to (the caller's
+ * user id, the session's `gen`, provider `google`, an expiry 300
+ * seconds later) in a form only the server can create and check (a
+ * server-side record or a server-keyed MAC; the plan decides), and
+ * sets it as the `google_connect_state` cookie. Nothing else is
+ * written: no credential, no setting, no work calendar (the Settings
+ * work-calendar control and onboarding change the work calendar by the
+ * user's own explicit choice BEFORE calling this, as today), no
+ * session. A second start replaces the cookie; only the latest state
+ * of this browser can complete.
+ * 
+ * `authorize_url` is the same Google authorization URL
+ * `startGoogleOAuth` builds (same client, same redirect URI
+ * `GOOGLE_REDIRECT_URL` = this server's `/api/auth/callback`, exactly
+ * the scopes `calendar` and `userinfo.email`, offline access and
+ * forced consent), with this state and no `login_hint`. The callback
+ * recognises the connect by the state alone (see
+ * `googleOAuthCallback`, CONNECT branch).
+ */
+export type post_StartGoogleConnect = {
+      method: "POST",
+      path: "/api/auth/google/connect",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: never,
+      responses: {200: Schemas.ConnectStartResponse,
+401: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
+},
+      responseHeaders: {200: { "Set-Cookie": string },
+},
+    }
+/**
  * Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
  * out with an already-expired token returns 401 rather than succeeding
- * (unchanged by PAC-35, spec section 5).
+ * (unchanged by PAC-35, spec section 5). Since PAC-71 the same holds
+ * for a session whose generation is no longer current (401). Logout
+ * still only expires this browser's cookie; it does not advance the
+ * generation (spec §3 "Sessions"; "sign out everywhere" is follow-up
+ * F3).
  */
 export type post_Logout = {
       method: "POST",
@@ -4079,6 +4357,7 @@ export type post_Logout = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       responseHeaders: {204: { "Set-Cookie": string },
 },
@@ -4089,6 +4368,9 @@ export type post_Logout = {
  * Clients read it under that name; the server does not rename it.
  * Scheduling-link and booking hosts carry the same stored value as
  * `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+ * Since PAC-71 the response carries `addressStanding`, so the web app's
+ * Settings can say that an unconfirmed address cannot accept
+ * invitations yet (spec §3 "What standing allows").
  */
 export type get_GetCurrentUser = {
       method: "GET",
@@ -4099,6 +4381,7 @@ export type get_GetCurrentUser = {
       responses: {200: Schemas.CurrentUserResponse,
 401: Schemas.PlainTextError,
 404: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4107,6 +4390,21 @@ export type get_GetCurrentUser = {
  * Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
  * if the client id is blank the route 503s.
  * Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
+ * Since PAC-71 this is the SIGN-IN start only: a flow it starts is
+ * always a sign-in, whether or not the browser holds a session. The
+ * signed-in "connect a calendar" controls use `startMicrosoftConnect`.
+ * Since PAC-71 contract revision 3.1 (owner, 2026-11-01, spec OQ-8,
+ * OQ-9, D-14, AC-11) the scope parameter is exactly
+ * `openid profile Calendars.ReadWrite User.Read offline_access`, in
+ * that order: today's three scopes preceded by the basic `openid` and
+ * `profile` (both user-level consent, never an admin consent), so
+ * Microsoft returns a signed ID token carrying `tid` and `oid`. No
+ * other scope is added (no `email`). PAC-50 AC-24's scope-pinning test
+ * compares the joined string in order and is amended to allow exactly
+ * this string. The request also carries
+ * `nonce=<N>`, where N is the lowercase hex SHA-256 of the state value
+ * in the `ms_oauth_state` cookie, so the callback can bind the ID
+ * token to this browser's sign-in without a new cookie.
  */
 export type get_StartMicrosoftOAuth = {
       method: "GET",
@@ -4127,39 +4425,157 @@ export type get_StartMicrosoftOAuth = {
 },
     }
 /**
- * Validates `ms_oauth_state`, exchanges the code, fetches the Graph profile
- * and upserts the user, then saves the Microsoft token on THAT USER'S OWN
- * settings row (making Outlook their calendar provider), sets the session
- * cookie and redirects. Since PAC-24 the profile fetch is required, not
- * best-effort: without it there is no user to attach the credential to, so
- * nothing is saved. Before PAC-24 the token was saved on the single shared
- * settings row and the provider flipped for everyone.
- * Since PAC-35 (API-011, API-012) three failures after a successful code
- * exchange end on the app's sign-in failure state rather than on a JSON
- * error page on the API origin: the Graph profile could not be read (or
- * carried no email), the user could not be saved, or the session could
- * not be issued. See the `302` response.
+ * Since PAC-71 this one redirect target serves two flows, and ONLY the
+ * state cookie that the `state` query parameter matches decides which
+ * (spec §3 "Connecting a calendar", D-24):
+ * - it equals the `ms_connect_state` cookie, which only
+ *   `startMicrosoftConnect` sets: the CONNECT branch;
+ * - otherwise it equals the `ms_oauth_state` cookie, which only
+ *   `startMicrosoftOAuth` sets: the SIGN-IN branch;
+ * - neither: the 400 "invalid state", as today.
+ * A session cookie never selects a branch: a Microsoft flow that
+ * `startMicrosoftConnect` did not start is a sign-in, wherever it was
+ * started (PAC-47 D-18, spec AC-14). An unconfigured client is the 503
+ * on both branches, checked after the state as today.
  * 
- * Since PAC-67 this sign-in is also the Outlook RECONNECT, and what it
- * stores changes in two ways; no response, status or Location changes.
- * (1) When the code exchange returns an access token but NO refresh
- * token, the user's stored refresh token is kept, never overwritten with
- * an empty one, so a working connection is never erased by a reconnect
- * (spec PAC-67 AC-11). With no refresh token stored before either, the
- * result is a credential with no refresh token. It can never be renewed,
- * so it is reported not connected both by `getAuthStatus` (as today) and,
- * since PAC-67, by the `teams` row of `listConferenceProviders` (which
- * before PAC-67 reported it connected and enabled); once its access token
- * expires, Teams meeting creation with it answers the 400 "teams:
- * connection lost — reconnect at /api/auth/microsoft" without recording a
- * loss (contract challenge finding 5). (2) Storing the credential ends any recorded loss of
- * the Outlook connection for the user it resolves to (AC-12, AC-24), so
- * `getAuthStatus` (Outlook calendar provider) and the `teams` row of
- * `listConferenceProviders` report connected again. The credential is
- * still attached to the user matched by the Microsoft account's email,
- * and every sign-in still sets that user's calendar provider to
- * `outlook`, including a sign-in after `disconnectMicrosoft` (spec
- * PAC-67 D-4, OQ-5, OQ-10: unchanged on purpose).
+ * SIGN-IN branch. Step 1 and the `/me` read are today's (PAC-24,
+ * PAC-35); the rest is PAC-71's. Since contract revision 3 (owner,
+ * 2026-11-01, spec OQ-8) the tenant comes from the signed ID token and
+ * the organisation lookup is evidence only; since revision 3.1 (owner,
+ * OQ-9) the object id comes from the same signed ID token and `/me`
+ * is a mandatory cross-check (PAC-71.md §3).
+ * 1. `ms_oauth_state` checked (400) and expired; the code is exchanged
+ *    (500 on failure). Sign-in requests exactly
+ *    `openid profile Calendars.ReadWrite User.Read offline_access`
+ *    (`startMicrosoftOAuth`), so the token response carries an
+ *    `id_token`.
+ * 2. ID TOKEN, TENANT AND OBJECT ID (spec §3 "The Microsoft tenant
+ *    fails closed", D-23, AC-11b). The `id_token` of the token response
+ *    is accepted only when ALL of these hold; otherwise REFUSED, before
+ *    anything is looked up or written. Sign-in uses its OWN
+ *    tenant-pinned verifier; it does NOT reuse the PAC-50 step-up
+ *    verifier (`backend/auth/stepup.go:103`, `:245`), which reads the
+ *    `/common` keys and rejects a `tid` only when it contains `/?#`
+ *    (revision 3.1):
+ *    - it is present, a compact JWS, header `alg` `RS256`, with a
+ *      `kid`;
+ *    - its payload `tid` is a GUID (canonical 8-4-4-4-12 hex, compared
+ *      case-insensitively), checked BEFORE any key is fetched, so no
+ *      other value ever reaches a URL;
+ *    - its signature verifies with the key named by `kid` in
+ *      Microsoft's published keys for that tenant,
+ *      `https://login.microsoftonline.com/{tid}/discovery/v2.0/keys`
+ *      (revision 3.1: each fetch has a 10-second limit, the
+ *      identity-provider class of PAC-81 Part A; keys are cached per
+ *      tenant for up to 24 hours; an unknown `kid` triggers at most one
+ *      refetch per tenant per minute; at most 1000 tenants are cached,
+ *      the least recently used evicted first. The first fetch for a
+ *      tenant that is not cached (new, expired after 24 hours, or
+ *      evicted) is not subject to the per-minute refetch limit. Fetches
+ *      are single-flight per tenant: a request that needs a tenant's
+ *      keys while a fetch of them is in flight waits for that fetch
+ *      (within its own request) instead of starting another or being
+ *      refused as rate-limited. A fetch that errors or exceeds the
+ *      limit, or a `kid` still unknown after the refetch or while that
+ *      tenant's refetch is rate-limited, is REFUSED);
+ *    - `iss` is `https://login.microsoftonline.com/{tid}/v2.0` with the
+ *      token's own `tid`: scheme, host and path compared exactly, the
+ *      `{tid}` part compared case-insensitively (a GUID's hex digits
+ *      may come in either case); and `ver` is `2.0`;
+ *    - `aud` is either the string `MICROSOFT_CLIENT_ID`, or a JSON
+ *      array of exactly one element that is that string; any other
+ *      shape or value (another client, an extra audience, an empty
+ *      array) is REFUSED (revision 3.1);
+ *    - `oid` is present and a GUID (canonical 8-4-4-4-12 hex); absent
+ *      or malformed is REFUSED (revision 3.1, owner OQ-9: the object
+ *      id comes from the signed token);
+ *    - `exp` is in the future and `nbf`, when present, is not
+ *      (60 seconds of clock skew allowed);
+ *    - `nonce` equals the lowercase hex SHA-256 of the `state` that
+ *      matched `ms_oauth_state` (step 1), binding the token to this
+ *      browser's sign-in request.
+ *    The tenant is the token's `tid`. CLASSIFICATION: a `tid` equal to
+ *    `9188040d-6c67-4c5b-b112-36a304b66dad` (Microsoft's documented
+ *    tenant for every personal Microsoft account) is a PERSONAL
+ *    account and is REFUSED here, before `/me` or `/organization` is
+ *    read (owner, 2026-11-01: personal Microsoft sign-in waits for
+ *    follow-up PAC-77; spec AC-5, AC-11c). Any other GUID `tid` is a
+ *    WORK account in that tenant, with object id = the token's `oid`.
+ *    The ID token's `sub`, `email`, `preferred_username` and `name`
+ *    are not used.
+ * 3. Graph `GET /v1.0/me?$select=id,mail,displayName` with the access
+ *    token. Unreadable, or no `mail`: the sign-in failure state (a)
+ *    below, nothing saved (PAC-35, unchanged). OBJECT-ID CROSS-CHECK
+ *    (revision 3.1, owner OQ-9, mandatory): `/me`'s `id`, read with the
+ *    access token of the same token response as the verified ID token,
+ *    must equal the token's `oid` (case-insensitive GUID); anything
+ *    else is REFUSED (spec AC-11b). The identity is authority
+ *    (`microsoft`, tenant from step 2) + object id (`oid` from step 2).
+ * 4. EVIDENCE for `mail` (spec §3 evidence table, AC-51): Graph
+ *    `GET /v1.0/organization?$select=id,verifiedDomains` with the same
+ *    access token (documented least-privileged delegated permission:
+ *    `User.Read`, already granted). AUTHORITATIVE only when the answer
+ *    is a 200 whose `value` holds exactly one entry, that entry's `id`
+ *    equals the step-2 tenant (case-insensitive), and an entry of its
+ *    `verifiedDomains` has `name` equal to the address's domain (exact,
+ *    case-insensitive). Anything else (an error, a timeout, a 4xx, an
+ *    empty or multi-entry `value`, another tenant's id, the domain not
+ *    listed) is NONE evidence and is logged: it is NEVER a refusal by
+ *    itself and never "tenant unobtainable". A bound identity still
+ *    signs in (and PAC-68 evaluates membership as not joined); an
+ *    unknown identity or a migration binding is decided by step 5 with
+ *    NONE evidence (rule 5 and rules (a)/(b) then refuse). A Microsoft
+ *    work account never has MAILBOX evidence.
+ * 5. The account is chosen exactly as `googleOAuthCallback`'s SIGN-IN
+ *    step 4 (bound identity first; case collision, bound carrier or
+ *    unknown identity on a carried address REFUSED; unbound
+ *    pre-existing account binds atomically under rule (a) or (b) or is
+ *    REFUSED; new account created with AUTHORITATIVE evidence, REFUSED
+ *    with NONE), with one difference in rule (a): the recorded
+ *    identifier must have the Microsoft work format (a GUID,
+ *    `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+ *    and equal `/me`'s `id` case-insensitively, with AUTHORITATIVE
+ *    evidence (the Google and Microsoft formats are disjoint, so no
+ *    recorded value can fit both; spec AC-37).
+ * 6. For the chosen, created or newly bound account (never another):
+ *    the Microsoft credential is stored on it as PAC-67 stores it (a
+ *    response without a refresh token keeps the stored one, AC-11;
+ *    storing ends a recorded Outlook loss, AC-12); PAC-68's
+ *    organisation rule is evaluated for it; a session carrying its
+ *    current `gen` is issued. Work calendar: an account CREATED here
+ *    gets `outlook`, as today. For an account REACHED through its bound
+ *    identity, every sign-in still sets `outlook`: that is today's
+ *    reset, PAC-47's to remove (PAC-47 D-17; spec §5, D-15), and
+ *    PAC-71 does not change it. A MIGRATION BINDING (rule (a) or (b))
+ *    never changes the work calendar (spec AC-31, AC-41).
+ * 
+ * REFUSED: the one fixed redirect `<FRONTEND_URL>/?error=signin_refused`
+ * with the same guarantees as `googleOAuthCallback` (nothing created,
+ * bound or stored; no organisation, work calendar, standing or
+ * generation change; `auth_token` neither set nor expired; cause in the
+ * server log only). The same redirect for every cause, including an ID
+ * token that does not check, Microsoft's keys being unreadable (so an
+ * outage of Microsoft's key endpoint refuses every Microsoft sign-in),
+ * and a personal Microsoft account (spec §5 "Microsoft availability";
+ * owner OQ-8, 2026-11-01). A Graph `/organization` outage is not a
+ * refusal cause (step 4).
+ * 
+ * CONNECT branch: the checks, order and outcomes of
+ * `googleOAuthCallback`'s CONNECT branch, with the `ms_connect_state`
+ * cookie and provider `outlook`, including step 4 (no `code`, as when
+ * the user cancels at Microsoft: NOT CREDITED, a redirect to the web
+ * app, never a JSON page) and the expiry of `ms_connect_state` on
+ * every connect-branch response, the 500 included. Neither `/me` nor `/organization` is
+ * read and no ID token is requested or read (the connect start
+ * requests neither `openid` nor `profile`), so any Microsoft account (work or personal, any
+ * tenant, any address) can be connected and nothing about it is bound. The
+ * credential is stored on U as PAC-67 stores it (refresh token kept
+ * when none is returned; a recorded Outlook loss ends), in the
+ * transaction that re-checks U's generation (spec AC-47), and the
+ * connect NEVER changes U's work calendar (spec D-15, AC-12, AC-31):
+ * unlike today's sign-in, it does not set `outlook`. The Settings
+ * work-calendar control sets `outlook` by the user's explicit choice
+ * before starting the connect, as today.
  */
 export type get_MicrosoftOAuthCallback = {
       method: "GET",
@@ -4167,7 +4583,7 @@ export type get_MicrosoftOAuthCallback = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query:  { state: string, code: string },
+            query:  { state: string, code?: string, error?: string },
         
         
         
@@ -4179,6 +4595,39 @@ export type get_MicrosoftOAuthCallback = {
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
+},
+    }
+/**
+ * New in PAC-71. The Microsoft twin of `startGoogleConnect`: same
+ * protection, same JSON-body-never-redirect rule and the same
+ * cross-site argument (and the same CORS invariant it rests on), same state binding (caller's user id, session
+ * `gen`, provider `outlook`, 300-second expiry), set as the
+ * `ms_connect_state` cookie. Nothing else is written; in particular
+ * the work calendar is not changed (spec D-15).
+ * 
+ * `authorize_url` uses the same client, `/common` authority and
+ * redirect URI `MICROSOFT_REDIRECT_URL` (= this server's
+ * `/api/auth/microsoft/callback`) as `startMicrosoftOAuth`, with this
+ * state and no `login_hint`, but exactly the scopes
+ * `Calendars.ReadWrite User.Read offline_access` and no `nonce`:
+ * unlike sign-in (contract revisions 3 and 3.1), a connect identifies
+ * nobody, so it requests no `openid`, no `profile` and no ID token. Configuration is read from env at request
+ * time, as `startMicrosoftOAuth` does. The callback recognises the
+ * connect by the state alone (`microsoftOAuthCallback`, CONNECT
+ * branch).
+ */
+export type post_StartMicrosoftConnect = {
+      method: "POST",
+      path: "/api/auth/microsoft/connect",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: never,
+      responses: {200: Schemas.ConnectStartResponse,
+401: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
+503: Schemas.ErrorResponse,
+},
+      responseHeaders: {200: { "Set-Cookie": string },
 },
     }
 /**
@@ -4297,7 +4746,12 @@ export type get_StartSsoLogin = {
  * `calendarProvider` and, on the outlook branch, reads the caller's own
  * stored Microsoft credential.
  * On an internal failure it does NOT error — it 200s with
- * {connected:false, provider:"google", email:""}.
+ * {connected:false, provider:"google", email:""}. Since PAC-71 two
+ * cases are excluded from that fallback (security scheme, SESSION
+ * GENERATION): a session whose generation is no longer current is the
+ * 401, including when the in-request re-check on the settings or
+ * credential read finds the generation moved; and a generation that
+ * cannot be read is the 500.
  * 
  * Since PAC-67 `connected` means USABLE, not merely stored (spec PAC-67
  * §3, AC-8, AC-12, AC-13, AC-21). A credential whose renewal the provider
@@ -4337,6 +4791,7 @@ export type get_GetAuthStatus = {
       parameters: never,
       responses: {200: Schemas.AuthStatusResponse,
 401: Schemas.PlainTextError,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4351,6 +4806,7 @@ export type get_StartZoomOAuth = {
       parameters: never,
       responses: {302: unknown,
 401: "{\"error\":\"unauthorized\"}\n",
+500: Schemas.ErrorResponse,
 503: Schemas.BookingError,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -4428,7 +4884,7 @@ export type post_CreatePublicBooking = {
 },
     }
 /**
- * Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the link's booking horizon, today and the next `booking_horizon_days` - 1 days in the link's zone, and returns in `available_dates` the days that have at least one offered slot, with `slots` always the empty array. Both keys are always present in both modes. A slot is offered by the same rule `createPublicBooking` accepts (PAC-72; see that operation for the six parts and the link's zone): duration, link days and daily window on the 15-minute grid, every accepted host free, minimum notice, horizon, at least one accepted host. Days, hours, "today" and the horizon are evaluated in the link's zone (the link owner's profile time zone, UTC when it has none; the zone used is `PublicLinkInfo.time_zone`), whatever zone the server process runs in; slot instants are returned in UTC. A day not in the link's `days_of_week` offers no slot. An explicit `date` before today or after the horizon's last day answers 200 with `slots: []`, exactly like a fully booked day, never an error; a link with no accepted host answers 200 with no slot and no date in both modes. When busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts), the explicit-date mode answers 500 and the date-less mode omits that day. The date-less mode reads every day of the horizon (up to 365) under the one request budget; with a long horizon or slow calendars it ends in the 503 below, never in a list truncated to the days it reached (PAC-72 revision 3.1). Clients needing a long range should use the explicit-date mode per visible day. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot for that date, and without `date` that day is not listed; the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
+ * Days are calendar days in the DAY ZONE: `display_time_zone` when the request carries it, otherwise the link's zone (`PublicLinkInfo.time_zone`) (PAC-88, owner decision PAC-72 D-9). Two distinct modes. With `date` (one day in the day zone): `slots` holds every offered slot whose start falls on that day in the day zone, in ascending start order, and `available_dates` is always the empty array. Without `date` (the day overview): `available_dates` holds, in ascending order, the days from `from` to `to` inclusive (at most 42 days; when both are omitted, today in the day zone and the next 41 days) on which at least one offered slot starts in the day zone, and `slots` is always the empty array. Every answer states the link's zone it was computed in (`time_zone`), the day zone (`display_time_zone`) and the days it covered (`range_from`, `range_to`). A day of the day zone is never cut into parts: every offered start is listed under exactly one day, its calendar date in the day zone, whichever of the link's days it belongs to (a day zone other than the link's makes one day overlap two, around an offset change three, of the link's days; they are one answer). The day zone changes only how offered starts are grouped into days: the set of offered instants, the booking rule, the refusals and the link's own "today", horizon, days and hours (all in the link's zone) are the same for every day zone. Without `display_time_zone` and with `date`, the lists are exactly the PAC-72 answer for that link-zone day. Both list keys are always present in both modes. A slot is offered by the same rule `createPublicBooking` accepts (PAC-72; see that operation for the six parts and the link's zone): duration, link days and daily window on the 15-minute grid, every accepted host free, minimum notice, horizon, at least one accepted host. Days, hours, "today" and the horizon are evaluated in the link's zone (the link owner's profile time zone, UTC when it has none; the zone used is `PublicLinkInfo.time_zone`), whatever zone the server process runs in; slot instants are returned in UTC. A day not in the link's `days_of_week` offers no slot. A `date`, or a whole `from`..`to` range, with no offered start (before today, after the horizon's last day, not a link day, fully booked) answers 200 with an empty list, never an error; a link with no accepted host answers 200 with no slot and no date in both modes. When busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts) for any link day the answer needs, both modes answer 500 for the whole request (PAC-88 spec section 3.4: never a day that silently looks empty; this replaces the earlier date-less behaviour of omitting that day). The cost of an answer is bounded by the days it covers, never by the link's horizon: the overview covers at most 42 days whatever `booking_horizon_days` is (1 to 365), and, in both modes, each accepted host's external calendar is read at most once per request, over one window spanning every link day the answer needs (link days outside the horizon or not among `days_of_week` need no read). That one read is complete for its whole window: every page of the provider's answer is read, and a read that cannot be completed (a later page fails, or the read's own limit ends first) is an unreadable calendar (busy, D-6 below), never a partial list of events. The storage half of busy time (focus blocks, bookings) likewise covers every needed link day, however many storage queries that takes. The earlier date-less read of the whole horizon (and its 503 on long horizons, PAC-72 revision 3.1) no longer exists: a request without `date`, `from` and `to` is the 42-day overview starting today in the day zone. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot in the window read (no slot for that `date`, no day of that overview); the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Validation order (PAC-88 keeps the existing order and appends its checks where the `date` check was): rate limit (429), link lookup (404, 410), `duration` (400), the link's zone (500), then the query in this order: `display_time_zone`, `date` combined with `from` or `to`, `date`, `from`, `to`, `from` without `to` or the reverse, `to` before `from`, a range over 42 days (each a 400 with its own message, see the 400 below). An empty query value (`date=`, `from=`, `to=`, `display_time_zone=`) is the same as an absent one. Unknown query parameters are ignored. Caching: the answer carries no `Cache-Control`, `ETag` or `Last-Modified` header (none before PAC-88, none added), so no browser stores it heuristically; it depends on the clock and on hosts' calendars, and a client may reuse it only within one page visit. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, in every mode and with or without `display_time_zone`; one overview request counts once whatever its range (unchanged by PAC-88). The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
  */
 export type get_GetPublicBookingSlots = {
       method: "GET",
@@ -4436,7 +4892,7 @@ export type get_GetPublicBookingSlots = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query?:  Partial<{ date: string, duration: number }>,
+            query?:  Partial<{ display_time_zone: string, date: string, from: string, to: string, duration: number }>,
         path:  { slug: string },
         
         
@@ -4677,6 +5133,7 @@ export type get_ListFocusBlocks = {
           }
       responses: {200: Array<Schemas.FocusBlockRecord>,
 400: Schemas.SchedulingErrorResponse,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -4804,6 +5261,7 @@ export type post_ReoptimizeHabits = {
       parameters: never,
       responses: {200: Schemas.HabitsReoptimizeAck,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4819,6 +5277,7 @@ export type get_ListHabitTemplates = {
       parameters: never,
       responses: {200: Array<Schemas.HabitTemplate>,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -4970,6 +5429,7 @@ export type delete_DisconnectNotion = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5013,6 +5473,7 @@ export type get_ConnectNotion = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -5029,6 +5490,7 @@ export type get_GetNotionStatus = {
       parameters: never,
       responses: {200: Schemas.IntegrationStatus,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5046,6 +5508,7 @@ export type delete_DisconnectSlack = {
       parameters: never,
       responses: {204: unknown,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5090,6 +5553,7 @@ export type get_ConnectSlack = {
       parameters: never,
       responses: {302: unknown,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 503: Schemas.ErrorResponse,
 },
       responseHeaders: {302: { Location: string, "Set-Cookie": string },
@@ -5107,6 +5571,7 @@ export type get_GetSlackStatus = {
       parameters: never,
       responses: {200: Schemas.IntegrationStatus,
 401: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
@@ -5229,6 +5694,7 @@ export type post_TestLLMConnection = {
           }
       responses: {200: Schemas.LLMTestResult,
 400: Schemas.SchedulingErrorResponse,
+401: Schemas.ErrorResponse,
 409: Schemas.LLMNotConfiguredResponse,
 422: Schemas.LLMDestinationRefusal,
 500: Schemas.SchedulingErrorResponse,
@@ -5253,6 +5719,7 @@ export type get_GetManagerAnalytics = {
           }
       responses: {200: Schemas.ManagerAnalytics,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -5260,6 +5727,7 @@ export type get_GetManagerAnalytics = {
     }
 /**
  * PREVIEW half of the preview-then-confirm flow. Runs DetectTeam (which does write the global manager_team_members identity rows and one_on_one_occurrences as a side effect of scanning the calendar) and then reports, per candidate, whether that email is ALREADY assigned to the selected team. `assigned` is hard-coded to 0: this endpoint never creates a manager_team_member_assignments row for any team. `team_id` is REQUIRED here and the caller must be the team OWNER.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster import (DetectTeam) resolves each detected address to an account (`member_user_id`) only when exactly one account holds it DOMAIN-CONFIRMED (case-insensitive); otherwise the identity row is written with `member_user_id` null, as for a non-Paceday address.
  */
 export type post_PreviewManagerDetection = {
       method: "POST",
@@ -5298,6 +5766,7 @@ export type post_ConfirmManagerDetection = {
           }
       responses: {200: Schemas.ScanConfirmation,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -5321,6 +5790,7 @@ export type get_GetManagerCadenceGaps = {
           }
       responses: {200: Schemas.CadenceGapList,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -5336,6 +5806,7 @@ export type get_GetManagerProfile = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.ManagerProfileSummary,
+401: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
@@ -5357,12 +5828,14 @@ export type post_SetManagerProfile = {
           }
       responses: {200: Schemas.UserProfileGoStruct,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
  * `team_id` is REQUIRED (unlike the member-mutation routes below), and membership — not ownership — suffices. The roster is the union of (a) manager assignments for this team and (b) formal team_members of this team that have no assignment yet, synthesised with source="formal" and cadence="none". The caller is always excluded from (b). Sorted case-insensitively by display_name. `members` is always an array, never null.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): merging formal members with roster entries is a keeping site: a roster entry represents a formal member whose stored address equals the entry's address case-insensitively, at ANY standing. Nothing is granted here.
  */
 export type get_GetManagerRoster = {
       method: "GET",
@@ -5378,6 +5851,7 @@ export type get_GetManagerRoster = {
           }
       responses: {200: Schemas.ManagerRoster,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -5385,6 +5859,7 @@ export type get_GetManagerRoster = {
     }
 /**
  * `team_id` is OPTIONAL here. Without it the member is written to the global manager_team_members table only. With it the write is transactional across manager_team_members plus manager_team_member_assignments, and the caller must be the team OWNER. Adding a member never creates a team_invites row (asserted by TestManagerTeam_AddMemberCreatesOnlySelectedTeamAssignment).
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): `member_user_id` is resolved to an account only when exactly one account holds `email` DOMAIN-CONFIRMED (compared case-insensitively; before PAC-71 an exact-case match on any account). An address that is carried only unconfirmed, by several accounts (a letter-case collision), or by none resolves to nobody: the roster row is stored with `member_user_id` null, as for a non-Paceday address today.
  */
 export type post_AddManagerTeamMember = {
       method: "POST",
@@ -5400,6 +5875,7 @@ export type post_AddManagerTeamMember = {
           }
       responses: {201: Schemas.ManagerTeamMemberGoStruct,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -5408,6 +5884,7 @@ export type post_AddManagerTeamMember = {
     }
 /**
  * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. Every storage error on this path is swallowed, so a failed delete still returns 204.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
  */
 export type delete_RemoveManagerTeamMember = {
       method: "DELETE",
@@ -5423,13 +5900,16 @@ export type delete_RemoveManagerTeamMember = {
           }
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
 },
       
     }
 /**
  * Omitted fields keep their current value. Supplying `cadence` as anything other than "custom" clears cadence_custom_days; omitting `cadence` preserves it (TestManagerPatchMember_PreservesOmittedCustomDays). A blank display_name falls back to the local part of the email. With `team_id`, only team-scoped preferences change (display_name_override, cadence, cadence_custom_days on the assignment row); the canonical global display name is never overwritten. Also, with `team_id`, a formal team member with no assignment yet is materialised into an assignment on first patch.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): that materialisation is a granting site: a formal member is matched to `{email}` only when that member's account holds `{email}` DOMAIN-CONFIRMED (case-insensitive); a formal member whose address is unconfirmed is not matched, and the answer is the one for an address with no roster entry.
  */
 export type patch_PatchManagerTeamMember = {
       method: "PATCH",
@@ -5445,6 +5925,7 @@ export type patch_PatchManagerTeamMember = {
           }
       responses: {200: Schemas.ManagerTeamMemberGoStruct,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
@@ -5454,6 +5935,7 @@ export type patch_PatchManagerTeamMember = {
     }
 /**
  * Creates nothing on any calendar. Returns a relative URL of the form `/app?attendees=<email>&duration=30&title=1%3A1+with+<display_name>` plus `&date=<suggested_date>` when supplied (query params are Go url.Values-encoded, so alphabetically ordered). An empty body is accepted (io.EOF is tolerated).
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster entry this operation may materialise for a formal team member follows the same DOMAIN-CONFIRMED rule as patchManagerTeamMember.
  */
 export type post_ScheduleManagerOneOnOne = {
       method: "POST",
@@ -5469,6 +5951,7 @@ export type post_ScheduleManagerOneOnOne = {
           }
       responses: {200: Schemas.PrefillUrlResponse,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: string,
 422: Schemas.ErrorResponse,
@@ -5613,6 +6096,7 @@ export type post_ParseNaturalLanguage = {
           }
       responses: {200: Schemas.NLPParseResult,
 400: Schemas.SchedulingErrorResponse,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 503: Schemas.RequestBudgetExpiredError,
 },
@@ -5687,7 +6171,11 @@ export type get_GetOrganizationAI = {
  *    an SSO write never consumes an `llm_org_key_write` grant (PAC-50
  *    AC-27, P2-AC-2). Without such a grant: an address on the
  *    deployment's break-glass list (`PACEDAY_ADMIN_EMAILS`, compared
- *    case-insensitively) whose session JWT was issued less than 10
+ *    case-insensitively), held by the caller's ACCOUNT
+ *    domain-confirmed (PAC-71: the account's stored address and
+ *    `addressStanding`, never the session's email claim; an account
+ *    that carries it unconfirmed, or no longer carries it, is not
+ *    break-glass), whose session JWT was issued less than 10
  *    minutes ago, and not more than one minute in the future, is
  *    authorised without a grant (PAC-50 AC-14a); the same address with
  *    an older session is the 403
@@ -6101,6 +6589,7 @@ export type post_SuggestMeetingSlots = {
     }
 /**
  * The caller is inserted as an `accepted` host. Each entry of `co_host_emails` is resolved by lowercased email; unknown emails are silently skipped (no error, no host row). An empty/omitted `slug` is auto-generated from the owner's name.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none is skipped exactly as an unknown email is today (no error, no host row).
  */
 export type post_CreateSchedulingLink = {
       method: "POST",
@@ -6236,6 +6725,7 @@ export type get_GetSchedulingLink = {
     }
 /**
  * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the two halves follow different rules. KEEP SET (revoking and keeping): an existing host is kept when its account's stored address equals a listed address case-insensitively, at ANY standing, so an accepted co-host stored as `Pat@Acme.com` is kept by a list containing `pat@acme.com` (before PAC-71 the lowercased lookup missed it and removed the host). NEW ENTRIES (granting): a listed address that matches no existing host is invited as `pending` only when exactly one account holds it DOMAIN-CONFIRMED; otherwise it is skipped, as an unknown address is today.
  */
 export type patch_UpdateSchedulingLink = {
       method: "PATCH",
@@ -6356,6 +6846,7 @@ export type post_DeclineSchedulingLinkInviteByLink = {
     }
 /**
  * The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invitee is resolved only to an account that holds the email DOMAIN-CONFIRMED (exactly one, compared case-insensitively). An address carried only unconfirmed, by several accounts, or by none answers the existing 404 "user not found", with nothing written.
  */
 export type post_InviteSchedulingLinkHost = {
       method: "POST",
@@ -6416,6 +6907,7 @@ export type get_GetSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.Settings,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -6515,6 +7007,7 @@ export type patch_PatchSettings = {
           }
       responses: {200: Schemas.Settings,
 400: Schemas.SchedulingErrorResponse,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -6530,6 +7023,7 @@ export type get_GetDailyRecapSettings = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapSettings,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -6553,6 +7047,7 @@ export type patch_PatchDailyRecapSettings = {
           }
       responses: {204: unknown,
 400: string,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -6568,6 +7063,7 @@ export type post_PreviewDailyRecap = {
       responseFormat: "json",
       parameters: never,
       responses: {200: Schemas.DailyRecapPreview,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 },
       
@@ -6584,6 +7080,7 @@ export type post_SendDailyRecapTest = {
       parameters: never,
       responses: {200: Schemas.DailyRecapTestResult,
 400: string,
+401: Schemas.ErrorResponse,
 500: Schemas.SchedulingErrorResponse,
 502: Schemas.SchedulingErrorResponse,
 },
@@ -6642,6 +7139,7 @@ export type get_GetTeamInvite = {
         
           }
       responses: {200: Schemas.TeamInvitePreview,
+401: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -6650,6 +7148,7 @@ export type get_GetTeamInvite = {
     }
 /**
  * The authenticated user's email must case-insensitively equal invitee_email. Membership is added with role "member" via an ON CONFLICT DO NOTHING insert, so accepting twice cannot demote an existing owner. Returns no body.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invite is accepted only when the caller's ACCOUNT holds invitee_email DOMAIN-CONFIRMED: its stored address equals invitee_email case-insensitively AND its addressStanding (getCurrentUser) is domain_confirmed. An account that carries the address unconfirmed (bound with mailbox evidence, or created before PAC-71 and not bound yet) gets exactly today's mismatch answer, the 403 "this invite is for a different email address", and nothing changes. The session's email claim is not consulted.
  */
 export type post_AcceptTeamInvite = {
       method: "POST",
@@ -6689,6 +7188,7 @@ export type get_GetTeam = {
           }
       responses: {200: Schemas.TeamDetail,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -6709,6 +7209,7 @@ export type patch_RenameTeam = {
           }
       responses: {200: Schemas.Team,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -6731,6 +7232,7 @@ export type delete_DeleteTeam = {
           }
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -6753,6 +7255,7 @@ export type get_GetFormalTeamAnalytics = {
           }
       responses: {200: Schemas.TeamAnalytics,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -6775,6 +7278,7 @@ export type get_GetTeamAvailability = {
           }
       responses: {200: Schemas.TeamSlotList,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 503: Schemas.RequestBudgetExpiredError,
@@ -6795,6 +7299,7 @@ export type post_InviteTeamMember = {
           }
       responses: {201: Schemas.TeamInvite,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -6818,6 +7323,7 @@ export type delete_RemoveTeamMember = {
           }
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -6841,6 +7347,7 @@ export type post_CreateNoMeetingZone = {
           }
       responses: {201: Schemas.NoMeetingZone,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
@@ -6864,6 +7371,7 @@ export type get_ListNoMeetingZones = {
           }
       responses: {200: Array<Schemas.NoMeetingZone>,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -6886,6 +7394,7 @@ export type patch_UpdateNoMeetingZone = {
           }
       responses: {200: Schemas.NoMeetingZone,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 422: Schemas.ErrorResponse,
@@ -6907,6 +7416,7 @@ export type delete_DeleteNoMeetingZone = {
           }
       responses: {204: unknown,
 400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
 },
@@ -6923,7 +7433,9 @@ export type delete_DeleteNoMeetingZone = {
            "/api/admin/sso": Endpoints.post_CreateSsoProvider,
 "/api/analytics/recompute": Endpoints.post_RecomputeAnalytics,
 "/api/auth/detect": Endpoints.post_DetectAuthProvider,
+"/api/auth/google/connect": Endpoints.post_StartGoogleConnect,
 "/api/auth/logout": Endpoints.post_Logout,
+"/api/auth/microsoft/connect": Endpoints.post_StartMicrosoftConnect,
 "/api/auth/microsoft/disconnect": Endpoints.post_DisconnectMicrosoft,
 "/api/book/{slug}": Endpoints.post_CreatePublicBooking,
 "/api/conference/create": Endpoints.post_CreateConferenceLink,

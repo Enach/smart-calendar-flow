@@ -150,12 +150,21 @@ export interface paths {
          *           Every 400 and 403 above happens before this step and leaves
          *           the grant live; a failure after it (the store-time 400 of step
          *           6, the 500 below) leaves it consumed.
-         *        b. break-glass: the caller's session email is listed in the
-         *           deployment's `PACEDAY_ADMIN_EMAILS` (exact, lower-cased) AND the
+         *        b. break-glass: the caller's ACCOUNT holds a listed address
+         *           DOMAIN-CONFIRMED, i.e. the address stored on the session's
+         *           account (`users.email`, compared lower-cased) is listed in the
+         *           deployment's `PACEDAY_ADMIN_EMAILS` (exact, lower-cased) and
+         *           that account's `addressStanding` is `domain_confirmed`
+         *           (PAC-71, spec §3 "PAC-50 admin step-up and break-glass", D-13,
+         *           AC-38; before PAC-71 the session's `email` CLAIM was compared,
+         *           which a session of an account that no longer carries the
+         *           address, or carries it unconfirmed, could pass) AND the
          *           session JWT was issued less than 10 minutes ago and not more
          *           than one minute in the future (a token stamped further ahead is
-         *           not fresh). Listed without such a session gives 403
-         *           `sso_write_requires_fresh_login`.
+         *           not fresh). Qualifying except for freshness gives 403
+         *           `sso_write_requires_fresh_login`. An account that carries a
+         *           listed address UNCONFIRMED, or whose session claim is listed
+         *           but whose stored address is not, is not break-glass at all.
          *        (a) is tried first: a break-glass caller who also holds a live
          *        grant consumes that grant on the write.
          *        Neither gives 403 `sso_write_requires_admin_stepup` with
@@ -328,6 +337,24 @@ export interface paths {
          *        Microsoft `wids` (or, when absent, the directory-role lookup)
          *        containing a qualifying role template id (spec §4.4). Anything
          *        else, including a lookup error, gives `not_admin`.
+         *     4b. (PAC-71, spec §3 "PAC-50 admin step-up and break-glass", D-13,
+         *        AC-21) When the caller's account is bound to an identity at the
+         *        step-up's authority (Google; or Microsoft with the same tenant as
+         *        the step-up token's `tid`), the step-up token's identity must be
+         *        that bound identity: Google `sub` equal to the bound Google
+         *        subject; Microsoft `oid` equal to the bound object id. Else
+         *        `identity_mismatch`. When the account's binding is at another
+         *        authority (another provider, another tenant, an SSO issuer) or
+         *        it has none, this check does not apply and today's checks 0 to 4
+         *        decide alone. It runs after every existing check, so a step-up
+         *        that fails one of them keeps today's reason. The step-up's scopes
+         *        and consent are unchanged. It relies on two provider facts that
+         *        are a merge condition of PAC-71 (PAC-71.md §3, §8): the step-up
+         *        ID token's Google `sub` equals the v2 userinfo `id` recorded at
+         *        sign-in, and the Microsoft `oid` equals Graph `/me` `id`. If
+         *        either did not hold, this check would fail closed
+         *        (`identity_mismatch`) for every bound administrator at that
+         *        provider.
          *     5. A grant for (caller, caller's org, provider) is issued with the
          *        purpose bound in the state (`sso_write` unless the start named
          *        `llm_org_key_write`; NEW-llm-bring-your-own Part 2), valid for 10
@@ -754,25 +781,123 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Google OAuth callback
-         * @description Validates the `oauth_state` cookie against the `state` query param,
-         *     exchanges the code, upserts the user, stores the OAuth token, associates
-         *     the org, issues the `auth_token` JWT cookie, then redirects to
-         *     `<FRONTEND_URL>/auth/callback`.
-         *     Since PAC-35 (API-011) the redirect to `/auth/callback` happens only when
-         *     the session cookie was actually set. If the session cannot be issued
-         *     (empty signing secret, or token generation fails) the user is sent to
-         *     the sign-in failure state instead; see the `302` response.
+         * Google OAuth callback (sign-in, or a signed-in user's calendar connect)
+         * @description Since PAC-71 this one redirect target serves two flows, and ONLY the
+         *     state cookie that the `state` query parameter matches decides which
+         *     (spec §3 "Connecting a calendar", D-24):
+         *     - it equals the `google_connect_state` cookie, which only
+         *       `startGoogleConnect` sets: the CONNECT branch;
+         *     - otherwise it equals the `oauth_state` cookie, which only
+         *       `startGoogleOAuth` sets: the SIGN-IN branch;
+         *     - neither cookie is present or equal: the 400 "invalid state", as
+         *       today. Nothing is exchanged or written.
+         *     The two cookies hold independent random values, so at most one can
+         *     match. A session cookie, an Authorization header or any other query
+         *     parameter never selects a branch: a flow that `startGoogleConnect`
+         *     did not start is a sign-in, wherever it was started (spec AC-14,
+         *     PAC-47 D-18).
          *
-         *     Since PAC-67 a successful Google sign-in is also the Google RECONNECT
-         *     (spec PAC-67 AC-12, AC-24): storing the new token ends any recorded
-         *     loss of the Google connection for the user it resolves to, so
-         *     `getAuthStatus` (Google calendar provider) and the `google_meet` row of
-         *     `listConferenceProviders` report connected again, and a later loss of
-         *     the new credential is a new loss with its own `connection_lost`
-         *     activity entry. The user is still resolved by the Google account's
-         *     email, exactly as before (spec PAC-67 OQ-10: sign-in matching is not
-         *     changed). No response of this operation changes.
+         *     SIGN-IN branch (spec §3 "Identities", "The sign-in rule", migration
+         *     rules (a) and (b)). Steps 1 to 3 are today's; the rest is PAC-71's.
+         *     1. `oauth_state` checked (400) and expired; the code is exchanged
+         *        (500 on failure).
+         *     2. Google's v2 userinfo is read with the access token (500 on
+         *        failure, as today). Sign-in still requests exactly `calendar` and
+         *        `userinfo.email` (PAC-50 AC-24, spec D-14). From the answer:
+         *        `id` is the Google subject (identity = authority `google` +
+         *        `id`); `email` is the reported address; `verified_email` and
+         *        `hd` are evidence (spec OQ-3 item 5; see PAC-71.md §3 for what is
+         *        and is not established).
+         *     3. Evidence for the reported address: AUTHORITATIVE when
+         *        `verified_email` is true and either `hd` equals the address's
+         *        domain (exact, case-insensitive; a subdomain does not count) or
+         *        the domain is `gmail.com` or `googlemail.com`; MAILBOX when
+         *        `verified_email` is true otherwise; NONE when it is false or
+         *        absent.
+         *     4. The account is chosen ONLY by identity, never by address for a
+         *        bound identity. Addresses are compared case-insensitively.
+         *        a. The identity is bound to an account: that account, whatever
+         *           address Google now reports. Its stored address and address
+         *           standing are not changed (spec D-7).
+         *        b. Otherwise, if two or more accounts carry the address in any
+         *           letter case (a case collision): REFUSED.
+         *        c. Otherwise, if one account carries the address and it is bound
+         *           (to any other identity, at any authority): REFUSED.
+         *        d. Otherwise, if one account carries the address and it is
+         *           unbound (created before PAC-71), it binds to this identity in
+         *           ONE atomic step (lock the account, re-check every condition,
+         *           write the binding and standing, advance the session generation;
+         *           all or nothing) when:
+         *           - rule (a): the account's recorded identifier (`users.provider_id`)
+         *             has the Google format `^[0-9]{1,255}$`, equals `id`, and the
+         *             evidence is MAILBOX or AUTHORITATIVE; or
+         *           - rule (b): the evidence is AUTHORITATIVE and the account is
+         *             EMPTY (PAC-71.md §6: no account data of any kind, every
+         *             setting at its named default in normal form).
+         *           The standing is DOMAIN_CONFIRMED for AUTHORITATIVE evidence,
+         *           UNCONFIRMED for MAILBOX. If neither rule holds, or the re-check
+         *           under the lock fails (a competing binding or write won):
+         *           REFUSED, and the account stays unbound with nothing stored.
+         *        e. Otherwise (no account carries the address): with AUTHORITATIVE
+         *           evidence an account is created, bound, DOMAIN_CONFIRMED; with
+         *           MAILBOX evidence created, bound, UNCONFIRMED; with NONE:
+         *           REFUSED. Creation is atomic against a concurrent creation for
+         *           the same address in any letter case: the loser is REFUSED.
+         *     5. For the chosen, created or newly bound account (never another):
+         *        the Google token is stored on it (ending a recorded Google loss,
+         *        PAC-67), PAC-68's organisation rule is evaluated for it, name and
+         *        picture are overwritten as today, and a session is issued whose
+         *        `gen` is the account's current generation (after any advance in
+         *        step 4). A binding writes the subject into `users.provider_id`
+         *        (spec §7 "Re-applying"); a bound sign-in leaves it alone.
+         *        `users.provider` keeps meaning "provider of the first sign-in".
+         *        A migration binding never changes the work calendar.
+         *
+         *     REFUSED (spec §3 "Refusal"): the one fixed redirect
+         *     `<FRONTEND_URL>/?error=signin_refused`, the same for every cause, so
+         *     it never reveals whether an account exists for the address (spec
+         *     D-6). A refusal creates no account, binds nothing, stores no token,
+         *     changes no organisation, work calendar, standing or generation, and
+         *     neither sets nor expires `auth_token`: a session the browser already
+         *     holds is kept. The cause, and the account it concerns, go to the
+         *     server log only.
+         *
+         *     CONNECT branch (spec §3 "Connecting a calendar", PAC-47 §3 item 3,
+         *     D-4, D-24). Checks run in this order; the first failure decides:
+         *     1. The state is one `startGoogleConnect` issued, at most 300 seconds
+         *        ago, for provider google; it names the user U and the generation
+         *        g that the starting session carried. Else: NOT CREDITED.
+         *     2. The request's session (the `auth_token` cookie, validated as
+         *        requireAuth validates it; a provider redirect carries no
+         *        Authorization header) is valid, names U, and carries `gen` g.
+         *        Else (no session, another user's, or another generation):
+         *        NOT CREDITED.
+         *     3. U's current generation is read, uncached, and equals g. Else:
+         *        NOT CREDITED. If it cannot be read: the 500 below.
+         *     4. `code` is present and non-empty. Else (the provider returned
+         *        without a code, typically `error=access_denied` because the user
+         *        cancelled or the provider refused): NOT CREDITED, nothing is
+         *        exchanged. The user lands on the web app, never on a JSON page of
+         *        the API origin.
+         *     5. The code is exchanged (500 on failure). Userinfo is not read and
+         *        nothing about the Google account's identity or address is used:
+         *        whatever identity and address it has, nothing is bound.
+         *     6. The token is stored on U, in one transaction that re-reads U's
+         *        current generation and stores only while it still equals g
+         *        (spec AC-47). If it moved: nothing is stored, NOT CREDITED.
+         *        Storing ends a recorded Google loss of U (PAC-67 AC-12).
+         *     7. CREDITED.
+         *     A connect, credited or not, binds no identity, adds no sign-in
+         *     method, creates no account, issues no session, never sets or
+         *     expires `auth_token`, evaluates no organisation membership, and
+         *     changes nothing else on any account: not U's name, picture,
+         *     address, standing, recorded identifier, work calendar (spec D-15) or
+         *     generation. Every connect-branch response, the redirects and the
+         *     500 alike, expires the `google_connect_state` cookie, so a state is
+         *     used at most once.
+         *     The SIGN-IN branch keeps today's behaviour for a missing `code` (the
+         *     exchange of an empty code fails: the 500 below); PAC-71 does not
+         *     change it.
          *
          */
         get: operations["googleOAuthCallback"];
@@ -802,6 +927,34 @@ export interface paths {
          *     user goes to the sign-in failure state (see `302`).
          *     Inconsistent error encoding: the 404 and 500 use the JSON helpers while
          *     the 400s and the 403 use http.Error (text/plain).
+         *
+         *     Since PAC-71 (spec §3 "Identities", "The sign-in rule", D-10) the
+         *     account is no longer found by email. After the PAC-45 domain check
+         *     (the 403 below, unchanged), the identity is authority = the issuer
+         *     the ID token was verified against (its `iss`) + subject = its `sub`.
+         *     Two issuers are two authorities even when one asserts the other's
+         *     subjects. Evidence for the asserted email is AUTHORITATIVE unless the
+         *     ID token carries `email_verified` with the value false, which is
+         *     NONE. Then:
+         *     - the identity is bound to an account: that account, whatever email
+         *       the IdP now asserts (its stored address and standing unchanged);
+         *     - otherwise, if any account carries the email in any letter case
+         *       (bound or not, created before PAC-71 or not): REFUSED. An issuer
+         *       is never authoritative over an existing account, and SSO never
+         *       binds an account created before PAC-71 (migration rules (a) and (b)
+         *       are Google and Microsoft only; spec D-10, owner question OQ-2,
+         *       factory default "no");
+         *     - otherwise: AUTHORITATIVE creates an account bound to the identity,
+         *       DOMAIN_CONFIRMED (atomic against a concurrent creation for the
+         *       same address; the loser is REFUSED); NONE is REFUSED.
+         *     The session issued carries the account's current `gen`. A binding or
+         *     creation writes the subject into `users.provider_id`; it is never
+         *     used for migration rule (a).
+         *     REFUSED is the same fixed redirect as the other two callbacks,
+         *     `<FRONTEND_URL>/?error=signin_refused`, with the same guarantees
+         *     (nothing created, bound or stored; no organisation, standing or
+         *     generation change; `auth_token` neither set nor expired). The SSO
+         *     flow has no connect branch.
          *
          */
         get: operations["ssoOidcCallback"];
@@ -905,11 +1058,81 @@ export interface paths {
          *     account the user typed is preselected. Google still shows its consent
          *     screen every time (`oauth2.ApprovalForce`); the hint chooses the
          *     account, it does not skip the screen.
+         *     Since PAC-71 this is the SIGN-IN start only (spec §3 "Connecting a
+         *     calendar"): a flow it starts is always a sign-in, whether or not the
+         *     browser holds a session. The signed-in "connect a calendar" controls
+         *     use `startGoogleConnect` instead. The scope set is unchanged
+         *     (exactly `calendar` and `userinfo.email`, PAC-50 AC-24).
          *
          */
         get: operations["startGoogleOAuth"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/google/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start connecting a Google calendar to the signed-in account (never a sign-in)
+         * @description New in PAC-71 (spec §3 "Connecting a calendar", AC-12 to AC-14,
+         *     AC-32, D-4, D-24). Protected by requireAuth, so it carries the
+         *     SESSION GENERATION rules of the security scheme. It is the only way
+         *     to start a Google CONNECT; the four signed-in controls (Settings
+         *     work-calendar control, connection status control, Dashboard
+         *     "Connect calendar" banner, onboarding calendar step) call it instead
+         *     of navigating to `startGoogleOAuth`.
+         *
+         *     Takes no request body (any body is ignored) and no parameter. It
+         *     answers 200 with the provider authorization URL in a JSON body; it
+         *     NEVER redirects. The web app then navigates the window to
+         *     `authorize_url`. This is what makes a start by another site useless
+         *     (spec §3 "Cross-site request model"): another site can make the
+         *     victim's browser send this POST with the victim's cookie (a form
+         *     post), but cannot read the response, so it never learns the URL or
+         *     the state; a GET (navigation, GET form, image, script, frame) is not
+         *     this operation and starts nothing; and the state it would need is
+         *     bound to the victim's browser by the `google_connect_state` cookie
+         *     and to the victim's account and generation by the server.
+         *     INVARIANT this argument rests on: the API never answers a
+         *     cross-origin request with `Access-Control-Allow-Credentials: true`
+         *     for an origin other than the one configured web origin (today
+         *     `corsMiddleware`, backend/api/middleware.go: `*` without
+         *     credentials, or exactly `FRONTEND_URL` with credentials). A change
+         *     that reflects an arbitrary origin with credentials breaks it and
+         *     must revise this contract.
+         *
+         *     Effects: the server issues a new opaque state bound to (the caller's
+         *     user id, the session's `gen`, provider `google`, an expiry 300
+         *     seconds later) in a form only the server can create and check (a
+         *     server-side record or a server-keyed MAC; the plan decides), and
+         *     sets it as the `google_connect_state` cookie. Nothing else is
+         *     written: no credential, no setting, no work calendar (the Settings
+         *     work-calendar control and onboarding change the work calendar by the
+         *     user's own explicit choice BEFORE calling this, as today), no
+         *     session. A second start replaces the cookie; only the latest state
+         *     of this browser can complete.
+         *
+         *     `authorize_url` is the same Google authorization URL
+         *     `startGoogleOAuth` builds (same client, same redirect URI
+         *     `GOOGLE_REDIRECT_URL` = this server's `/api/auth/callback`, exactly
+         *     the scopes `calendar` and `userinfo.email`, offline access and
+         *     forced consent), with this state and no `login_hint`. The callback
+         *     recognises the connect by the state alone (see
+         *     `googleOAuthCallback`, CONNECT branch).
+         *
+         */
+        post: operations["startGoogleConnect"];
         delete?: never;
         options?: never;
         head?: never;
@@ -929,7 +1152,11 @@ export interface paths {
          * Clear the session cookie
          * @description Expires the `auth_token` cookie. Note it is behind requireAuth, so logging
          *     out with an already-expired token returns 401 rather than succeeding
-         *     (unchanged by PAC-35, spec section 5).
+         *     (unchanged by PAC-35, spec section 5). Since PAC-71 the same holds
+         *     for a session whose generation is no longer current (401). Logout
+         *     still only expires this browser's cookie; it does not advance the
+         *     generation (spec §3 "Sessions"; "sign out everywhere" is follow-up
+         *     F3).
          *
          */
         post: operations["logout"];
@@ -953,6 +1180,9 @@ export interface paths {
          *     Clients read it under that name; the server does not rename it.
          *     Scheduling-link and booking hosts carry the same stored value as
          *     `avatar_url` (`SchedulingLinkHost`, `PublicHost`), unchanged by PAC-35.
+         *     Since PAC-71 the response carries `addressStanding`, so the web app's
+         *     Settings can say that an unconfirmed address cannot accept
+         *     invitations yet (spec §3 "What standing allows").
          *
          */
         get: operations["getCurrentUser"];
@@ -977,6 +1207,21 @@ export interface paths {
          *     Configuration is read from env at request time (MICROSOFT_CLIENT_ID);
          *     if the client id is blank the route 503s.
          *     Since PAC-35 (API-064) a valid `login_hint` is forwarded to Microsoft.
+         *     Since PAC-71 this is the SIGN-IN start only: a flow it starts is
+         *     always a sign-in, whether or not the browser holds a session. The
+         *     signed-in "connect a calendar" controls use `startMicrosoftConnect`.
+         *     Since PAC-71 contract revision 3.1 (owner, 2026-11-01, spec OQ-8,
+         *     OQ-9, D-14, AC-11) the scope parameter is exactly
+         *     `openid profile Calendars.ReadWrite User.Read offline_access`, in
+         *     that order: today's three scopes preceded by the basic `openid` and
+         *     `profile` (both user-level consent, never an admin consent), so
+         *     Microsoft returns a signed ID token carrying `tid` and `oid`. No
+         *     other scope is added (no `email`). PAC-50 AC-24's scope-pinning test
+         *     compares the joined string in order and is amended to allow exactly
+         *     this string. The request also carries
+         *     `nonce=<N>`, where N is the lowercase hex SHA-256 of the state value
+         *     in the `ms_oauth_state` cookie, so the callback can bind the ID
+         *     token to this browser's sign-in without a new cookie.
          *
          */
         get: operations["startMicrosoftOAuth"];
@@ -996,45 +1241,200 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Microsoft OAuth callback
-         * @description Validates `ms_oauth_state`, exchanges the code, fetches the Graph profile
-         *     and upserts the user, then saves the Microsoft token on THAT USER'S OWN
-         *     settings row (making Outlook their calendar provider), sets the session
-         *     cookie and redirects. Since PAC-24 the profile fetch is required, not
-         *     best-effort: without it there is no user to attach the credential to, so
-         *     nothing is saved. Before PAC-24 the token was saved on the single shared
-         *     settings row and the provider flipped for everyone.
-         *     Since PAC-35 (API-011, API-012) three failures after a successful code
-         *     exchange end on the app's sign-in failure state rather than on a JSON
-         *     error page on the API origin: the Graph profile could not be read (or
-         *     carried no email), the user could not be saved, or the session could
-         *     not be issued. See the `302` response.
+         * Microsoft OAuth callback (sign-in, or a signed-in user's Outlook connect)
+         * @description Since PAC-71 this one redirect target serves two flows, and ONLY the
+         *     state cookie that the `state` query parameter matches decides which
+         *     (spec §3 "Connecting a calendar", D-24):
+         *     - it equals the `ms_connect_state` cookie, which only
+         *       `startMicrosoftConnect` sets: the CONNECT branch;
+         *     - otherwise it equals the `ms_oauth_state` cookie, which only
+         *       `startMicrosoftOAuth` sets: the SIGN-IN branch;
+         *     - neither: the 400 "invalid state", as today.
+         *     A session cookie never selects a branch: a Microsoft flow that
+         *     `startMicrosoftConnect` did not start is a sign-in, wherever it was
+         *     started (PAC-47 D-18, spec AC-14). An unconfigured client is the 503
+         *     on both branches, checked after the state as today.
          *
-         *     Since PAC-67 this sign-in is also the Outlook RECONNECT, and what it
-         *     stores changes in two ways; no response, status or Location changes.
-         *     (1) When the code exchange returns an access token but NO refresh
-         *     token, the user's stored refresh token is kept, never overwritten with
-         *     an empty one, so a working connection is never erased by a reconnect
-         *     (spec PAC-67 AC-11). With no refresh token stored before either, the
-         *     result is a credential with no refresh token. It can never be renewed,
-         *     so it is reported not connected both by `getAuthStatus` (as today) and,
-         *     since PAC-67, by the `teams` row of `listConferenceProviders` (which
-         *     before PAC-67 reported it connected and enabled); once its access token
-         *     expires, Teams meeting creation with it answers the 400 "teams:
-         *     connection lost — reconnect at /api/auth/microsoft" without recording a
-         *     loss (contract challenge finding 5). (2) Storing the credential ends any recorded loss of
-         *     the Outlook connection for the user it resolves to (AC-12, AC-24), so
-         *     `getAuthStatus` (Outlook calendar provider) and the `teams` row of
-         *     `listConferenceProviders` report connected again. The credential is
-         *     still attached to the user matched by the Microsoft account's email,
-         *     and every sign-in still sets that user's calendar provider to
-         *     `outlook`, including a sign-in after `disconnectMicrosoft` (spec
-         *     PAC-67 D-4, OQ-5, OQ-10: unchanged on purpose).
+         *     SIGN-IN branch. Step 1 and the `/me` read are today's (PAC-24,
+         *     PAC-35); the rest is PAC-71's. Since contract revision 3 (owner,
+         *     2026-11-01, spec OQ-8) the tenant comes from the signed ID token and
+         *     the organisation lookup is evidence only; since revision 3.1 (owner,
+         *     OQ-9) the object id comes from the same signed ID token and `/me`
+         *     is a mandatory cross-check (PAC-71.md §3).
+         *     1. `ms_oauth_state` checked (400) and expired; the code is exchanged
+         *        (500 on failure). Sign-in requests exactly
+         *        `openid profile Calendars.ReadWrite User.Read offline_access`
+         *        (`startMicrosoftOAuth`), so the token response carries an
+         *        `id_token`.
+         *     2. ID TOKEN, TENANT AND OBJECT ID (spec §3 "The Microsoft tenant
+         *        fails closed", D-23, AC-11b). The `id_token` of the token response
+         *        is accepted only when ALL of these hold; otherwise REFUSED, before
+         *        anything is looked up or written. Sign-in uses its OWN
+         *        tenant-pinned verifier; it does NOT reuse the PAC-50 step-up
+         *        verifier (`backend/auth/stepup.go:103`, `:245`), which reads the
+         *        `/common` keys and rejects a `tid` only when it contains `/?#`
+         *        (revision 3.1):
+         *        - it is present, a compact JWS, header `alg` `RS256`, with a
+         *          `kid`;
+         *        - its payload `tid` is a GUID (canonical 8-4-4-4-12 hex, compared
+         *          case-insensitively), checked BEFORE any key is fetched, so no
+         *          other value ever reaches a URL;
+         *        - its signature verifies with the key named by `kid` in
+         *          Microsoft's published keys for that tenant,
+         *          `https://login.microsoftonline.com/{tid}/discovery/v2.0/keys`
+         *          (revision 3.1: each fetch has a 10-second limit, the
+         *          identity-provider class of PAC-81 Part A; keys are cached per
+         *          tenant for up to 24 hours; an unknown `kid` triggers at most one
+         *          refetch per tenant per minute; at most 1000 tenants are cached,
+         *          the least recently used evicted first. The first fetch for a
+         *          tenant that is not cached (new, expired after 24 hours, or
+         *          evicted) is not subject to the per-minute refetch limit. Fetches
+         *          are single-flight per tenant: a request that needs a tenant's
+         *          keys while a fetch of them is in flight waits for that fetch
+         *          (within its own request) instead of starting another or being
+         *          refused as rate-limited. A fetch that errors or exceeds the
+         *          limit, or a `kid` still unknown after the refetch or while that
+         *          tenant's refetch is rate-limited, is REFUSED);
+         *        - `iss` is `https://login.microsoftonline.com/{tid}/v2.0` with the
+         *          token's own `tid`: scheme, host and path compared exactly, the
+         *          `{tid}` part compared case-insensitively (a GUID's hex digits
+         *          may come in either case); and `ver` is `2.0`;
+         *        - `aud` is either the string `MICROSOFT_CLIENT_ID`, or a JSON
+         *          array of exactly one element that is that string; any other
+         *          shape or value (another client, an extra audience, an empty
+         *          array) is REFUSED (revision 3.1);
+         *        - `oid` is present and a GUID (canonical 8-4-4-4-12 hex); absent
+         *          or malformed is REFUSED (revision 3.1, owner OQ-9: the object
+         *          id comes from the signed token);
+         *        - `exp` is in the future and `nbf`, when present, is not
+         *          (60 seconds of clock skew allowed);
+         *        - `nonce` equals the lowercase hex SHA-256 of the `state` that
+         *          matched `ms_oauth_state` (step 1), binding the token to this
+         *          browser's sign-in request.
+         *        The tenant is the token's `tid`. CLASSIFICATION: a `tid` equal to
+         *        `9188040d-6c67-4c5b-b112-36a304b66dad` (Microsoft's documented
+         *        tenant for every personal Microsoft account) is a PERSONAL
+         *        account and is REFUSED here, before `/me` or `/organization` is
+         *        read (owner, 2026-11-01: personal Microsoft sign-in waits for
+         *        follow-up PAC-77; spec AC-5, AC-11c). Any other GUID `tid` is a
+         *        WORK account in that tenant, with object id = the token's `oid`.
+         *        The ID token's `sub`, `email`, `preferred_username` and `name`
+         *        are not used.
+         *     3. Graph `GET /v1.0/me?$select=id,mail,displayName` with the access
+         *        token. Unreadable, or no `mail`: the sign-in failure state (a)
+         *        below, nothing saved (PAC-35, unchanged). OBJECT-ID CROSS-CHECK
+         *        (revision 3.1, owner OQ-9, mandatory): `/me`'s `id`, read with the
+         *        access token of the same token response as the verified ID token,
+         *        must equal the token's `oid` (case-insensitive GUID); anything
+         *        else is REFUSED (spec AC-11b). The identity is authority
+         *        (`microsoft`, tenant from step 2) + object id (`oid` from step 2).
+         *     4. EVIDENCE for `mail` (spec §3 evidence table, AC-51): Graph
+         *        `GET /v1.0/organization?$select=id,verifiedDomains` with the same
+         *        access token (documented least-privileged delegated permission:
+         *        `User.Read`, already granted). AUTHORITATIVE only when the answer
+         *        is a 200 whose `value` holds exactly one entry, that entry's `id`
+         *        equals the step-2 tenant (case-insensitive), and an entry of its
+         *        `verifiedDomains` has `name` equal to the address's domain (exact,
+         *        case-insensitive). Anything else (an error, a timeout, a 4xx, an
+         *        empty or multi-entry `value`, another tenant's id, the domain not
+         *        listed) is NONE evidence and is logged: it is NEVER a refusal by
+         *        itself and never "tenant unobtainable". A bound identity still
+         *        signs in (and PAC-68 evaluates membership as not joined); an
+         *        unknown identity or a migration binding is decided by step 5 with
+         *        NONE evidence (rule 5 and rules (a)/(b) then refuse). A Microsoft
+         *        work account never has MAILBOX evidence.
+         *     5. The account is chosen exactly as `googleOAuthCallback`'s SIGN-IN
+         *        step 4 (bound identity first; case collision, bound carrier or
+         *        unknown identity on a carried address REFUSED; unbound
+         *        pre-existing account binds atomically under rule (a) or (b) or is
+         *        REFUSED; new account created with AUTHORITATIVE evidence, REFUSED
+         *        with NONE), with one difference in rule (a): the recorded
+         *        identifier must have the Microsoft work format (a GUID,
+         *        `^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+         *        and equal `/me`'s `id` case-insensitively, with AUTHORITATIVE
+         *        evidence (the Google and Microsoft formats are disjoint, so no
+         *        recorded value can fit both; spec AC-37).
+         *     6. For the chosen, created or newly bound account (never another):
+         *        the Microsoft credential is stored on it as PAC-67 stores it (a
+         *        response without a refresh token keeps the stored one, AC-11;
+         *        storing ends a recorded Outlook loss, AC-12); PAC-68's
+         *        organisation rule is evaluated for it; a session carrying its
+         *        current `gen` is issued. Work calendar: an account CREATED here
+         *        gets `outlook`, as today. For an account REACHED through its bound
+         *        identity, every sign-in still sets `outlook`: that is today's
+         *        reset, PAC-47's to remove (PAC-47 D-17; spec §5, D-15), and
+         *        PAC-71 does not change it. A MIGRATION BINDING (rule (a) or (b))
+         *        never changes the work calendar (spec AC-31, AC-41).
+         *
+         *     REFUSED: the one fixed redirect `<FRONTEND_URL>/?error=signin_refused`
+         *     with the same guarantees as `googleOAuthCallback` (nothing created,
+         *     bound or stored; no organisation, work calendar, standing or
+         *     generation change; `auth_token` neither set nor expired; cause in the
+         *     server log only). The same redirect for every cause, including an ID
+         *     token that does not check, Microsoft's keys being unreadable (so an
+         *     outage of Microsoft's key endpoint refuses every Microsoft sign-in),
+         *     and a personal Microsoft account (spec §5 "Microsoft availability";
+         *     owner OQ-8, 2026-11-01). A Graph `/organization` outage is not a
+         *     refusal cause (step 4).
+         *
+         *     CONNECT branch: the checks, order and outcomes of
+         *     `googleOAuthCallback`'s CONNECT branch, with the `ms_connect_state`
+         *     cookie and provider `outlook`, including step 4 (no `code`, as when
+         *     the user cancels at Microsoft: NOT CREDITED, a redirect to the web
+         *     app, never a JSON page) and the expiry of `ms_connect_state` on
+         *     every connect-branch response, the 500 included. Neither `/me` nor `/organization` is
+         *     read and no ID token is requested or read (the connect start
+         *     requests neither `openid` nor `profile`), so any Microsoft account (work or personal, any
+         *     tenant, any address) can be connected and nothing about it is bound. The
+         *     credential is stored on U as PAC-67 stores it (refresh token kept
+         *     when none is returned; a recorded Outlook loss ends), in the
+         *     transaction that re-checks U's generation (spec AC-47), and the
+         *     connect NEVER changes U's work calendar (spec D-15, AC-12, AC-31):
+         *     unlike today's sign-in, it does not set `outlook`. The Settings
+         *     work-calendar control sets `outlook` by the user's explicit choice
+         *     before starting the connect, as today.
          *
          */
         get: operations["microsoftOAuthCallback"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/auth/microsoft/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start connecting an Outlook (Microsoft) calendar to the signed-in account (never a sign-in)
+         * @description New in PAC-71. The Microsoft twin of `startGoogleConnect`: same
+         *     protection, same JSON-body-never-redirect rule and the same
+         *     cross-site argument (and the same CORS invariant it rests on), same state binding (caller's user id, session
+         *     `gen`, provider `outlook`, 300-second expiry), set as the
+         *     `ms_connect_state` cookie. Nothing else is written; in particular
+         *     the work calendar is not changed (spec D-15).
+         *
+         *     `authorize_url` uses the same client, `/common` authority and
+         *     redirect URI `MICROSOFT_REDIRECT_URL` (= this server's
+         *     `/api/auth/microsoft/callback`) as `startMicrosoftOAuth`, with this
+         *     state and no `login_hint`, but exactly the scopes
+         *     `Calendars.ReadWrite User.Read offline_access` and no `nonce`:
+         *     unlike sign-in (contract revisions 3 and 3.1), a connect identifies
+         *     nobody, so it requests no `openid`, no `profile` and no ID token. Configuration is read from env at request
+         *     time, as `startMicrosoftOAuth` does. The callback recognises the
+         *     connect by the state alone (`microsoftOAuthCallback`, CONNECT
+         *     branch).
+         *
+         */
+        post: operations["startMicrosoftConnect"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1169,7 +1569,12 @@ export interface paths {
          *     `calendarProvider` and, on the outlook branch, reads the caller's own
          *     stored Microsoft credential.
          *     On an internal failure it does NOT error — it 200s with
-         *     {connected:false, provider:"google", email:""}.
+         *     {connected:false, provider:"google", email:""}. Since PAC-71 two
+         *     cases are excluded from that fallback (security scheme, SESSION
+         *     GENERATION): a session whose generation is no longer current is the
+         *     401, including when the in-request re-check on the settings or
+         *     credential read finds the generation moved; and a generation that
+         *     cannot be read is the 500.
          *
          *     Since PAC-67 `connected` means USABLE, not merely stored (spec PAC-67
          *     §3, AC-8, AC-12, AC-13, AC-21). A credential whose renewal the provider
@@ -1285,8 +1690,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Available slots for a date, or the list of dates that have any slot.
-         * @description Two distinct modes. With `date`: `slots` is populated and `available_dates` is always the empty array. Without `date`: the handler probes the link's booking horizon, today and the next `booking_horizon_days` - 1 days in the link's zone, and returns in `available_dates` the days that have at least one offered slot, with `slots` always the empty array. Both keys are always present in both modes. A slot is offered by the same rule `createPublicBooking` accepts (PAC-72; see that operation for the six parts and the link's zone): duration, link days and daily window on the 15-minute grid, every accepted host free, minimum notice, horizon, at least one accepted host. Days, hours, "today" and the horizon are evaluated in the link's zone (the link owner's profile time zone, UTC when it has none; the zone used is `PublicLinkInfo.time_zone`), whatever zone the server process runs in; slot instants are returned in UTC. A day not in the link's `days_of_week` offers no slot. An explicit `date` before today or after the horizon's last day answers 200 with `slots: []`, exactly like a fully booked day, never an error; a link with no accepted host answers 200 with no slot and no date in both modes. When busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts), the explicit-date mode answers 500 and the date-less mode omits that day. The date-less mode reads every day of the horizon (up to 365) under the one request budget; with a long horizon or slow calendars it ends in the 503 below, never in a list truncated to the days it reached (PAC-72 revision 3.1). Clients needing a long range should use the explicit-date mode per visible day. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot for that date, and without `date` that day is not listed; the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, with or without `date`. The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
+         * Available slots for one day, or the days of a bounded range that have any slot.
+         * @description Days are calendar days in the DAY ZONE: `display_time_zone` when the request carries it, otherwise the link's zone (`PublicLinkInfo.time_zone`) (PAC-88, owner decision PAC-72 D-9). Two distinct modes. With `date` (one day in the day zone): `slots` holds every offered slot whose start falls on that day in the day zone, in ascending start order, and `available_dates` is always the empty array. Without `date` (the day overview): `available_dates` holds, in ascending order, the days from `from` to `to` inclusive (at most 42 days; when both are omitted, today in the day zone and the next 41 days) on which at least one offered slot starts in the day zone, and `slots` is always the empty array. Every answer states the link's zone it was computed in (`time_zone`), the day zone (`display_time_zone`) and the days it covered (`range_from`, `range_to`). A day of the day zone is never cut into parts: every offered start is listed under exactly one day, its calendar date in the day zone, whichever of the link's days it belongs to (a day zone other than the link's makes one day overlap two, around an offset change three, of the link's days; they are one answer). The day zone changes only how offered starts are grouped into days: the set of offered instants, the booking rule, the refusals and the link's own "today", horizon, days and hours (all in the link's zone) are the same for every day zone. Without `display_time_zone` and with `date`, the lists are exactly the PAC-72 answer for that link-zone day. Both list keys are always present in both modes. A slot is offered by the same rule `createPublicBooking` accepts (PAC-72; see that operation for the six parts and the link's zone): duration, link days and daily window on the 15-minute grid, every accepted host free, minimum notice, horizon, at least one accepted host. Days, hours, "today" and the horizon are evaluated in the link's zone (the link owner's profile time zone, UTC when it has none; the zone used is `PublicLinkInfo.time_zone`), whatever zone the server process runs in; slot instants are returned in UTC. A day not in the link's `days_of_week` offers no slot. A `date`, or a whole `from`..`to` range, with no offered start (before today, after the horizon's last day, not a link day, fully booked) answers 200 with an empty list, never an error; a link with no accepted host answers 200 with no slot and no date in both modes. When busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts) for any link day the answer needs, both modes answer 500 for the whole request (PAC-88 spec section 3.4: never a day that silently looks empty; this replaces the earlier date-less behaviour of omitting that day). The cost of an answer is bounded by the days it covers, never by the link's horizon: the overview covers at most 42 days whatever `booking_horizon_days` is (1 to 365), and, in both modes, each accepted host's external calendar is read at most once per request, over one window spanning every link day the answer needs (link days outside the horizon or not among `days_of_week` need no read). That one read is complete for its whole window: every page of the provider's answer is read, and a read that cannot be completed (a later page fails, or the read's own limit ends first) is an unreadable calendar (busy, D-6 below), never a partial list of events. The storage half of busy time (focus blocks, bookings) likewise covers every needed link day, however many storage queries that takes. The earlier date-less read of the whole horizon (and its 503 on long horizons, PAC-72 revision 3.1) no longer exists: a request without `date`, `from` and `to` is the 42-day overview starting today in the day zone. Hosts (PAC-81, spec AC-A18): each accepted host's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). A host whose calendar cannot be read is BUSY for the whole requested window (owner decision PAC-72 D-6, 2026-11-01; it replaces the earlier "treated as free"): not connected, a provider error, or a read that fails on its own time limit. Every link is collective (every accepted host must be free; there is no round-robin or any-host kind), so a link with such a host offers no slot in the window read (no slot for that `date`, no day of that overview); the answer is still a 200. A host that was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is neither free nor busy: the answer is the 503. A read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that host or, without `date`, a day. Neither mode has a partial shape. Validation order (PAC-88 keeps the existing order and appends its checks where the `date` check was): rate limit (429), link lookup (404, 410), `duration` (400), the link's zone (500), then the query in this order: `display_time_zone`, `date` combined with `from` or `to`, `date`, `from`, `to`, `from` without `to` or the reverse, `to` before `from`, a range over 42 days (each a 400 with its own message, see the 400 below). An empty query value (`date=`, `from=`, `to=`, `display_time_zone=`) is the same as an absent one. Unknown query parameters are ignored. Caching: the answer carries no `Cache-Control`, `ETag` or `Last-Modified` header (none before PAC-88, none added), so no browser stores it heuristically; it depends on the clock and on hosts' calendars, and a client may reuse it only within one page visit. Rate limited per client (NEW-booking-rate-limit), separately from and more loosely than `createPublicBooking`: at most 120 requests per client per fixed 1-minute window, in every mode and with or without `display_time_zone`; one overview request counts once whatever its range (unchanged by PAC-88). The limit is checked and the request counted atomically as the handler's first step, before the link lookup and before the query is validated, so every request counts whatever it would otherwise have answered, and a refused request answers 429 even for an unknown slug. Booking requests do not consume this budget and slot requests do not consume the booking budget. Client identification, the per-process caveat, the sweep and the CORS preflight exemption are exactly as described on `createPublicBooking`; this limiter has its own counts and its own sweep.
          */
         get: operations["getPublicBookingSlots"];
         put?: never;
@@ -2088,6 +2493,7 @@ export interface paths {
         /**
          * Preview detected 1:1 candidates for a team. Assigns nothing.
          * @description PREVIEW half of the preview-then-confirm flow. Runs DetectTeam (which does write the global manager_team_members identity rows and one_on_one_occurrences as a side effect of scanning the calendar) and then reports, per candidate, whether that email is ALREADY assigned to the selected team. `assigned` is hard-coded to 0: this endpoint never creates a manager_team_member_assignments row for any team. `team_id` is REQUIRED here and the caller must be the team OWNER.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster import (DetectTeam) resolves each detected address to an account (`member_user_id`) only when exactly one account holds it DOMAIN-CONFIRMED (case-insensitive); otherwise the identity row is written with `member_user_id` null, as for a non-Paceday address.
          *
          */
         post: operations["previewManagerDetection"];
@@ -2175,6 +2581,7 @@ export interface paths {
         /**
          * Team-scoped manager roster with this-week / last-week stats.
          * @description `team_id` is REQUIRED (unlike the member-mutation routes below), and membership — not ownership — suffices. The roster is the union of (a) manager assignments for this team and (b) formal team_members of this team that have no assignment yet, synthesised with source="formal" and cadence="none". The caller is always excluded from (b). Sorted case-insensitively by display_name. `members` is always an array, never null.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): merging formal members with roster entries is a keeping site: a roster entry represents a formal member whose stored address equals the entry's address case-insensitively, at ANY standing. Nothing is granted here.
          *
          */
         get: operations["getManagerRoster"];
@@ -2198,6 +2605,7 @@ export interface paths {
         /**
          * Add or upsert a roster member, optionally scoped to a team.
          * @description `team_id` is OPTIONAL here. Without it the member is written to the global manager_team_members table only. With it the write is transactional across manager_team_members plus manager_team_member_assignments, and the caller must be the team OWNER. Adding a member never creates a team_invites row (asserted by TestManagerTeam_AddMemberCreatesOnlySelectedTeamAssignment).
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): `member_user_id` is resolved to an account only when exactly one account holds `email` DOMAIN-CONFIRMED (compared case-insensitively; before PAC-71 an exact-case match on any account). An address that is carried only unconfirmed, by several accounts (a letter-case collision), or by none resolves to nobody: the roster row is stored with `member_user_id` null, as for a non-Paceday address today.
          *
          */
         post: operations["addManagerTeamMember"];
@@ -2224,6 +2632,7 @@ export interface paths {
         /**
          * Remove a member globally, or unassign them from one team.
          * @description Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. Every storage error on this path is swallowed, so a failed delete still returns 204.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
          *
          */
         delete: operations["removeManagerTeamMember"];
@@ -2232,6 +2641,7 @@ export interface paths {
         /**
          * Update display name and/or cadence for a roster member.
          * @description Omitted fields keep their current value. Supplying `cadence` as anything other than "custom" clears cadence_custom_days; omitting `cadence` preserves it (TestManagerPatchMember_PreservesOmittedCustomDays). A blank display_name falls back to the local part of the email. With `team_id`, only team-scoped preferences change (display_name_override, cadence, cadence_custom_days on the assignment row); the canonical global display name is never overwritten. Also, with `team_id`, a formal team member with no assignment yet is materialised into an assignment on first patch.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): that materialisation is a granting site: a formal member is matched to `{email}` only when that member's account holds `{email}` DOMAIN-CONFIRMED (case-insensitive); a formal member whose address is unconfirmed is not matched, and the answer is the one for an address with no roster entry.
          *
          */
         patch: operations["patchManagerTeamMember"];
@@ -2253,6 +2663,7 @@ export interface paths {
         /**
          * Build a server-side /app prefill URL for a 1:1 with this member.
          * @description Creates nothing on any calendar. Returns a relative URL of the form `/app?attendees=<email>&duration=30&title=1%3A1+with+<display_name>` plus `&date=<suggested_date>` when supplied (query params are Go url.Values-encoded, so alphabetically ordered). An empty body is accepted (io.EOF is tolerated).
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster entry this operation may materialise for a formal team member follows the same DOMAIN-CONFIRMED rule as patchManagerTeamMember.
          *
          */
         post: operations["scheduleManagerOneOnOne"];
@@ -2488,7 +2899,11 @@ export interface paths {
          *        an SSO write never consumes an `llm_org_key_write` grant (PAC-50
          *        AC-27, P2-AC-2). Without such a grant: an address on the
          *        deployment's break-glass list (`PACEDAY_ADMIN_EMAILS`, compared
-         *        case-insensitively) whose session JWT was issued less than 10
+         *        case-insensitively), held by the caller's ACCOUNT
+         *        domain-confirmed (PAC-71: the account's stored address and
+         *        `addressStanding`, never the session's email claim; an account
+         *        that carries it unconfirmed, or no longer carries it, is not
+         *        break-glass), whose session JWT was issued less than 10
          *        minutes ago, and not more than one minute in the future, is
          *        authorised without a grant (PAC-50 AC-14a); the same address with
          *        an older session is the 403
@@ -2860,6 +3275,7 @@ export interface paths {
         /**
          * Create a scheduling link owned by the caller.
          * @description The caller is inserted as an `accepted` host. Each entry of `co_host_emails` is resolved by lowercased email; unknown emails are silently skipped (no error, no host row). An empty/omitted `slug` is auto-generated from the owner's name.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none is skipped exactly as an unknown email is today (no error, no host row).
          */
         post: operations["createSchedulingLink"];
         delete?: never;
@@ -2975,6 +3391,7 @@ export interface paths {
         /**
          * Partially update a scheduling link (owner only).
          * @description Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the two halves follow different rules. KEEP SET (revoking and keeping): an existing host is kept when its account's stored address equals a listed address case-insensitively, at ANY standing, so an accepted co-host stored as `Pat@Acme.com` is kept by a list containing `pat@acme.com` (before PAC-71 the lowercased lookup missed it and removed the host). NEW ENTRIES (granting): a listed address that matches no existing host is invited as `pending` only when exactly one account holds it DOMAIN-CONFIRMED; otherwise it is skipped, as an unknown address is today.
          */
         patch: operations["updateSchedulingLink"];
         trace?: never;
@@ -3051,6 +3468,7 @@ export interface paths {
         /**
          * Invite an existing user as a co-host (owner only).
          * @description The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invitee is resolved only to an account that holds the email DOMAIN-CONFIRMED (exactly one, compared case-insensitively). An address carried only unconfirmed, by several accounts, or by none answers the existing 404 "user not found", with nothing written.
          */
         post: operations["inviteSchedulingLinkHost"];
         delete?: never;
@@ -3319,6 +3737,7 @@ export interface paths {
         /**
          * Accept a pending invite as the logged-in user.
          * @description The authenticated user's email must case-insensitively equal invitee_email. Membership is added with role "member" via an ON CONFLICT DO NOTHING insert, so accepting twice cannot demote an existing owner. Returns no body.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invite is accepted only when the caller's ACCOUNT holds invitee_email DOMAIN-CONFIRMED: its stored address equals invitee_email case-insensitively AND its addressStanding (getCurrentUser) is domain_confirmed. An account that carries the address unconfirmed (bound with mailbox evidence, or created before PAC-71 and not bound yet) gets exactly today's mismatch answer, the 403 "this invite is for a different email address", and nothing changes. The session's email claim is not consulted.
          *
          */
         post: operations["acceptTeamInvite"];
@@ -4026,6 +4445,22 @@ export interface components {
              */
             auto_with?: "google" | "outlook";
         };
+        /** @description New in PAC-71. The answer of `startGoogleConnect` and
+         *     `startMicrosoftConnect`: where to send the window to continue the
+         *     connect. Readable only by the web app's own origin (another site
+         *     cannot read it, which is the point; spec §3 "Cross-site request
+         *     model").
+         *      */
+        ConnectStartResponse: {
+            /**
+             * Format: uri
+             * @description The provider's authorization URL, carrying this connect's state.
+             *     Single browser, 300 seconds, today's scope set. Never contains a
+             *     Paceday session token.
+             *
+             */
+            authorize_url: string;
+        };
         /** @description POST /api/conference/create. Since PAC-67 (API-052) all three fields are required and validated before any provider is called; a body that fails is the 400 "invalid body". Before PAC-67 every field silently defaulted to the Go zero value when absent and was forwarded to the provider. */
         CreateConferenceRequest: {
             /** @description Must contain at least one character that is not whitespace in the ECMA-262 `\s` sense. `pattern` states exactly the test the server applies (see `createConferenceLink`), so a blank title such as "   " cannot be expressed by a client that validates against this schema. */
@@ -4151,10 +4586,33 @@ export interface components {
              *     handlers_sso.go "sso"; tests and the e2e seed write "google").
              *     A CHECK constraint is not added (spec PAC-35 section 7: no
              *     migration).
+             *     Unchanged by PAC-71 (spec §6): it is NOT the provider of the
+             *     account's bound identity, which this response does not expose
+             *     (listing sign-in methods is follow-up F1).
              *
              * @enum {string}
              */
             provider: "google" | "microsoft" | "sso";
+            /**
+             * @description New in PAC-71 (spec §3 "Evidence and address standing", D-5).
+             *     `domain_confirmed`: the sign-in that bound this account's
+             *     identity carried AUTHORITATIVE evidence for `email` (Google
+             *     verified with matching `hd` or a Google consumer domain; a
+             *     Microsoft tenant that verifies the domain; the SSO issuer
+             *     configured for the domain). `unconfirmed`: everything else,
+             *     including every account created before PAC-71 that has not bound
+             *     yet and every account bound with MAILBOX evidence. Only a
+             *     `domain_confirmed` address acts as a person at the granting sites
+             *     (team-invite acceptance, scheduling-link co-host invitations,
+             *     the manager's member add, roster import and roster entries,
+             *     break-glass); an `unconfirmed` one works fully for its own user
+             *     but resolves to nobody there. It changes only when the account
+             *     binds (sign-in) or through the operator procedure; never on an
+             *     ordinary sign-in, a connect or a refusal.
+             *
+             * @enum {string}
+             */
+            addressStanding: "domain_confirmed" | "unconfirmed";
             /** @description Present only when the user has an org_id AND the org row loads
              *     (json tag "org,omitempty"). org_id itself is `json:"-"` and never
              *     serialized.
@@ -4835,7 +5293,7 @@ export interface components {
             data_available: boolean;
         };
         /**
-         * @description A JSON literal delivered with a text/plain Content-Type, because the handler sets application/json and http.Error then overwrites the header. Every producer of this exact body in backend/api/ is an `http.Error` with the literal `{"error":"unauthorized"}`: the three in `requireAuth` (backend/api/middleware.go — one per rejection reason: no token, a token that fails `auth.ValidateToken`, a `UserID` claim that is not a UUID; cited by function because this description is emitted into generated files in both repos), `orgHandlers.members` (backend/api/handlers_org.go:21), and `meHandlers.me` (backend/api/handlers_me.go:19, reached at `GET /api/auth/me`). The falsifying command, excluding the generated package, is `grep -rn error.:.unauthorized --include=*.go backend/api/`, which returns exactly those five lines. The third is listed for completeness only: `getCurrentUser` declares its 401 against `PlainTextError`, not this schema, and lives in paths/auth.yaml, which PAC-23 does not own and does not touch.
+         * @description A JSON literal delivered with a text/plain Content-Type, because the handler sets application/json and http.Error then overwrites the header. Every producer of this exact body in backend/api/ is an `http.Error` with the literal `{"error":"unauthorized"}`: the three in `requireAuth` (backend/api/middleware.go — one per rejection reason: no token, a token that fails `auth.ValidateToken`, a `UserID` claim that is not a UUID; cited by function because this description is emitted into generated files in both repos), `orgHandlers.members` (backend/api/handlers_org.go:21), and `meHandlers.me` (backend/api/handlers_me.go:19, reached at `GET /api/auth/me`). The falsifying command, excluding the generated package, is `grep -rn error.:.unauthorized --include=*.go backend/api/`, which returns exactly those five lines. Since PAC-71 the same bytes are also written, with the same headers, for a session whose `gen` claim is not the account's current session generation: by `requireAuth` and by the in-request re-check on account data (security scheme `bearerAuth`, SESSION GENERATION). The grep then also returns those producers; the response itself is unchanged. The third is listed for completeness only: `getCurrentUser` declares its 401 against `PlainTextError`, not this schema, and lives in paths/auth.yaml, which PAC-23 does not own and does not touch.
          *
          *     Precisely, because PAC-23 AC-12 requires this response to be unchanged: as net/http's `http.Error` produces it the header is `text/plain; charset=utf-8`, `X-Content-Type-Options: nosniff` is set, and the message is written with `Fprintln`, so the body is 25 bytes — the example below, trailing newline included. The two headers are stated here because the sibling `PlainTextError` states them and "exactly as today" includes them.
          *
@@ -5316,19 +5774,39 @@ export interface components {
             usage_type: "reusable" | "recurring" | "single_use";
             coverage: components["schemas"]["PublicLinkCoverage"];
             /**
-             * @description IANA name of the zone the link's days, hours, "today" and booking horizon are evaluated in (PAC-72 revision 2, owner decision D-9): the link owner's profile time zone, or `UTC` when the owner has no settings row or its stored name is not a loadable IANA zone. It is the zone actually used by `getPublicBookingSlots` and `createPublicBooking` for this link at the time of the read, so a booking page can show times in it by default (display and the visitor's zone switcher are PAC-88). Never empty. Disclosed to anyone who has the link, on every link: owner decision D-9 makes the owner's zone the page's default display. A failed read of the owner's settings is the operation's 500, never `UTC`.
+             * @description IANA name of the zone the link's days, hours, "today" and booking horizon are evaluated in (PAC-72 revision 2, owner decision D-9): the link owner's profile time zone, or `UTC` when the owner has no settings row or its stored name is not a loadable IANA zone. It is the zone actually used by `getPublicBookingSlots` and `createPublicBooking` for this link at the time of the read, so a booking page can show times in it by default (display and the visitor's zone switcher are PAC-88; `getPublicBookingSlots` states the zone it used in `PublicSlotsResponse.time_zone`). Never empty. Disclosed to anyone who has the link, on every link: owner decision D-9 makes the owner's zone the page's default display. A failed read of the owner's settings is the operation's 500, never `UTC`.
              * @example Europe/Paris
              */
             time_zone: string;
             /** @description The link's booking horizon (PAC-72 revision 2, owner decision D-1): today (in `time_zone`) and the next `booking_horizon_days` - 1 days can be listed and booked; later dates offer no slot. */
             booking_horizon_days: number;
         };
-        /** @description Both keys are always present. Exactly one is populated depending on whether the `date` query parameter was supplied. */
+        /** @description Every key is always present. Exactly one list is populated depending on whether the `date` query parameter was supplied. `time_zone`, `display_time_zone`, `range_from` and `range_to` are PAC-88. A server without them (before PAC-88, or after its rollback) ignores `display_time_zone`, `from` and `to`; a client that sent `display_time_zone` and finds `display_time_zone` absent from the answer, or different from what it sent, must not read the answer's days as days of the zone it asked for (contract PAC-88 section 5). */
         PublicSlotsResponse: {
-            /** @description Populated only when `date` was given; otherwise the empty array. */
+            /** @description Populated only when `date` was given: the offered slots whose start falls on `date` in `display_time_zone`, in ascending start order; otherwise the empty array. */
             slots: components["schemas"]["PublicBookingSlot"][];
-            /** @description Populated only when `date` was omitted; YYYY-MM-DD strings (calendar days in the link's zone, `PublicLinkInfo.time_zone`), in ascending order, for days within the link's booking horizon (today in that zone and the next `booking_horizon_days` - 1 days) that are among the link's `days_of_week` and have at least one offered slot. Otherwise the empty array. */
+            /** @description Populated only when `date` was omitted; YYYY-MM-DD strings (calendar days in `display_time_zone`), ascending, without duplicates: the days from `range_from` to `range_to` on which at least one offered slot starts in that zone (an offered slot is within the link's horizon, on one of its `days_of_week` and inside its hours, all in the link's zone). Otherwise the empty array. */
             available_dates: string[];
+            /**
+             * @description PAC-88 (spec AC-31): IANA name of the link's zone this answer was computed in (days, hours, grid, "today", horizon), read in this request by the same rule as `PublicLinkInfo.time_zone`, so the two are equal when read at the same moment. A client holding a different `PublicLinkInfo.time_zone` re-reads the link (the host changed zone, spec AC-26). Never empty.
+             * @example Europe/Paris
+             */
+            time_zone: string;
+            /**
+             * @description PAC-88: the day zone of `date`, `available_dates`, `range_from` and `range_to`: the request's `display_time_zone` exactly as sent when it was given, otherwise equal to `time_zone`. Never empty.
+             * @example Asia/Tokyo
+             */
+            display_time_zone: string;
+            /**
+             * Format: date
+             * @description PAC-88: first day (day zone) the answer covers: `date` with `date`, otherwise the overview's resolved `from`.
+             */
+            range_from: string;
+            /**
+             * Format: date
+             * @description PAC-88: last day (day zone) the answer covers: `date` with `date`, otherwise the overview's resolved `to` (at most `range_from` + 41 days).
+             */
+            range_to: string;
         };
         /** @description calendar.TimeSlot, with explicit json tags `start` / `end` since PAC-26 (API-028, API-029). Same keys as FreeBusyWindow; kept as its own schema because it is a different Go type with a different failure mode: a Google timestamp that fails to parse becomes the Go zero time `0001-01-01T00:00:00Z` because the parse error is discarded. Before PAC-26 the struct had no tags and the keys were `Start` / `End`. */
         RawGoogleBusyWindow: {
@@ -6255,7 +6733,9 @@ export interface components {
          *     `error` as a generic "no permission" text).
          *      */
         SsoWriteForbiddenResponse: components["schemas"]["SsoWriteMembershipRequired"] | components["schemas"]["SsoWriteDomainMismatch"] | components["schemas"]["SsoWriteStepupRequired"] | components["schemas"]["SsoWriteFreshLoginRequired"];
-        /** @description The caller's email is on the deployment's break-glass list but the
+        /** @description The caller's account holds an address on the deployment's
+         *     break-glass list domain-confirmed (PAC-71: the account's stored
+         *     address and standing, not the session's email claim) but the
          *     session JWT was issued 10 minutes ago or more, or carries an issue
          *     time more than one minute in the future (beyond that clock-skew
          *     allowance a token is not fresh). The client sends the user through
@@ -6524,7 +7004,7 @@ export interface components {
                 "application/json": components["schemas"]["BookingRateLimitError"];
             };
         };
-        /** @description Emitted by the requireAuth middleware when the `auth_token` cookie and the `Authorization: Bearer` header are both absent or invalid. The body is the JSON text `{"error":"unauthorized"}` but the response is sent with `http.Error`, so the Content-Type header is `text/plain; charset=utf-8`, not application/json. */
+        /** @description Emitted by the requireAuth middleware when the `auth_token` cookie and the `Authorization: Bearer` header are both absent or invalid, or (PAC-71) when the session's `gen` is not the account's current session generation (also by the in-request re-check on account data, with the same bytes). The body is the JSON text `{"error":"unauthorized"}` but the response is sent with `http.Error`, so the Content-Type header is `text/plain; charset=utf-8`, not application/json. */
         BookingUnauthorized: {
             headers: {
                 [name: string]: unknown;
@@ -6657,6 +7137,23 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
+        /** @description PAC-71 (spec §3 "Sessions", AC-48; security scheme SESSION
+         *     GENERATION). The account's current session generation could not be
+         *     read, so requireAuth (or the in-request re-check) could not decide
+         *     whether the session is still current. Fails closed as a server
+         *     error, never as 401 (the web app treats 401 as signed out): body
+         *     exactly `{"error":"internal error"}`, Content-Type
+         *     `application/json`, no Set-Cookie, nothing written. On operations
+         *     that document their own 500, this is one more cause of it.
+         *      */
+        SessionGenerationUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ErrorResponse"];
+            };
+        };
         /** @description Malformed JSON, or a value the server refuses. JSON error shape (writeError). A body property set to `null` is refused here: no property of SettingsUpdate is nullable (spec AC-8).
          *     Messages that already exist: `invalid JSON` (the body cannot be read; fixed text, PAC-21: before, the read error was appended); `invalid JSON: the body must be an object` (the body is not a JSON object, or is `null`; an existing fixed literal, unchanged); `invalid JSON: <property> has the wrong type` (a value of the wrong JSON type; `<property>` is the dotted path of JSON property names from the request, e.g. `timeFormat` or `workingHours.days.monday.start`, never a Go type or struct name; before PAC-21 was finished this was the decoder's own error text, which named Go types); `<field> must be in HH:MM format` (workStart/workEnd/lunchStart/lunchEnd); `focusMinBlockMinutes must be positive`; `focusMaxBlockMinutes must be positive`; `focusDailyTargetMinutes must be positive`; `outOfHoursMeetingsPerWeek must be zero or positive`; `bufferBeforeMinutes must be positive`; `bufferAfterMinutes must be positive`; `autoScheduleCron must be a 5-part cron expression`; `autoScheduleCron is invalid` (fixed text; before PAC-21 was finished the cron parser's error was appended); `llmProvider must be one of: "", organization, openai, anthropic, azure_openai, bedrock, vertex` (NEW-llm-bring-your-own: replaces the message that listed `ollama`, which now gets this 400, spec AC-6); `workingHours.mode must be all_days or by_day`; `workingHours.mode is required when day-specific hours are provided`; `workingHours.days.<day> is not a valid weekday`; `lunchBreaks.<day> is not a valid weekday`; `<field> requires start and end when enabled`; `<field> start and end must be in HH:MM format`; `<field> end must be after start`.
          *     Messages PAC-24 adds, closing API-081 and API-082 - each of these is a value the server accepted before and then failed on, silently or as a 500 (spec AC-17): `workEnd must be after workStart`; `lunchEnd must be after lunchStart`; `focusMinBlockMinutes must not exceed focusMaxBlockMinutes`; `bufferMinMeetingMinutes must be zero or positive`; `timezone is not a known IANA location`; `recapSendTo must be dm or channel` (previously reached the DB CHECK and surfaced as a 500 - API-081); `recapSendTime must be in HH:MM format` (previously reached the Postgres TIME cast and surfaced as a 500); `calendarProvider must be one of: google, outlook, webcal` (resolves U-18); `conferencingProvider must be one of: meet, zoom, teams`.
@@ -6677,7 +7174,10 @@ export interface components {
             };
         };
         /** @description No `auth_token` cookie and no `Authorization: Bearer <jwt>` header, or the token
-         *     failed validation, or its `sub` is not a UUID. Emitted by `requireAuth`.
+         *     failed validation, or its `sub` is not a UUID, or (PAC-71) its `gen` is not the
+         *     account's current session generation, detected by `requireAuth` or by the
+         *     in-request re-check on account data (security scheme `bearerAuth`, SESSION
+         *     GENERATION). Emitted by `requireAuth`, or with the same bytes by that re-check.
          *     QUIRK: the body is the JSON text `{"error":"unauthorized"}` but it is written with
          *     `http.Error`, which overwrites the Content-Type to `text/plain; charset=utf-8`.
          *     Clients must not rely on the declared media type here.
@@ -7044,11 +7544,12 @@ export interface operations {
                 headers: {
                     /** @description `<FRONTEND_URL>/settings?stepup=granted`, or
                      *     `<FRONTEND_URL>/settings?stepup=denied&reason=<reason>`, where
-                     *     `<reason>` is one of the eight values in the pattern (spec
+                     *     `<reason>` is one of the nine values in the pattern (spec
                      *     §4.6; the same enum the server records): `state_mismatch`,
                      *     `token_invalid`, `no_hd`, `hd_mismatch` (Google only),
                      *     `tid_mismatch`, `tid_changed` (Microsoft only),
-                     *     `email_mismatch`, `not_admin`. Never a raw token or provider
+                     *     `email_mismatch`, `not_admin`, and since PAC-71
+                     *     `identity_mismatch` (check 4b). Never a raw token or provider
                      *     error text. Built from the configured frontend URL, never a
                      *     literal path (contrast API-084).
                      *
@@ -7163,6 +7664,7 @@ export interface operations {
                     "application/json": components["schemas"]["SsoWriteMembershipRequired"];
                 };
             };
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     deleteSsoProvider: {
@@ -7374,6 +7876,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     listAnalyticsTrends: {
@@ -7543,7 +8046,17 @@ export interface operations {
         parameters: {
             query: {
                 state: string;
-                code: string;
+                /** @description The authorization code. Absent when the provider returns an
+                 *     `error` instead (the user cancelled, or the provider refused):
+                 *     CONNECT branch gives NOT CREDITED (step 4); SIGN-IN branch keeps
+                 *     today's 500.
+                 *      */
+                code?: string;
+                /** @description Set by the provider instead of `code` when the user cancelled or
+                 *     the provider refused (for example `access_denied`). Never echoed
+                 *     into a Location; logged only.
+                 *      */
+                error?: string;
             };
             header?: never;
             path?: never;
@@ -7551,33 +8064,53 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One of exactly two destinations (PAC-35, API-011):
+            /** @description SIGN-IN branch, one of exactly three destinations:
              *     - Success: the `auth_token` cookie is set and Location is
              *       `<FRONTEND_URL>/auth/callback` (no query string, unlike the
              *       Microsoft/SSO callbacks).
-             *     - Session not issued (signing secret empty, or token generation
-             *       failed) after the user and token were saved: NO `auth_token`
+             *     - Refused (PAC-71): Location `<FRONTEND_URL>/?error=signin_refused`,
+             *       NO `auth_token` cookie set or expired, nothing written (see
+             *       REFUSED above).
+             *     - Session not issued (signing secret empty, token generation
+             *       failed, or the account's generation could not be read for the
+             *       token) after the account and token were saved: NO `auth_token`
              *       cookie is set or expired, and Location is the sign-in failure
-             *       state `<FRONTEND_URL>/?error=auth_failed`. Never `/auth/callback`.
-             *     The user row and stored Google token written before that point are
-             *     kept; nothing is deleted on the failure path. The cause is written
-             *     to the server log and Sentry only; the Location carries no cause.
+             *       state `<FRONTEND_URL>/?error=auth_failed` (PAC-35, API-011).
+             *       What was saved before that point is kept; nothing is deleted.
+             *     CONNECT branch, one of exactly two destinations, neither setting
+             *     nor expiring `auth_token`:
+             *     - CREDITED: Location
+             *       `<FRONTEND_URL>/auth/callback?provider=google&connect=credited`.
+             *     - NOT CREDITED: Location `<FRONTEND_URL>/?connect=not_credited`;
+             *       nothing stored on any account.
+             *     The cause of a refusal or failure is written to the server log
+             *     and Sentry only; no Location carries a cause, address or
+             *     provider detail beyond the fixed values above.
              *      */
             302: {
                 headers: {
-                    /** @description `<FRONTEND_URL>/auth/callback` on success;
-                     *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
+                    /** @description `<FRONTEND_URL>` followed by exactly one of:
+                     *     `/auth/callback` (sign-in success);
+                     *     `/?error=signin_refused` (sign-in refused);
+                     *     `/?error=auth_failed` (session could not be issued);
+                     *     `/auth/callback?provider=google&connect=credited` (connect credited);
+                     *     `/?connect=not_credited` (connect credited to nobody).
                      *      */
                     Location?: string;
-                    /** @description On success: auth_token=<HS256 JWT>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
-                     *     On the failure redirect: no `auth_token` cookie at all.
+                    /** @description Sign-in success: auth_token=<HS256 JWT carrying `gen`>; Path=/; Max-Age=604800; HttpOnly; SameSite=Lax.
+                     *     Refusal, failure redirect and every connect outcome: no `auth_token` cookie at all.
+                     *     Connect outcomes also expire `google_connect_state`
+                     *     (`google_connect_state=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).
                      *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Missing or mismatched `oauth_state` cookie ("invalid state"). */
+            /** @description Neither `google_connect_state` nor `oauth_state` is present and
+             *     equal to `state` ("invalid state"). Nothing is exchanged or
+             *     written.
+             *      */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -7586,7 +8119,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange, userinfo fetch, user upsert or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Token exchange, userinfo fetch (sign-in), account creation or binding, token save, or reading the generation (connect step 3) failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A failed binding or creation writes nothing (it is one transaction); no session is issued or changed. On the CONNECT branch this 500 also expires `google_connect_state`; on the SIGN-IN branch `oauth_state` is already expired (step 1), as today. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7611,24 +8144,28 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One of exactly two destinations (PAC-35, API-011):
+            /** @description One of exactly three destinations (PAC-35, API-011; PAC-71):
              *     - Success: the `auth_token` cookie is set and Location is
              *       `<FRONTEND_URL>/auth/callback?provider=sso`.
-             *     - Session not issued (signing secret empty, or token generation
-             *       failed) after the user was saved: NO `auth_token` cookie is set
-             *       or expired, and Location is the sign-in failure state
-             *       `<FRONTEND_URL>/?error=auth_failed`. The saved user row is kept.
+             *     - Refused (PAC-71): Location `<FRONTEND_URL>/?error=signin_refused`,
+             *       NO `auth_token` cookie set or expired, nothing written.
+             *     - Session not issued (signing secret empty, token generation
+             *       failed, or the generation could not be read for the token)
+             *       after the account was saved: NO `auth_token` cookie is set or
+             *       expired, and Location is the sign-in failure state
+             *       `<FRONTEND_URL>/?error=auth_failed`. The saved account is kept.
              *     Every other failure stays a non-302 response below (spec PAC-35
              *     D-1).
              *      */
             302: {
                 headers: {
                     /** @description `<FRONTEND_URL>/auth/callback?provider=sso` on success;
+                     *     `<FRONTEND_URL>/?error=signin_refused` when refused;
                      *     `<FRONTEND_URL>/?error=auth_failed` when the session could not be issued.
                      *      */
                     Location?: string;
-                    /** @description On success: auth_token JWT cookie. On the failure redirect: no
-                     *     `auth_token` cookie at all.
+                    /** @description On success: auth_token JWT cookie (carrying `gen`). On the
+                     *     refusal and the failure redirect: no `auth_token` cookie at all.
                      *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
@@ -7667,7 +8204,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description OIDC setup, code exchange or user upsert failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description OIDC setup, code exchange, or account creation (one transaction, nothing kept) failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -7842,6 +8379,51 @@ export interface operations {
             };
         };
     };
+    startGoogleConnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connect is started; navigate the window to `authorize_url`. */
+            200: {
+                headers: {
+                    /** @description `google_connect_state=<opaque state>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax`,
+                     *     plus `Secure` under the deployment rule every cookie follows
+                     *     (PAC-20, backend/api/cookies.go). Never an `auth_token` cookie.
+                     *      */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectStartResponse"];
+                };
+            };
+            /** @description requireAuth's rejection, including a session whose `gen` is not
+             *     the account's current generation (PAC-71). Nothing is issued.
+             *      */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description The account's generation could not be read, or the state could not be issued. Body: `{"error":"internal error"}`; the detail goes to the server log and Sentry only (PAC-21). No cookie is set. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     logout: {
         parameters: {
             query?: never;
@@ -7863,13 +8445,22 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description No/invalid JWT. */
+            /** @description No/invalid JWT, or a session whose generation is no longer current (PAC-71). */
             401: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description (PAC-71) The account's current session generation could not be read. Body `{"error":"internal error"}`; the cookie is NOT expired (spec AC-48). */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7913,6 +8504,15 @@ export interface operations {
                 };
                 content: {
                     "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description Only (PAC-71) the account's current session generation could not be read. Body `{"error":"internal error"}`; no Set-Cookie (spec AC-48). Other read failures answer as before this change. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -7963,7 +8563,12 @@ export interface operations {
              *      */
             302: {
                 headers: {
-                    /** @description auth.GetMicrosoftAuthURL(cfg, state), plus `login_hint=<hint>`
+                    /** @description auth.GetMicrosoftAuthURL(cfg, state): Microsoft's `/common`
+                     *     authorize endpoint with `scope=openid profile
+                     *     Calendars.ReadWrite User.Read offline_access` (space-separated,
+                     *     URL-encoded, exactly in that order), `state`,
+                     *     `nonce=<lowercase hex SHA-256 of state>` (PAC-71 revisions 3
+                     *     and 3.1), plus `login_hint=<hint>`
                      *     (URL-encoded) when the request's `login_hint` passed the
                      *     LoginHint rule. No other query parameter of this request is
                      *     copied into it.
@@ -7990,7 +8595,17 @@ export interface operations {
         parameters: {
             query: {
                 state: string;
-                code: string;
+                /** @description The authorization code. Absent when the provider returns an
+                 *     `error` instead (the user cancelled, or the provider refused):
+                 *     CONNECT branch gives NOT CREDITED (step 4); SIGN-IN branch keeps
+                 *     today's 500.
+                 *      */
+                code?: string;
+                /** @description Set by the provider instead of `code` when the user cancelled or
+                 *     the provider refused (for example `access_denied`). Never echoed
+                 *     into a Location; logged only.
+                 *      */
+                error?: string;
             };
             header?: never;
             path?: never;
@@ -7998,40 +8613,55 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description One of exactly two destinations (PAC-35):
+            /** @description SIGN-IN branch, one of exactly three destinations:
              *     - Success: Location `<FRONTEND_URL>/auth/callback?provider=outlook`,
              *       with the `auth_token` cookie set.
+             *     - Refused (PAC-71): Location `<FRONTEND_URL>/?error=signin_refused`,
+             *       NO `auth_token` cookie set or expired, nothing written.
              *     - Sign-in failure state, Location `<FRONTEND_URL>/?error=auth_failed`,
              *       with NO `auth_token` cookie set or expired, when any of these
              *       happens after the code exchange succeeded:
-             *       (a) the Graph profile could not be read, or carried no email
-             *           (nothing is saved; API-012, was a 502);
-             *       (b) the user upsert failed (nothing is saved; API-012, was a 500
-             *           with `{"error":"save user failed"}`);
-             *       (c) the session could not be issued (signing secret empty, or
-             *           token generation failed) after the user and the Microsoft
+             *       (a) the Graph profile could not be read, or carried no `mail`
+             *           (nothing is saved; API-012);
+             *       (b) creating or binding the account failed (nothing is saved:
+             *           one transaction; API-012);
+             *       (c) the session could not be issued (signing secret empty,
+             *           token generation failed, or the generation could not be
+             *           read for the token) after the account and the Microsoft
              *           token were saved; they are kept (API-011).
-             *     The cause is written to the server log and Sentry only; the
-             *     Location carries no cause, provider name or detail.
+             *     CONNECT branch, one of exactly two destinations, neither setting
+             *     nor expiring `auth_token`:
+             *     - CREDITED: `<FRONTEND_URL>/auth/callback?provider=outlook&connect=credited`.
+             *     - NOT CREDITED: `<FRONTEND_URL>/?connect=not_credited`; nothing
+             *       stored on any account.
+             *     The cause is written to the server log and Sentry only; no
+             *     Location carries a cause, provider detail or address.
              *     State mismatch, token exchange failure, token save failure and an
              *     unconfigured client are NOT redirects; they are the 400, 500 and
              *     503 below (spec PAC-35 D-1).
              *      */
             302: {
                 headers: {
-                    /** @description `<FRONTEND_URL>/auth/callback?provider=outlook` on success;
-                     *     `<FRONTEND_URL>/?error=auth_failed` on the failures (a)-(c).
+                    /** @description `<FRONTEND_URL>` followed by exactly one of:
+                     *     `/auth/callback?provider=outlook` (sign-in success);
+                     *     `/?error=signin_refused` (sign-in refused);
+                     *     `/?error=auth_failed` (failures (a)-(c));
+                     *     `/auth/callback?provider=outlook&connect=credited` (connect credited);
+                     *     `/?connect=not_credited` (connect credited to nobody).
                      *      */
                     Location?: string;
-                    /** @description On success: auth_token JWT for the upserted user. On the failure
-                     *     redirect: no `auth_token` cookie at all.
+                    /** @description Sign-in success: auth_token JWT (carrying `gen`) for the
+                     *     chosen account. Refusal, failure redirect and every connect
+                     *     outcome: no `auth_token` cookie at all. Connect outcomes
+                     *     expire `ms_connect_state`
+                     *     (`ms_connect_state=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`).
                      *      */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Missing or mismatched `ms_oauth_state` cookie ("invalid state"). */
+            /** @description Neither `ms_connect_state` nor `ms_oauth_state` is present and equal to `state` ("invalid state"). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8040,7 +8670,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Token exchange or token save failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A failed user upsert is no longer a 500, and an unreadable Graph profile is no longer a 502: since PAC-35 both are the failure redirect under `302`. */
+            /** @description Token exchange or token save failed, or (connect) the generation could not be read. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). On the CONNECT branch this 500 also expires `ms_connect_state`. A failed account creation or binding is not a 500 but the failure redirect (b) under `302`; an unreadable Graph profile is (a). A failed or refused `/organization` read is neither: it is NONE evidence (SIGN-IN step 4); an ID token that does not check, or unreadable Microsoft keys, is the refusal. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8050,6 +8680,60 @@ export interface operations {
                 };
             };
             /** @description `MICROSOFT_CLIENT_ID` is unset. Body: `{"error":"Microsoft OAuth not configured"}`. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    startMicrosoftConnect: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The connect is started; navigate the window to `authorize_url`. */
+            200: {
+                headers: {
+                    /** @description `ms_connect_state=<opaque state>; Path=/; Max-Age=300; HttpOnly; SameSite=Lax`,
+                     *     plus `Secure` under the deployment rule (PAC-20). Never an
+                     *     `auth_token` cookie.
+                     *      */
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectStartResponse"];
+                };
+            };
+            /** @description requireAuth's rejection, including a session whose `gen` is not
+             *     the account's current generation (PAC-71). Nothing is issued.
+             *      */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description The account's generation could not be read, or the state could not be issued. Body: `{"error":"internal error"}` (PAC-21). No cookie is set. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description `MICROSOFT_CLIENT_ID` is unset. Body: `{"error":"Microsoft OAuth not configured"}`. No cookie is set. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -8209,9 +8893,12 @@ export interface operations {
                     "application/json": components["schemas"]["AuthStatusResponse"];
                 };
             };
-            /** @description No/invalid JWT. Body is the literal JSON text `{"error":"unauthorized"}`
-             *     but Content-Type is `text/plain; charset=utf-8` because http.Error
-             *     overwrites the header the middleware just set.
+            /** @description No/invalid JWT, or (PAC-71) a session whose `gen` is not the
+             *     account's current generation, detected by requireAuth or by the
+             *     in-request re-check. Body is the literal JSON text
+             *     `{"error":"unauthorized"}` but Content-Type is
+             *     `text/plain; charset=utf-8` because http.Error overwrites the
+             *     header the middleware just set.
              *      */
             401: {
                 headers: {
@@ -8219,6 +8906,15 @@ export interface operations {
                 };
                 content: {
                     "text/plain": components["schemas"]["PlainTextError"];
+                };
+            };
+            /** @description Only (PAC-71) the account's current session generation could not be read. Body `{"error":"internal error"}`, application/json; the session cookie is neither replaced nor expired (spec AC-48). Every other internal failure is still the 200 fallback above. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
@@ -8244,6 +8940,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["BookingUnauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
             /** @description ZOOM_CLIENT_ID is unset. Body: {"error":"Zoom OAuth not configured"} */
             503: {
                 headers: {
@@ -8436,8 +9133,14 @@ export interface operations {
     getPublicBookingSlots: {
         parameters: {
             query?: {
-                /** @description Day to enumerate, parsed with Go layout "2006-01-02" as a calendar day in the link's zone (`PublicLinkInfo.time_zone`, PAC-72 revision 2). A day outside the link's booking horizon (before today in that zone, or after today + `booking_horizon_days` - 1) answers 200 with no slots. Omit for the availability summary over the whole horizon. */
+                /** @description PAC-88: the IANA name of the zone whose calendar days `date`, `from`, `to` and the answer's days are (the day zone). Optional; absent or empty means the link's zone. Accepted when it matches the pattern, is not `Local`, `localtime` or `posixrules` (files some systems link to the server's own zone) and does not start with `right/` (the leap-second variants, whose instants are off by seconds), and `time.LoadLocation` loads it from the server's tz database (the backend image's tzdata, `backend/Dockerfile`); names are case-sensitive and the tz database's links (e.g. `Asia/Calcutta`) are accepted as themselves. Anything else is the 400 `invalid display_time_zone, use an IANA time zone name`, never an answer in another zone (spec AC-32). The answer echoes the name as sent in `display_time_zone`. */
+                display_time_zone?: string;
+                /** @description Day to enumerate, parsed with Go layout "2006-01-02" as a calendar day in the day zone (`display_time_zone` when given, else the link's zone `PublicLinkInfo.time_zone`, PAC-72 revision 2). A day with no offered start (before today, after the horizon's last day) answers 200 with no slots. Cannot be combined with `from` or `to`. Omit for the day overview. */
                 date?: string;
+                /** @description PAC-88: first day (inclusive, YYYY-MM-DD, a calendar day in the day zone) of the day overview. Given together with `to` or not at all, and only without `date`. Omitted with `to`: today in the day zone. */
+                from?: string;
+                /** @description PAC-88: last day (inclusive, YYYY-MM-DD, day zone) of the day overview; not before `from`, and `from`..`to` spans at most 42 days (a six-week month grid). Omitted with `from`: `from` + 41 days. */
+                to?: string;
                 /** @description Meeting length in minutes. Must be one of the link's `durations` (or exactly 30 when the link has none). Default is `durations[0]`, else 30. */
                 duration?: number;
             };
@@ -8458,7 +9161,7 @@ export interface operations {
                     "application/json": components["schemas"]["PublicSlotsResponse"];
                 };
             };
-            /** @description "invalid duration" (non-numeric or not in the link's duration set) or "invalid date format, use YYYY-MM-DD". */
+            /** @description The `BookingError` envelope with one of these messages, in the validation order given above: "invalid duration" (non-numeric or not in the link's duration set); "invalid display_time_zone, use an IANA time zone name" (PAC-88, spec AC-32: not matching the pattern, `Local`, `localtime`, `posixrules`, a `right/` name, or not loadable from the server's tz database); "date cannot be combined with from or to"; "invalid date format, use YYYY-MM-DD"; "invalid from, use YYYY-MM-DD"; "invalid to, use YYYY-MM-DD"; "from and to must be given together"; "to must not be before from"; "range must not exceed 42 days". */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8486,7 +9189,7 @@ export interface operations {
                 };
             };
             429: components["responses"]["BookingSlotsRateLimited"];
-            /** @description Storage or engine failure, including, with `date` only, busy time that cannot be gathered from storage for that day (PAC-72), and, in both modes, a failed read of the link owner's settings (the link's zone; PAC-72 revision 3.1): the whole request is this 500, never the UTC fallback and never a list with days omitted. Body: {"error":"internal error"} */
+            /** @description Storage or engine failure, including, in both modes, busy time that cannot be gathered from storage for any link day the answer needs (PAC-72; PAC-88 extends it to the overview, which no longer omits such a day), and a failed read of the link owner's settings (the link's zone; PAC-72 revision 3.1): the whole request is this 500, never the UTC fallback and never a list with days omitted. Body: {"error":"internal error"} */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8613,7 +9316,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConferenceMeetingDetails"];
                 };
             };
-            /** @description One of these fixed messages (PAC-21: no Go error text is appended). The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it today; the new stored-credential sentence uses the same character on purpose, so the three read alike: "invalid body" (the body is not JSON, or, since PAC-67, fails the validation in the operation description: API-052); "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails, not only when there is none: the server does not separate the two on this path; see the PAC-21 contract's doesNotResolve); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom" (the stored Zoom token does not decode; before PAC-21 was finished this was "zoom: invalid token: " plus the JSON decoder's error); NEW in PAC-67, "teams: connection lost — reconnect at /api/auth/microsoft" and "zoom: connection lost — reconnect at /api/auth/zoom" (the provider permanently refused the renewal of the caller's credential, on this request or on an earlier one whose loss is still recorded; spec AC-8 "fails with an error telling A to reconnect"; also the answer when the access token has expired and no refresh token is stored, which records nothing). */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended). The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it today; the new stored-credential sentence uses the same character on purpose, so the three read alike: "invalid body" (the body is not JSON, or, since PAC-67, fails the validation in the operation description: API-052); since PAC-71 "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)" (before PAC-71 it pointed at the sign-in start /api/auth/microsoft, which since PAC-71 is a sign-in and never connects for a signed-in user; also returned when reading the stored Microsoft token fails, not only when there is none: the server does not separate the two on this path; see the PAC-21 contract's doesNotResolve); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom" (the stored Zoom token does not decode; before PAC-21 was finished this was "zoom: invalid token: " plus the JSON decoder's error); NEW in PAC-67, "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)" (since PAC-71; before, "reconnect at /api/auth/microsoft") and "zoom: connection lost — reconnect at /api/auth/zoom" (the provider permanently refused the renewal of the caller's credential, on this request or on an earlier one whose loss is still recorded; spec AC-8 "fails with an error telling A to reconnect"; also the answer when the access token has expired and no refresh token is stored, which records nothing). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8826,7 +9529,7 @@ export interface operations {
                     "application/json": components["schemas"]["EventConferenceLink"];
                 };
             };
-            /** @description One of these fixed messages (PAC-21: no Go error text is appended): The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it. "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time" (the existing literal, kept: the event has no start or end, or, new in PAC-21, Google's value does not parse; before PAC-21 was finished a parse failure returned Go's time.Parse error text); 'unsupported conference provider "<provider>"' (echoes the request's own `provider`); "teams: not connected — visit /api/auth/microsoft to authenticate" (also returned when reading the stored Microsoft token fails); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom"; NEW in PAC-67, "teams: connection lost — reconnect at /api/auth/microsoft" and "zoom: connection lost — reconnect at /api/auth/zoom" (the provider permanently refused the renewal of the caller's Teams or Zoom credential, or its access token has expired and no refresh token is stored; see the operation description). */
+            /** @description One of these fixed messages (PAC-21: no Go error text is appended): The dash in the three provider sentences is U+2014 EM DASH, exactly as the server writes it. "invalid body"; "provider is required"; "url is required for custom conferences"; "event has no time" (the existing literal, kept: the event has no start or end, or, new in PAC-21, Google's value does not parse; before PAC-21 was finished a parse failure returned Go's time.Parse error text); 'unsupported conference provider "<provider>"' (echoes the request's own `provider`); "teams: not connected — connect Outlook in Settings (POST /api/auth/microsoft/connect)" (PAC-71 wording; also returned when reading the stored Microsoft token fails); "zoom: not connected — visit /api/auth/zoom to authenticate"; "zoom: stored credential is invalid — reconnect at /api/auth/zoom"; NEW in PAC-67, "teams: connection lost — reconnect Outlook in Settings (POST /api/auth/microsoft/connect)" (PAC-71 wording) and "zoom: connection lost — reconnect at /api/auth/zoom" (the provider permanently refused the renewal of the caller's Teams or Zoom credential, or its access token has expired and no refresh token is stored; see the operation description). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -8946,6 +9649,7 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -9182,6 +9886,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     listHabitTemplates: {
@@ -9203,6 +9908,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     deactivateHabit: {
@@ -9447,6 +10153,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     notionOauthCallback: {
@@ -9523,6 +10230,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
             /** @description `NOTION_CLIENT_ID` is unset. Body: `{"error":"Notion not configured"}`. */
             503: {
                 headers: {
@@ -9553,6 +10261,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     disconnectSlack: {
@@ -9572,6 +10281,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     slackOauthCallback: {
@@ -9650,6 +10360,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
             /** @description `SLACK_CLIENT_ID` is unset. Body: `{"error":"Slack not configured"}`. */
             503: {
                 headers: {
@@ -9680,6 +10391,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     testLLMConnection: {
@@ -9714,6 +10426,7 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description NEW-llm-bring-your-own. AI is not configured for the configuration this probe decided on (table on AINotConfigured, rows 1, 3, 5-8, 10 and 11), or (Part 2) the probe named a provider or carried a key while the caller's organisation forbids personal keys. Nothing was sent to any host. `error` is a non-empty sentence describing THE PROBED CHOICE: why it cannot be used and who can fix it (a client that reads only `error`, as the web settings page did before this change, renders it); `notConfigured` carries the same facts for a client to act on. When the body names a provider other than the saved one, or carries `llmApiKey`, the sentence is about that choice ("Anthropic needs an API key"), never "AI features are off": the caller's saved configuration may well work (spec AC-37, or `{"llmApiKey": ""}` on a configured account). Only when the probe decided on the caller's saved choice (absent `llmProvider`, or one equal to the saved choice, with no `llmApiKey`) does it say that AI features are off. This replaces the 500 a caller with no key used to get (spec AC-12). 409 because the request is well formed and is refused only because of the current state of the caller's AI configuration (RFC 9110 §15.5.10); it is neither a server error nor a provider error.
              *      */
             409: {
@@ -9787,6 +10500,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -9877,6 +10591,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error. "emails is required" when the key is absent or JSON null (an empty array is accepted and returns assigned=0, skipped=0); "email is required" for a blank entry; "email must be a valid email address" for an unparseable entry.
              *      */
@@ -9922,6 +10637,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description Gap detection or a database read failed. `error` is "internal error" or "db error". The detail is written to the server log and Sentry only (PAC-21). */
             500: {
@@ -9952,6 +10668,7 @@ export interface operations {
                     "application/json": components["schemas"]["ManagerProfileSummary"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["ServerError"];
         };
     };
@@ -9979,6 +10696,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["JsonError"];
+            401: components["responses"]["Unauthorized"];
             500: components["responses"]["ServerError"];
         };
     };
@@ -10017,6 +10735,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -10057,6 +10776,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error. "email is required"; "email must be a valid email address"; "cadence must be weekly, biweekly, monthly, custom, or none"; "custom_cadence_days must be between 1 and 365"; "custom_cadence_days is only valid with custom cadence".
              *      */
@@ -10104,6 +10824,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error — "the team owner cannot be removed". */
             422: {
@@ -10114,6 +10835,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            500: components["responses"]["SessionGenerationUnavailable"];
         };
     };
     patchManagerTeamMember: {
@@ -10156,6 +10878,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description text/plain "not found" — no such member in scope. */
             404: {
@@ -10217,6 +10940,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description text/plain "not found". */
             404: {
@@ -10425,6 +11149,7 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description Parse() returned an error, including (NEW-llm-bring-your-own) when the caller's settings could not be loaded or the caller's organisation membership could not be read, so which AI configuration applies could not be decided; in that case nothing was sent. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). "AI not configured" is never a 500; it is the 200 with `not_configured`. Since PAC-81 (spec AC-A3) each LLM call has its own 30 s limit; a call that fails on that limit is a provider failure and answers as one does today, not the 503. */
             500: {
                 headers: {
@@ -11889,7 +12614,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "not found" (no such link) or "user not found" (no account with that email). */
+            /** @description "not found" (no such link) or "user not found" (no account holds that email domain-confirmed; PAC-71). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11976,6 +12701,7 @@ export interface operations {
                     "application/json": components["schemas"]["Settings"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12010,6 +12736,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["SettingsValidationError"];
+            401: components["responses"]["Unauthorized"];
             /** @description Load, save or re-read failure. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12039,6 +12766,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapSettings"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12080,6 +12808,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12109,6 +12838,7 @@ export interface operations {
                     "application/json": components["schemas"]["DailyRecapPreview"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12148,6 +12878,7 @@ export interface operations {
                     "text/plain": string;
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description DB failure. Body: `{"error":"db error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
@@ -12248,6 +12979,7 @@ export interface operations {
                     "application/json": components["schemas"]["TeamInvitePreview"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             /** @description JSON error "invite not found". */
             404: {
                 headers: {
@@ -12351,8 +13083,9 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
-            /** @description JSON error "not found".
+            /** @description JSON error "not found". Reachable only in a race: the membership read (requireMember) and the team read (storage.GetTeam) are two separate statements with no transaction (backend/api/handlers_teams.go getTeam), and a team_members row cannot outlive its team (team_members.team_id REFERENCES teams ON DELETE CASCADE, migration 013_teams.up.sql). So the 404 is answered exactly when the team is deleted (deleteTeam, or the cascade from its creator's account) after the membership read succeeded and before the team read; a team that is already gone when the request arrives is the 403. Resolved by PAC-71 at stage 2 (this operation is touched for its 401); the plan owes a seam test that deletes the team between the two reads.
              *      */
             404: {
                 headers: {
@@ -12393,6 +13126,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -12432,6 +13166,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -12470,6 +13205,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -12510,6 +13246,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
             503: components["responses"]["RequestBudgetExpired"];
@@ -12550,6 +13287,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error "email must be a valid email address". */
             422: {
@@ -12593,6 +13331,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error "the team owner cannot be removed" (the manager-domain wording). The target is an owner of the team and removing them would leave the team with no owner. Evaluated after the 403 check, so a caller who is not an owner never receives it (naming someone else is 403; naming themselves, they are not an owner). Nothing is written: the membership and its role are unchanged.
              *      */
@@ -12637,6 +13376,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -12675,6 +13415,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error. "dayOfWeek must be between 1 and 7" (note: 0 is rejected, so an omitted dayOfWeek always fails); "startTime and endTime are required"; "startTime must be HH:MM"; "endTime must be HH:MM"; "startTime must be before endTime" (equal times are rejected).
              *      */
@@ -12718,6 +13459,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             500: components["responses"]["ServerError"];
         };
@@ -12757,6 +13499,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
             /** @description JSON error "zone not found". */
             404: {
