@@ -9,10 +9,11 @@
  * navigation is the e2e's (AC-4, AC-5).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { findPageTitle, findTimeButton, pickFirstSelectableDay } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
 import { ApiHttpError, ApiUnreachableError } from "@/api/client";
 import { schedulingLinksApi, type PublicSlotsParams } from "@/api/schedulingLinks";
@@ -106,16 +107,8 @@ const stopJsdomNavigation = (e: Event) => {
 };
 
 async function chooseFirstSlot() {
-  await screen.findByRole("heading", { name: "Intro call" });
-  const day = await vi.waitFor(() => {
-    const d = within(screen.getByRole("grid"))
-      .getAllByRole("button")
-      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
-    if (!d) throw new Error("no selectable day yet");
-    return d;
-  });
-  fireEvent.click(day);
-  fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+  await pickFirstSelectableDay();
+  fireEvent.click(await findTimeButton());
   await screen.findByRole("button", { name: /confirm booking/i });
 }
 
@@ -132,7 +125,7 @@ describe("PAC-91 booking page links leave the frame", () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
     vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_s, p) => listing(p));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
 
     const link = screen.getByTestId("booking-home-link");
     expect(link.tagName).toBe("A");
@@ -162,7 +155,7 @@ describe("PAC-91 booking page links leave the frame", () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
     vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_s, p) => listing(p));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expectEveryInternalAnchorLeavesTheFrame(1);
   });
 
@@ -183,7 +176,7 @@ describe("PAC-91 booking page links leave the frame", () => {
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Booker" } });
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "booker@co.com" } });
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
-    await screen.findByRole("heading", { name: /you are confirmed/i });
+    await findPageTitle(/you are confirmed/i);
     // The confirmation has no link to another Paceday page today; any added later is held to the rule.
     expectEveryInternalAnchorLeavesTheFrame(0);
   });

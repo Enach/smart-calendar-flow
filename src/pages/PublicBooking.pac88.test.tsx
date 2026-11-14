@@ -12,6 +12,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { dayButton, dayButtons, findPageTitle, queryTimeButtons } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
 import { ApiHttpError } from "@/api/client";
 import { schedulingLinksApi, type PublicSlotsAnswer, type PublicSlotsParams } from "@/api/schedulingLinks";
@@ -97,7 +98,7 @@ function renderPage(slug = "intro") {
 function dayCell(key: string): HTMLElement {
   const [y, m, d] = key.split("-").map(Number);
   const month = new Date(Date.UTC(y!, m! - 1, d!)).toLocaleString("en-US", { month: "long", timeZone: "UTC" });
-  return within(screen.getByRole("grid")).getByRole("button", { name: new RegExp(`${month} ${d}(st|nd|rd|th)?,? ${y}`) });
+  return dayButton(new RegExp(`${month} ${d}(st|nd|rd|th)?,? ${y}`));
 }
 
 async function pickDay(key: string) {
@@ -110,7 +111,7 @@ async function pickDay(key: string) {
 }
 
 /** The time buttons: their accessible names carry date, time, zone and offset. */
-const timeButtons = () => screen.queryAllByRole("button", { name: /, \d{1,2}:\d{2}\s[AP]M, / });
+const timeButtons = () => queryTimeButtons(/, \d{1,2}:\d{2}\s[AP]M, /);
 const shownTimes = () => timeButtons().map((b) => norm(b.textContent));
 const label = () => norm(screen.getByTestId("booking-tz-label").textContent);
 const announcer = () => norm(screen.getByTestId("booking-tz-announcer").textContent);
@@ -135,7 +136,7 @@ describe("PAC-88 default zone", () => {
     linkIs(PARIS_LINK);
     const calls = serve(gridStarts("2027-01-11", [9, 0], [17, 0], "Europe/Paris"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("Europe/Paris (UTC+01:00)");
     expect(screen.getByTestId("booking-tz-use-mine")).toHaveTextContent("Use my time zone (Asia/Tokyo)");
     await pickDay("2027-01-11");
@@ -157,7 +158,7 @@ describe("PAC-88 default zone", () => {
     linkIs({ ...PARIS_LINK, time_zone: "UTC" });
     serve(gridStarts("2027-01-11", [9, 0], [10, 0], "UTC"), "UTC");
     const { unmount } = renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("UTC (UTC+00:00)");
     await pickDay("2027-01-11");
     await waitFor(() => expect(shownTimes()[0]).toBe("9:00 AM"));
@@ -165,7 +166,7 @@ describe("PAC-88 default zone", () => {
 
     linkIs({ ...PARIS_LINK, time_zone: undefined });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("UTC (UTC+00:00)");
   });
 
@@ -185,7 +186,7 @@ describe("PAC-88 default zone", () => {
     linkIs({ ...PARIS_LINK, time_zone: "Mars/Olympus_Mons" });
     const calls = serve(gridStarts("2027-01-11", [9, 0], [10, 0], "UTC"), "Mars/Olympus_Mons");
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("UTC (UTC+00:00)");
     await pickDay("2027-01-11");
     await waitFor(() => expect(shownTimes()[0]).toBe("9:00 AM"));
@@ -196,7 +197,7 @@ describe("PAC-88 default zone", () => {
   it("AC-33: the demo source shows the demo link's zone label like a real link", async () => {
     sessionStorage.setItem("paceday:demo", "1");
     renderPage("intro-chat");
-    await screen.findByRole("heading", { name: "Intro chat" });
+    await findPageTitle("Intro chat");
     expect(label()).toMatch(/^Europe\/Paris \(UTC\+0[12]:00\)$/);
   });
 });
@@ -208,7 +209,7 @@ describe("PAC-88 switcher on the page", () => {
     linkIs(PARIS_LINK);
     const calls = serve(gridStarts("2027-01-11", [9, 0], [10, 0], "Europe/Paris"));
     const { unmount } = renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     fireEvent.click(screen.getByTestId("booking-tz-use-mine"));
     expect(label()).toBe(`America/New_York (UTC${MINUS}05:00)`);
     expect(announcer()).toBe(`Times are now shown in America/New_York, UTC${MINUS}05:00.`);
@@ -223,7 +224,7 @@ describe("PAC-88 switcher on the page", () => {
     linkIs(PARIS_LINK);
     serve([]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(screen.queryByTestId("booking-tz-use-mine")).not.toBeInTheDocument();
   });
 
@@ -232,7 +233,7 @@ describe("PAC-88 switcher on the page", () => {
     linkIs(PARIS_LINK);
     serve([]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("Asia/Tokyo");
     expect(label()).toBe("Asia/Tokyo (UTC+09:00)");
     fireEvent.click(screen.getByTestId("booking-tz-back-to-host"));
@@ -248,7 +249,7 @@ describe("PAC-88 switcher on the page", () => {
       .spyOn(schedulingLinksApi, "bookSlot")
       .mockRejectedValue(new ApiHttpError(409, { error: "slot is no longer available" }));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
 
     async function bookFirstTime() {
       fireEvent.click((await waitFor(() => { const b = timeButtons(); expect(b.length).toBe(1); return b; }))[0]!);
@@ -280,7 +281,7 @@ describe("PAC-88 switcher on the page", () => {
     linkIs(PARIS_LINK);
     serve(["2027-01-11T08:00:00Z"]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("Asia/Tokyo");
     await pickDay("2027-01-11");
     const [btn] = await waitFor(() => { const b = timeButtons(); expect(b).toHaveLength(1); return b; });
@@ -298,7 +299,7 @@ describe("PAC-88 days of the displayed zone", () => {
     linkIs({ ...PARIS_LINK, durations: [30] });
     serve(gridStarts("2027-01-11", [9, 0], [17, 0], "Europe/Paris"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("Pacific/Auckland");
     await pickDay("2027-01-11");
     await waitFor(() => expect(timeButtons()).toHaveLength(12));
@@ -320,7 +321,7 @@ describe("PAC-88 days of the displayed zone", () => {
     // The fake server also lists 2027-01-12 in Tokyo: the page must still refuse a day before today.
     const calls = serve(offered, "Europe/Paris", ["2027-01-12"]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     fireEvent.click(screen.getByTestId("booking-tz-use-mine"));
     await pickDay("2027-01-13");
     await waitFor(() => expect(shownTimes()).toEqual(["12:15 AM", "12:30 AM"]));
@@ -333,12 +334,10 @@ describe("PAC-88 days of the displayed zone", () => {
     linkIs(PARIS_LINK);
     const calls = serve([]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await waitFor(() => expect(calls.length).toBe(1));
     await waitFor(() => {
-      const enabled = within(screen.getByRole("grid"))
-        .getAllByRole("button")
-        .filter((b) => !b.hasAttribute("disabled"));
+      const enabled = dayButtons().filter((b) => !b.hasAttribute("disabled"));
       expect(enabled).toHaveLength(0);
     });
   });
@@ -349,7 +348,7 @@ describe("PAC-88 days of the displayed zone", () => {
     // Paris Monday 22:00-23:30: Monday in Auckland? no (Tuesday); in New York, yes.
     serve(gridStarts("2027-01-11", [22, 0], [23, 30], "Europe/Paris"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await pickDay("2027-01-11");
     await waitFor(() => expect(shownTimes()[0]).toBe("10:00 PM"));
     chooseZone("America/New_York");
@@ -369,7 +368,7 @@ describe("PAC-88 days of the displayed zone", () => {
     // Paris Monday 7 December 13:00-14:00: still 7 December in New York, 8 December in Auckland.
     serve(gridStarts("2026-12-07", [13, 0], [14, 0], "Europe/Paris"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await pickDay("2026-12-07");
     await waitFor(() => expect(shownTimes()[0]).toBe("1:00 PM"));
     // Page the calendar to January: its grid (27 Dec - 6 Feb) does not contain 7 December.
@@ -392,7 +391,7 @@ describe("PAC-88 days of the displayed zone", () => {
     linkIs(PARIS_LINK);
     serve(["2027-01-11T08:00:00Z"]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await pickDay("2027-01-11");
     fireEvent.click((await waitFor(() => { const b = timeButtons(); expect(b).toHaveLength(1); return b; }))[0]!);
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Kept Name" } });
@@ -414,7 +413,7 @@ describe("PAC-88 days of the displayed zone", () => {
       return answer(offered, "Europe/Paris", p);
     });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await pickDay("2027-01-11");
     const notice = await screen.findByTestId("api-error");
     expect(timeButtons()).toHaveLength(0);
@@ -435,7 +434,7 @@ describe("PAC-88 days of the displayed zone", () => {
       return answer(offered, "Europe/Paris", p);
     });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     const notice = await screen.findByTestId("api-error");
     expect(dayCell("2027-01-11")).toBeDisabled();
     failure = new ApiHttpError(429, { error: "rate limit exceeded" });
@@ -452,7 +451,7 @@ describe("PAC-88 days of the displayed zone", () => {
     linkIs(PARIS_LINK);
     const calls = serve([]);
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toMatchObject({ from: "2026-12-27", to: "2027-02-06", displayTimeZone: "Europe/Paris", duration: 30 });
     for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole("button", { name: /next month/i }));
@@ -472,7 +471,7 @@ describe("PAC-88 transition days", () => {
     linkIs({ ...PARIS_LINK, time_zone: "America/New_York" });
     serve(gridStarts("2027-03-14", [1, 0], [4, 0], "America/New_York"), "America/New_York");
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await pickDay("2027-03-14");
     await waitFor(() => expect(timeButtons().length).toBeGreaterThan(0));
     expect(shownTimes().some((t) => t.startsWith("2:"))).toBe(false);
@@ -488,7 +487,7 @@ describe("PAC-88 transition days", () => {
     linkIs({ ...PARIS_LINK, time_zone: "UTC" });
     serve(gridStarts("2027-11-07", [5, 0], [7, 0], "UTC"), "UTC");
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("America/New_York");
     await pickDay("2027-11-07");
     await waitFor(() => expect(timeButtons()).toHaveLength(7));
@@ -504,7 +503,7 @@ describe("PAC-88 transition days", () => {
     linkIs(PARIS_LINK);
     serve(gridStarts("2027-04-05", [9, 0], [10, 0], "Europe/Paris"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("Europe/Paris (UTC+01:00)");
     await pickDay("2027-04-05");
     expect(label()).toBe("Europe/Paris (UTC+02:00)");
@@ -530,7 +529,7 @@ describe("PAC-88 confirmation and memory of the choice", () => {
     serve(["2027-01-14T23:30:00Z"]);
     vi.spyOn(schedulingLinksApi, "bookSlot").mockResolvedValue(confirmed("2027-01-14T23:30:00Z", "2027-01-15T00:00:00Z"));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("Asia/Tokyo");
     await pickDay("2027-01-15");
     fireEvent.click((await waitFor(() => { const b = timeButtons(); expect(b).toHaveLength(1); return b; }))[0]!);
@@ -538,7 +537,7 @@ describe("PAC-88 confirmation and memory of the choice", () => {
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "booker@co.com" } });
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
 
-    await screen.findByRole("heading", { name: /you are confirmed/i });
+    await findPageTitle(/you are confirmed/i);
     expect(screen.getByText("Friday, January 15, 2027")).toBeInTheDocument();
     expect(screen.getByText(/8:30\sAM – 9:00\sAM · 30 min/)).toBeInTheDocument();
     expect(screen.getByText("Asia/Tokyo (UTC+09:00)")).toBeInTheDocument();
@@ -552,7 +551,7 @@ describe("PAC-88 confirmation and memory of the choice", () => {
     expect(downloads).toEqual(["intro-2027-01-15.ics"]);
 
     fireEvent.click(screen.getByRole("button", { name: /book another time/i }));
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("Asia/Tokyo (UTC+09:00)");
   });
 
@@ -563,7 +562,7 @@ describe("PAC-88 confirmation and memory of the choice", () => {
     const setItem = vi.spyOn(Storage.prototype, "setItem");
     vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(409, { error: "slot is no longer available" }));
     const { unmount } = renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("Asia/Tokyo");
     fireEvent.click(screen.getByRole("button", { name: "60 min" }));
     await pickDay("2027-01-11");
@@ -581,7 +580,7 @@ describe("PAC-88 confirmation and memory of the choice", () => {
     unmount();
 
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(label()).toBe("Europe/Paris (UTC+01:00)");
   });
 });
@@ -595,7 +594,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
       .mockResolvedValue({ ...PARIS_LINK, time_zone: "America/New_York" });
     const calls = serve(gridStarts("2027-01-11", [9, 0], [10, 0], "America/New_York"), "America/New_York");
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     await waitFor(() => expect(label()).toBe(`America/New_York (UTC${MINUS}05:00)`));
     expect(link).toHaveBeenCalledTimes(2);
     await pickDay("2027-01-11");
@@ -609,7 +608,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
     const link = linkIs(PARIS_LINK);
     serve(gridStarts("2027-01-11", [9, 0], [10, 0], "America/New_York"), "America/New_York");
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(await screen.findByText(/host's time zone just changed/i)).toBeInTheDocument();
     expect(dayCell("2027-01-11")).toBeDisabled();
     fireEvent.click(screen.getByTestId("api-error-retry"));
@@ -625,7 +624,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
       return answer(offered, "Europe/Paris", p);
     });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     chooseZone("America/New_York");
     chooseZone("Asia/Tokyo");
     const msg = await screen.findByTestId("booking-tz-unsupported");
@@ -642,7 +641,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
     linkIs(PARIS_LINK);
     vi.spyOn(schedulingLinksApi, "getPublicSlots").mockRejectedValue(new ApiHttpError(400, { error: "range must not exceed 42 days" }));
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     const notice = await screen.findByTestId("api-error");
     expect(notice).toHaveTextContent("range must not exceed 42 days");
     expect(within(notice).getByTestId("api-error-retry")).toBeInTheDocument();
@@ -661,7 +660,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
       return { slots: [], available_dates: ["2027-01-11"] };
     });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     const box = screen.getByRole("combobox", { name: "Time zone" });
     await waitFor(() => expect(box).toHaveAttribute("aria-disabled", "true"));
     expect(screen.getByText(/time zone switching is unavailable right now/i)).toBeInTheDocument();
@@ -684,7 +683,7 @@ describe("PAC-88 host zone change, refused zone, older server", () => {
       throw new ApiHttpError(503, { error: "request timed out" });
     });
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
+    await findPageTitle("Intro call");
     expect(await screen.findByTestId("api-error")).toBeInTheDocument();
     expect(dayCell("2027-01-11")).toBeDisabled();
     expect(dayCell("2027-01-12")).toBeDisabled();

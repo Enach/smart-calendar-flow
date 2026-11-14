@@ -7,10 +7,11 @@
  * request counts are read on the wire.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { findTimeButtons, pickFirstSelectableDay } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
 import { API_MESSAGES } from "@/api/client";
 import { newBookingAttemptKey } from "@/api/schedulingLinks";
@@ -67,22 +68,8 @@ function renderPage() {
   );
 }
 
-async function pickFirstDay() {
-  await screen.findByRole("heading", { name: "Intro call" });
-  const day = await vi.waitFor(() => {
-    const d = within(screen.getByRole("grid"))
-      .getAllByRole("button")
-      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
-    if (!d) throw new Error("no selectable day yet");
-    return d;
-  });
-  fireEvent.click(day!);
-}
-
-const timeButtons = () => screen.findAllByRole("button", { name: /\d{1,2}:\d{2}/ });
-
 async function fill(slot = 0, details: { name?: string; email?: string; notes?: string } = {}) {
-  fireEvent.click((await timeButtons())[slot]!);
+  fireEvent.click((await findTimeButtons())[slot]!);
   fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: details.name ?? "Booker" } });
   fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: details.email ?? "booker@co.com" } });
   fireEvent.change(screen.getByLabelText(/notes/i), { target: { value: details.notes ?? "Agenda" } });
@@ -99,7 +86,7 @@ const lost = () => {
 /** The first send is lost; the page then shows the notice and Try again. */
 async function loseFirstSend() {
   renderPage();
-  await pickFirstDay();
+  await pickFirstSelectableDay();
   await fill();
   submit();
   return screen.findByTestId("booking-try-again");
@@ -139,35 +126,31 @@ describe("PAC-82 public booking: idempotent retry", () => {
     for (const k of keys) expect(k).toMatch(KEY_FORMAT);
   });
 
-  it("AC-25: each press of Book sends a fresh key; changing time, duration, name, email or notes sends a different one", async () => {
+  // PAC-113: one booking pair per change, not six bookings in one test, so no
+  // single test carries six full render-and-refuse round trips.
+  it.each<[string, { slot?: number; duration?: RegExp; name?: string; email?: string; notes?: string }]>([
+    ["the time", { slot: 1 }],
+    ["the duration", { duration: /60 min/i }],
+    ["the name", { name: "Other" }],
+    ["the email", { email: "other@co.com" }],
+    ["the notes", { notes: "Other agenda" }],
+  ])("AC-25: each press of Book sends a fresh key; changing %s sends a different one", async (_label, change) => {
     const refuse = () => json({ error: "slot is no longer available" }, 409);
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     answers.push(refuse);
     await fill(0);
     submit();
     await screen.findByText(/slot is no longer available/i);
-    for (const change of [
-      { slot: 1 },
-      { slot: 0, name: "Other" },
-      { slot: 0, email: "other@co.com" },
-      { slot: 0, notes: "Other agenda" },
-    ]) {
-      answers.push(refuse);
-      await fill(change.slot, change);
-      submit();
-      await vi.waitFor(() => expect(answers).toHaveLength(0));
-    }
-    // A different duration.
-    fireEvent.click(screen.getByRole("button", { name: /60 min/i }));
+    if (change.duration) fireEvent.click(screen.getByRole("button", { name: change.duration }));
     answers.push(refuse);
-    await fill(0);
+    await fill(change.slot ?? 0, change);
     submit();
-    await vi.waitFor(() => expect(sent).toHaveLength(6));
+    await vi.waitFor(() => expect(sent).toHaveLength(2));
     const keys = sent.map((s) => s.key);
     for (const k of keys) expect(k).toMatch(KEY_FORMAT);
-    expect(new Set(keys).size).toBe(6);
-    expect(new Set(sent.map((s) => s.body)).size).toBe(6);
+    expect(new Set(keys).size).toBe(2);
+    expect(new Set(sent.map((s) => s.body)).size).toBe(2);
   });
 
   it("AC-26: a lost answer shows 'may have been saved' and one Try again; nothing re-sends until it is pressed; pressing sends the same key and body once", async () => {
@@ -204,7 +187,7 @@ describe("PAC-82 public booking: idempotent retry", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     answers.push(() => new Promise<Response>(() => {}));
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fill();
     submit();
     await act(async () => {
@@ -217,7 +200,7 @@ describe("PAC-82 public booking: idempotent retry", () => {
   it("AC-26: the first send's budget 503 still says 'not made' and offers no Try again", async () => {
     answers.push(() => json({ error: "request timed out" }, 503));
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fill();
     submit();
     const notice = await screen.findByTestId("api-error");
