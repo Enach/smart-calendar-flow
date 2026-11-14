@@ -1680,6 +1680,8 @@ export interface paths {
         /**
          * Book a slot on a public scheduling link.
          * @description Rate limited per client (NEW-booking-rate-limit). A client may make at most 20 requests to this operation per fixed 10-minute window; the window starts at the client's first counted request and is not extended by refused requests. The limit is checked and the request counted atomically, as the very first step of the handler: before the link lookup, before the body is read and before any validation, so every request counts whatever it would otherwise have answered (201, 400, 404, 409, 410, 500 or 503), and a refused request answers 429 even for an unknown slug and never writes a booking. Concurrent requests cannot exceed the limit. The count is per client across all links, not per link or per host, and is separate from the slot-listing budget of `getPublicBookingSlots`. A client is identified exactly as for `detectAuthProvider` (PAC-39): the socket peer address, or the `X-Real-IP` header only when the socket peer is inside `TRUSTED_PROXIES` (comma-separated IPs or CIDRs; empty or unset trusts nobody; an unparseable entry trusts less, never more). `X-Forwarded-For` is never read. A client is one exact IPv4 or IPv6 address, with no prefix grouping. Counts live in process memory: the limit is per backend process (20 per replica, as API-062's residue), and a restart clears them. Clients whose window has ended are forgotten by a sweep that runs on a request, at most once per window, so memory stays bounded. CORS preflight (`OPTIONS`) is answered by the CORS middleware and is not counted. Offerable-start rule (PAC-72, fixes API-094): a booking is accepted only when the interval it would store, [start, end), is exactly a slot that `getPublicBookingSlots` would offer for this link and this duration at the moment the request is handled. Listing and booking apply one rule: (1) the duration is one of the link's durations (else 400, checked first); (2) the start falls on one of the link's `days_of_week` and inside its daily window, on the 15-minute grid counted from `window_start_time`, with zero seconds and zero fraction, and start + duration ends no later than `window_end_time` (these are the create/update request and storage names; the owner's `SchedulingLink` read model calls the same fields `days`, `window_start` and `window_end`); (3) every accepted host is free for the whole slot: no non-transparent calendar event (widened by the link's buffers; buffers apply to calendar events only, and events are read only for the daily window), no focus block, and no booking that is not `cancelled` (pending or confirmed) on any link the host owns or co-hosts, this link included; (4) the start is at least `min_notice_minutes` after the request is handled; (5) the start's date in the link's zone is today (in that zone) or one of the next `booking_horizon_days` - 1 days (PAC-72 revision 2, owner decision D-1: a per-link setting, 1..365, default 60); (6) the link has at least one accepted host. The link's zone (PAC-72 revision 2, owner decision D-9) is the link OWNER's profile time zone (`settings.timezone`), whoever the co-hosts are and whatever zone the server process runs in; when the owner has no settings row or the stored name is not a loadable IANA zone, the zone is UTC. A failed READ of the owner's settings (a storage error) is not "no settings row": it is the 500 and nothing is written, never the UTC fallback (PAC-72 revision 3.1, D-7). Days, hours, the grid, "today" and the horizon are all evaluated in that zone, as wall-clock times: a slot start whose wall time does not exist on a daylight-saving change day is not offered, and a wall time that occurs twice is offered once, at its first occurrence. Window edges on such a day: a `window_start_time` or `window_end_time` that does not exist that day is taken at the instant of the change (the first existing instant after the gap), so the window never grows; an edge in a repeated hour is taken at its first occurrence; the 15-minute grid stays counted in wall time from `window_start_time`. The zone used is exposed as `PublicLinkInfo.time_zone`, to anyone who has the link (owner decision D-9 makes it the page's default display). Order of evaluation: the owner's zone is read first; a start refused by the horizon, the days/hours/grid or the notice is refused with that reason without reading any host's busy time, so a storage failure on busy time cannot turn such a start into a 500 (the listing likewise answers a date outside the horizon before any host read). A start on a day before today (link zone) is not `beyond_horizon` (that names the far edge only); it is always inside the notice, so it is `too_soon` unless `outside_link_hours` comes first. `start` is compared as an instant, so any UTC offset denoting a grid instant is the same start; the stored and returned start and end are exactly the slot's, in UTC. A start the rule does not offer answers 409 and nothing is written: no booking row, no calendar event, no email. The 409 body depends on the link's `refusal_message` setting (PAC-72 revision 2, owner decisions D-2/D-5): `generic` (the default) answers the single body `{"error":"slot is no longer available"}` whatever rule failed; `specific` answers one reason, see the 409 response. The 409 check runs after the 429, 404, 410 and 400 checks. Host calendars must be readable (owner decision PAC-72 D-6, 2026-11-01, as implemented by PAC-81 Part A): each accepted host's calendar is read for the slot's day window (at most 4 concurrent reads, each limited as on `getPublicBookingSlots`); a host whose calendar cannot be read (not connected, a provider error, a refused credential, or its own time limit) is busy for the whole window, so the slot is not offered and the booking is refused with the 409 (reason `host_busy`); nothing is written. A host not read because the request budget ran out is the 503, never a 409. A storage failure while reading the link's accepted hosts, a host's focus blocks or the bookings on the hosts' links answers 500 and writes nothing, never 409. Not guaranteed: two concurrent requests for the same or overlapping starts can both pass the check before either is written (no storage-level exclusion; out of scope for PAC-72). Still open (API-051, owned by PAC-40): `uses_count` is recomputed from live bookings, so cancelling a booking re-opens an exhausted single-use link. When the start is accepted, the booking row is saved, then a calendar event (with the booker email as a guest) is attempted on each accepted host's calendar, best effort: a host whose user record or calendar client cannot be loaded is skipped and a failed event creation is ignored, so a 201 does not mean any host's calendar was written. Operation-level `security: []` is kept: this operation is public and is registered outside requireAuth; the rate limit is not authentication.
+         *
+         *     A link deleted or paused while the request is handled (PAC-101): the booking row is saved only if, at the moment it is saved, the link is still live (not deleted, not paused), and that check and the save are one atomic step ordered against the link's delete and pause. A booking that would otherwise have been saved but whose link was deleted or paused first answers exactly the 404 `{"error":"not found"}` of a link deleted before the request arrived, never 201, 409, 410 or 503, and nothing is written: no booking row, no host calendar event, no confirmation email. A booking saved first is a booking made before the delete: it is kept in full, answered 201, and listed in the owner's archive after the delete (its `created_at` may be a few milliseconds after the link's deletion instant, which is the delete's start, not its commit). A request refused for another reason (400, 409, 410, 429, 503) keeps that answer even when the link was deleted meanwhile, and writes nothing either way. Bookings of the same link are never made to wait for each other by this ordering. A save that must wait for a delete, pause or edit of the same link still in progress waits at most 10 seconds; past that it is the 500 and nothing is written.
          */
         post: operations["createPublicBooking"];
         delete?: never;
@@ -3367,7 +3369,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation.
-         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 to every caller and no host row changes (PAC-40 AC-5), even though its host rows are kept in storage.
+         * @description `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 to every caller and no host row changes (PAC-40 AC-5), even though its host rows are kept in storage. PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
          */
         post: operations["acceptSchedulingLinkHostInvite"];
         delete?: never;
@@ -3387,7 +3389,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation.
-         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
+         * @description Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: as for accept, a delete committed while the request is handled is a 404 with nothing changed, a decline committed first is kept, and the wait for a delete or edit in progress is at most 10 seconds (then the 500).
          */
         post: operations["declineSchedulingLinkHostInvite"];
         delete?: never;
@@ -3437,6 +3439,8 @@ export interface paths {
          * Delete a scheduling link (owner only).
          * @description Soft delete, distinct from pausing (PAC-40). The deletion instant is recorded; the link record, its bookings (booker names and emails included) and its host rows are kept (D-2), and its slug stays reserved (D-3). From then on the link exists for its owner only in the archive (`listArchivedSchedulingLinks`, `getArchivedSchedulingLink`) and nowhere else: it is absent from `listSchedulingLinks` and from the co-host invite list, and every other operation that names it by id, and every public operation that names it by slug (`/api/book/{slug}` and its slots), answers the same 404 as an id or slug that never existed, for every caller, owner included (D-4, D-9). Creating or patching another link to its slug is still a 409 "slug already exists" (D-3), so a signed-in user can learn that the slug was once used. There is no un-delete; PATCH `active: true` cannot bring it back. Its bookings still make their hosts busy. Deleting a link that is already deleted is a 404, not a 204. Pausing (PATCH `active: false`) is a different state and keeps the link visible. Links that were inactive before PAC-40 are paused, not deleted (D-1).
          *
+         *     Writes in progress (PAC-101): a booking save, a co-host invite, accept, decline or leave, or a PATCH of this link that has already started writing when the delete arrives is completed first and is kept (it happened before the delete); the delete waits for it, at most 10 seconds (past that, the 500 and the link is not deleted). Every such write that reaches its save after the delete has committed writes nothing and answers its 404. So no booking and no host row of the link changes after the delete has committed.
+         *
          *     Erasure: once `booker_erasure.enabled` is true on this deployment (see `BookerErasurePolicy`), the bookers' names and emails of a deleted link are erased automatically 90 days after the link's last booking ends (owner decision 2026-10-27; spec §3.5). Deleting does not erase anything at the time. The answer stays an empty 204 (it carries neither the archive entry nor the erasure instant): the confirmation copy is built before the request from `ArchivedSchedulingLinkListResponse.booker_erasure`, and the instant is read from the archive afterwards (contracts/features/PAC-40.md §2.4).
          */
         delete: operations["deleteSchedulingLink"];
@@ -3447,6 +3451,8 @@ export interface paths {
          * @description Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the two halves follow different rules. KEEP SET (revoking and keeping): an existing host is kept when its account's stored address equals a listed address case-insensitively, at ANY standing, so an accepted co-host stored as `Pat@Acme.com` is kept by a list containing `pat@acme.com` (before PAC-71 the lowercased lookup missed it and removed the host). NEW ENTRIES (granting): a listed address that matches no existing host is invited as `pending` only when exactly one account holds it DOMAIN-CONFIRMED; otherwise it is skipped, as an unknown address is today.
          *     PAC-40: for `duration_options` / `durations` and `days_of_week` / `days` the canonical spelling wins whenever it is carried (present and not null; `[]` counts as carried), exactly as on create (D-5, API-049; before PAC-40 the alias won on PATCH). The window aliases are unchanged (D-10, OQ-7). A deleted link answers `404 {"error":"not found"}` to every caller, owner included, before the owner check and before the body is read, and stays deleted whatever the body says, `active: true` included (AC-3, AC-6, AC-6a); nothing is written.
+         *
+         *     PAC-101: the PATCH is all or nothing. The link's fields and, when `co_host_emails` is present, every co-host removal and invitation are written together: the answer is either 200 with all of them applied or an error with none of them applied. In particular a co-host lookup or write that fails is the 500 with the link's fields unchanged too (before PAC-101 a failed removal or invitation was a 200 with the fields changed and the co-host change silently dropped, and a failed co-host lookup was a 500 with the fields already changed). A link deleted while the PATCH is handled: if the delete commits first, the PATCH answers the 404 and changes nothing, co-hosts included; if the PATCH has started writing first, the delete waits for it, the PATCH answers 200, and the link is then deleted with the PATCH's fields and co-host list. No host row of the link changes after its delete commits. A refusal decided before the write (400, 403, 409, 422) keeps its answer even if the link was deleted meanwhile. A PATCH that must wait for a booking save, host write, delete or other edit of the same link waits at most 10 seconds for each lock it needs; past that it is the 500 and nothing changes.
          */
         patch: operations["updateSchedulingLink"];
         trace?: never;
@@ -3462,7 +3468,7 @@ export interface paths {
         put?: never;
         /**
          * Accept a co-host invitation, addressed by link id.
-         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
+         * @description routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
          */
         post: operations["acceptSchedulingLinkInviteByLink"];
         delete?: never;
@@ -3502,7 +3508,7 @@ export interface paths {
         put?: never;
         /**
          * Decline a co-host invitation, addressed by link id.
-         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5).
+         * @description Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: as for accept, a delete committed while the request is handled is a 404 with nothing changed, a decline committed first is kept, and the wait for a delete or edit in progress is at most 10 seconds (then the 500).
          */
         post: operations["declineSchedulingLinkInviteByLink"];
         delete?: never;
@@ -3525,6 +3531,8 @@ export interface paths {
          * @description The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invitee is resolved only to an account that holds the email DOMAIN-CONFIRMED (exactly one, compared case-insensitively). An address carried only unconfirmed, by several accounts, or by none answers the existing 404 "user not found", with nothing written.
          *     PAC-40: a deleted link answers 404 "not found" to every caller, owner included, before the owner check and before the body is read, and no host row is written (AC-6, AC-6a).
+         *
+         *     PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link still in progress waits at most 10 seconds; past that it is the 500 and nothing changes. A refusal decided before the write (400, 403, the 404 "user not found") keeps its answer even if the link was deleted meanwhile; nothing is written either way.
          */
         post: operations["inviteSchedulingLinkHost"];
         delete?: never;
@@ -3544,7 +3552,7 @@ export interface paths {
         put?: never;
         /**
          * Remove the caller from a link's host list.
-         * @description Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id, or the link was deleted -> 404 for every caller, owner and pending invitee included, and no host row is removed (PAC-40 AC-5); caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204).
+         * @description Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id, or the link was deleted -> 404 for every caller, owner and pending invitee included, and no host row is removed (PAC-40 AC-5); caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204). PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
          */
         post: operations["leaveSchedulingLink"];
         delete?: never;
@@ -9267,7 +9275,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description No live link with that slug: never existed, paused (`active=false`) or deleted (PAC-40). Body: {"error":"not found"} */
+            /** @description No live link with that slug: never existed, paused (`active=false`) or deleted (PAC-40); or the link was deleted or paused while this request was handled, before its booking was saved (PAC-101). Nothing is written in either case: no booking row, no calendar event, no email. Body: {"error":"not found"} */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9295,7 +9303,7 @@ export interface operations {
                 };
             };
             429: components["responses"]["BookingCreateRateLimited"];
-            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". "booking conflict check failed" is the answer when busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts) or when the link owner's settings (the link's zone) cannot be read; nothing is written and the answer is never 409, and a failed settings read is never answered with the UTC fallback (PAC-72 revision 3.1, D-7). A host whose external calendar cannot be read is not a 500 (it is busy: the 409, D-6). The detail is written to the server log and Sentry only (PAC-21). A 500 from this operation does NOT prove that no booking was saved: when the insert was sent and its result is lost (for example the database connection drops), the outcome is unknown and the answer is this 500 (PAC-81 contract revision 2). Only the 503 proves that nothing was saved. */
+            /** @description Storage or engine failure. `error` is one of "internal error" or "booking conflict check failed". "booking conflict check failed" is the answer when busy time cannot be gathered from storage (the link's accepted hosts, a host's focus blocks, or the bookings on any link a host owns or co-hosts) or when the link owner's settings (the link's zone) cannot be read; nothing is written and the answer is never 409, and a failed settings read is never answered with the UTC fallback (PAC-72 revision 3.1, D-7). A host whose external calendar cannot be read is not a 500 (it is busy: the 409, D-6). The detail is written to the server log and Sentry only (PAC-21). A 500 from this operation does NOT prove that no booking was saved: when the insert was sent and its result is lost (for example the database connection drops), the outcome is unknown and the answer is this 500 (PAC-81 contract revision 2). Only the 503 proves that nothing was saved. Also this 500, with `{"error":"internal error"}` and nothing written: the save waited 10 seconds for a delete, pause or edit of the same link still in progress (PAC-101); the client cannot tell this case from the others. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12381,7 +12389,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40), before the request or while it was handled and before the host row was written (PAC-101). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12390,7 +12398,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Update failed, or the lock on the link was not obtained within 10 seconds (PAC-101); the host row is unchanged. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12432,7 +12440,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40), before the request or while it was handled and before the host row was written (PAC-101). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12441,7 +12449,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Update failed, or the lock on the link was not obtained within 10 seconds (PAC-101); the host row is unchanged. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12580,7 +12588,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Lookup or delete failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Lookup or delete failed, or the lock on the link was not obtained within 10 seconds because a write of the link was still in progress (PAC-101); the link is not deleted. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12635,7 +12643,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description No link with that id, or the link was deleted: the same answer for every caller, owner included, and nothing changes (PAC-40 AC-3, AC-6, AC-6a). Body: {"error":"not found"} */
+            /** @description No link with that id, or the link was deleted (before the request, or while it was handled and before the PATCH wrote anything, PAC-101): the same answer for every caller, owner included, and nothing changes, co-hosts included (PAC-40 AC-3, AC-6, AC-6a). Body: {"error":"not found"} */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12654,7 +12662,7 @@ export interface operations {
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description `error` is "internal error" (lookup or update failed, or the owner's settings, needed for `time_zone`, could not be read; PAC-72 revision 3.1, never the UTC fallback) or "slug check failed". The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description `error` is "internal error" (lookup or update failed, or the owner's settings, needed for `time_zone`, could not be read; PAC-72 revision 3.1, never the UTC fallback) or "slug check failed". The detail is written to the server log and Sentry only (PAC-21). PAC-101: also "internal error" when a co-host lookup, removal or invitation could not be stored, or when a lock on the link (or on an invitee's account) was not obtained within 10 seconds. Every 500 from this operation leaves the link exactly as it was: neither its fields nor any host row changed. */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12696,7 +12704,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40), before the request or while it was handled and before the host row was written (PAC-101). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12705,7 +12713,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Update failed, or the lock on the link was not obtained within 10 seconds (PAC-101); the host row is unchanged. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12807,7 +12815,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
+            /** @description The caller has no host row on this link: never invited, already left or removed, or no link has that id (the two are not distinguished, so the answer does not reveal whether a link exists); or the link was deleted (PAC-40), before the request or while it was handled and before the host row was written (PAC-101). Nothing is written. Body: `{"error":"not found"}` (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12816,7 +12824,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Update failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Update failed, or the lock on the link was not obtained within 10 seconds (PAC-101); the host row is unchanged. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12880,7 +12888,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description "not found" (no such link, or the link was deleted: the same answer for every caller, owner included, PAC-40 AC-6, AC-6a) or "user not found" (no account holds that email domain-confirmed; PAC-71). */
+            /** @description Two distinct bodies (API-072, Fixed by PAC-101): `{"error":"not found"}` (no such link, or the link was deleted, before the request or while it was handled and before the host row was written, PAC-101: the same answer for every caller, owner included, PAC-40 AC-6, AC-6a) or `{"error":"user not found"}` (the link is live or paused and owned by the caller, and no account holds that email domain-confirmed; PAC-71). Nothing is written in either case. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12889,7 +12897,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Lookup or invite failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Lookup or invite failed, or the lock on the link was not obtained within 10 seconds (PAC-101); no host row was written. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12929,7 +12937,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description No link with that id, the link was deleted (PAC-40), or the caller (not the owner) has no host row on it. All are `{"error":"not found"}` and nothing is deleted (PAC-30, API-020). */
+            /** @description No link with that id, the link was deleted (PAC-40; before the request, or while it was handled and before the host row was removed, PAC-101), or the caller (not the owner) has no host row on it. All are `{"error":"not found"}` and nothing is deleted (PAC-30, API-020). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -12938,7 +12946,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Lookup or leave failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Lookup or leave failed, or the lock on the link was not obtained within 10 seconds (PAC-101); the host row is kept. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
