@@ -11,6 +11,7 @@ import { API_MESSAGES } from "@/api/client";
 import { WorkCalendarConnection } from "./WorkCalendarConnection";
 
 import type { Settings } from "@/api/types";
+import { findButton } from "@/test/findButton";
 
 // PAC-35 AC-17 (web half), on both places the app offers a calendar
 // disconnect: the dashboard card (ConnectionStatus) and the settings section
@@ -78,7 +79,7 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => new Response(null, { status: 204 }));
     render(<Shell>{renderSurface()}</Shell>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(await findButton("Disconnect"));
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -87,7 +88,7 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse(UNSUPPORTED, 409));
     render(<Shell>{renderSurface()}</Shell>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(await findButton("Disconnect"));
     await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1));
     expect(toast.error.mock.calls[0][0]).toMatch(NOT_AVAILABLE);
     expect(toast.success).not.toHaveBeenCalled();
@@ -97,7 +98,7 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "internal error" }, 500));
     render(<Shell>{renderSurface()}</Shell>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(await findButton("Disconnect"));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("internal error"));
     expect(toast.success).not.toHaveBeenCalled();
   });
@@ -110,7 +111,7 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     serve({ connected: true, provider: "google", email: "a@x.com" }, answer as () => Response);
     render(<Shell>{renderSurface()}</Shell>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(await findButton("Disconnect"));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.lostWrite));
     expect(toast.success).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
@@ -120,7 +121,7 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "request timed out" }, 503));
     render(<Shell>{renderSurface()}</Shell>);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
+    fireEvent.click(await findButton("Disconnect"));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.budgetRead + API_MESSAGES.budgetWriteSuffix));
   });
 });
