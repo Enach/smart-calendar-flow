@@ -181,7 +181,10 @@ describe("PAC-83 public booking", () => {
     expect(screen.queryByTestId("still-working")).not.toBeInTheDocument();
   });
 
-  it("AC-21 / AC-25: a booking whose answer is lost is sent once, says it may have been saved, keeps the details, re-reads the day, offers no one-click resend", async () => {
+  // Amended by PAC-82 AC-26 (spec docs/specs/PAC-82.md, PAC-83 §3.5): the one
+  // control that re-sends is "Try again" (the same attempt, same key); nothing
+  // else re-sends, and nothing re-sends without the press.
+  it("AC-21 / AC-25 (amended by PAC-82 AC-26): a booking whose answer is lost is sent once, says it may have been saved, keeps the details, re-reads the day, offers only the one Try again", async () => {
     serveBooking(() => {
       throw new TypeError("Failed to fetch");
     });
@@ -193,9 +196,10 @@ describe("PAC-83 public booking", () => {
     expect(notice).toHaveTextContent(API_MESSAGES.lostBooking);
     expect(within(notice).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByText(/you are confirmed/i)).not.toBeInTheDocument();
-    // §3.5: no one-click resend — the booker is back on the refreshed list,
-    // told which time they had chosen, and must pick a time again.
+    // §3.5 as amended by PAC-82: the booker is back on the refreshed list,
+    // told which time they had chosen; the one re-send control is Try again.
     expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("booking-try-again")).toHaveLength(1);
     expect(screen.getByTestId("unconfirmed-booking-time")).toHaveTextContent(/you had chosen/i);
     expect(calls("POST", "/api/book/intro")).toBe(1);
     await vi.waitFor(() => expect(dayCalls()).toBe(2));
