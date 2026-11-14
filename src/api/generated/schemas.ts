@@ -64,6 +64,9 @@ export const AuthStatusResponse = z.strictObject({ connected: z.boolean(), provi
 export type BookingError = __TypedOpenapi.Schemas.BookingError;
 export const BookingError = z.strictObject({ error: z.string() });
 
+export type BookingIdempotencyKeyReusedError = __TypedOpenapi.Schemas.BookingIdempotencyKeyReusedError;
+export const BookingIdempotencyKeyReusedError = z.strictObject({ error: z.literal("idempotency key already used") });
+
 export type BookingRateLimitError = __TypedOpenapi.Schemas.BookingRateLimitError;
 export const BookingRateLimitError = z.strictObject({ error: z.literal("rate limit exceeded") });
 
@@ -396,6 +399,9 @@ export const PublicHost = z.strictObject({ email: z.email(), name: z.string().op
 
 export type PublicBookingConfirmation = __TypedOpenapi.Schemas.PublicBookingConfirmation;
 export const PublicBookingConfirmation = z.strictObject({ id: z.uuid(), link_slug: z.string(), title: z.string(), start: z.iso.datetime(), end: z.iso.datetime(), duration_minutes: z.number().int(), hosts: z.array(PublicHost), booker_name: z.string(), booker_email: z.string(), notes: z.string().optional() });
+
+export type PublicBookingConflict = __TypedOpenapi.Schemas.PublicBookingConflict;
+export const PublicBookingConflict = z.union([BookingSlotUnavailableError, BookingIdempotencyKeyReusedError]).refine((data) => [BookingSlotUnavailableError.safeParse(data).success, BookingIdempotencyKeyReusedError.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
 
 export type PublicBookingSlot = __TypedOpenapi.Schemas.PublicBookingSlot;
 export const PublicBookingSlot = z.strictObject({ start: z.iso.datetime(), end: z.iso.datetime() });

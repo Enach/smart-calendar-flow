@@ -266,7 +266,10 @@ describe("PAC-88 switcher on the page", () => {
     const secondRefusal = await bookFirstTime();
 
     expect(book).toHaveBeenCalledTimes(2);
-    expect(book.mock.calls[0]).toEqual(book.mock.calls[1]);
+    // The same slug and body. PAC-82 AC-25: each press is a new attempt, so
+    // the third argument (the Idempotency-Key) differs.
+    expect(book.mock.calls[0]!.slice(0, 2)).toEqual(book.mock.calls[1]!.slice(0, 2));
+    expect(book.mock.calls[0]![2]).not.toBe(book.mock.calls[1]![2]);
     expect(book.mock.calls[0]![1].start).toBe("2027-01-11T08:00:00Z");
     expect(Object.keys(book.mock.calls[0]![1]).sort()).toEqual(["duration_minutes", "email", "name", "notes", "start"]);
     expect(secondRefusal).toBe(firstRefusal);

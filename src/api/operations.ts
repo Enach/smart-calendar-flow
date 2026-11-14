@@ -78,6 +78,7 @@ export const NOT_OPERATIONS: Record<string, string> = {
   "schedulingLinks.validateLinkForm": PURE,
   "schedulingLinks.publicBookingUrl": URL_BUILDER,
   "schedulingLinks.publicBookingDisplayUrl": URL_BUILDER,
+  "schedulingLinks.newBookingAttemptKey": "PAC-82: makes a booking attempt's Idempotency-Key, no request",
   // teams.ts
   "teams.normalizeInvite": PURE,
   "teams.validateTeamName": PURE,

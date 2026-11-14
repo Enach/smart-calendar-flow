@@ -10,12 +10,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { HostAvatars } from "@/components/links/HostAvatars";
 import { CoveragePill } from "@/components/CoveragePill";
-import { apiErrorMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
+import { API_MESSAGES, apiErrorMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
+import { BookingIdempotencyKeyReusedError } from "@/api/generated/schemas";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { StillWorking } from "@/components/StillWorking";
 import { TimeZoneSwitcher } from "@/components/booking/TimeZoneSwitcher";
 import { downloadIcs } from "@/components/booking/ics";
-import { schedulingLinksApi, type PublicSlotsAnswer } from "@/api/schedulingLinks";
+import { newBookingAttemptKey, schedulingLinksApi, type PublicSlotsAnswer } from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,23 @@ const ZONE_CHANGED_MESSAGE = "The host's time zone just changed. Try again to se
 
 function httpStatus(e: unknown): number | undefined {
   return isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
+}
+
+/**
+ * PAC-82: one booking attempt, kept in page memory only (spec D-8). The key is
+ * fresh for every press of "Confirm booking"; "Try again" re-sends this exact
+ * attempt, the same key and the same input.
+ */
+type BookingAttempt = {
+  key: string;
+  input: { start: string; duration_minutes: number; name: string; email: string; notes?: string };
+};
+/** One send of an attempt: the first, or its "Try again". */
+type BookingSend = { attempt: BookingAttempt; isRetry: boolean };
+
+/** PAC-82: the 409 that says the key was used for other details or long ago (not a slot refusal). */
+function isKeyReused(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 409 && BookingIdempotencyKeyReusedError.safeParse(e.data).success;
 }
 
 function isDisplayZoneRefusal(e: unknown): boolean {
@@ -119,6 +137,12 @@ export default function PublicBooking() {
    * booking in one click (spec §3.5).
    */
   const [unconfirmedSlot, setUnconfirmedSlot] = useState<BookingSlot | null>(null);
+  /**
+   * PAC-82 AC-26: the attempt whose outcome is unknown and may be re-sent by
+   * the one "Try again" control. Null when no re-send is offered. Nothing
+   * re-sends it without the press (PAC-83 AC-25).
+   */
+  const [retryAttempt, setRetryAttempt] = useState<BookingAttempt | null>(null);
   const [confirmation, setConfirmation] = useState<BookingConfirmation | null>(null);
 
   // ----- PAC-88: the displayed zone. Page state only, never stored (owner OQ-2). -----
@@ -276,6 +300,7 @@ export default function PublicBooking() {
     setSubmitError(null);
     setSubmitFailure(null);
     setUnconfirmedSlot(null);
+    setRetryAttempt(null);
   }
 
   function pickDay(date: Date | undefined) {
@@ -305,26 +330,48 @@ export default function PublicBooking() {
     setAnnouncement(`Times are now shown in ${zone}, ${zoneOffsetLabel(at, zone)}.`);
   }
 
+  /**
+   * PAC-82 AC-27: the answer to a "Try again". Only a 201 (onSuccess) settles
+   * it. A slot 409 or a 410 proves only that no booking with this attempt's
+   * key existed when the server decided, so the page never says the earlier
+   * attempt was not saved (C-8). A reused key or a 404: it may have been
+   * saved, and re-sending cannot tell more. Anything else (lost again, any
+   * 5xx with the budget 503, a 429, a 400) leaves the outcome unknown: the
+   * notice and "Try again" stay.
+   */
+  function onRetryError(e: unknown, status: number | undefined) {
+    if (isKeyReused(e) || status === 404) {
+      setRetryAttempt(null);
+      setSubmitFailure(e);
+    } else if (status === 409 || status === 410) {
+      setRetryAttempt(null);
+      setSubmitFailure(null);
+      setUnconfirmedSlot(null);
+      setSubmitError(API_MESSAGES.retryRefusedBooking);
+      void daySlotsQuery.refetch();
+    } else {
+      setSubmitFailure(e);
+    }
+  }
+
   const bookMutation = useMutation({
-    mutationFn: () =>
-      schedulingLinksApi.bookSlot(slug, {
-        start: selectedSlot!.start,
-        duration_minutes: duration!,
-        name: name.trim(),
-        email: email.trim(),
-        notes: notes.trim() || undefined,
-      }),
+    mutationFn: (send: BookingSend) => schedulingLinksApi.bookSlot(slug, send.attempt.input, send.attempt.key),
     retry: false,
     onSuccess: (conf) => {
       setBookedZone(displayZone);
       setConfirmation(conf);
       setSubmitError(null);
       setSubmitFailure(null);
+      setRetryAttempt(null);
     },
-    onError: (e: unknown) => {
+    onError: (e: unknown, send: BookingSend) => {
       const status = httpStatus(e);
       const kind = classifyApiFailure(e);
       if (kind === "cancelled") return;
+      if (send.isRetry) {
+        onRetryError(e, status);
+        return;
+      }
       const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
       if (status === 429) {
         // Keep the chosen slot and the typed details; no refetch, no alarm.
@@ -346,8 +393,10 @@ export default function PublicBooking() {
       } else if (kind === "lost" || (status !== undefined && status >= 500)) {
         // The booking may have been saved (contract §2.4). The chosen time and
         // the typed details stay; the day's times are re-read so the booker
-        // can see whether the slot is gone. Nothing re-sends the booking.
+        // can see whether the slot is gone. PAC-82: the one "Try again"
+        // re-sends this same attempt; nothing re-sends it without the press.
         setSubmitFailure(e);
+        setRetryAttempt(send.attempt);
         setUnconfirmedSlot(selectedSlot);
         setSelectedSlot(null);
         void daySlotsQuery.refetch();
@@ -682,12 +731,35 @@ export default function PublicBooking() {
                   )}
                   {submitFailure !== null && unconfirmedSlot && (
                     <div className="mb-3 space-y-2">
-                      <ApiErrorNotice error={submitFailure} effect="booking" />
+                      {/* Whatever the last answer was (lost, any 5xx, 429,
+                          400, a reused key, 404), the outcome is unknown: the
+                          booking wording, never the server's string. */}
+                      <ApiErrorNotice error={submitFailure} effect="booking" message={API_MESSAGES.lostBooking} />
                       <p className="text-sm text-muted-foreground" data-testid="unconfirmed-booking-time">
                         You had chosen {formatDateLongInZone(unconfirmedSlot.start, displayZone)},{" "}
-                        {formatTimeInZone(unconfirmedSlot.start, displayZone)}. If you still want a time, pick one again
-                        below — your details are kept.
+                        {formatTimeInZone(unconfirmedSlot.start, displayZone)}.{" "}
+                        {retryAttempt
+                          ? "Try again to send that same booking once more (it is never booked twice), or pick another time below — your details are kept."
+                          : "If you still want a time, pick one again below — your details are kept."}
                       </p>
+                      {retryAttempt && (
+                        <div className="flex items-center gap-3">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            data-testid="booking-try-again"
+                            disabled={bookMutation.isPending}
+                            onClick={() => {
+                              setSubmitError(null);
+                              bookMutation.mutate({ attempt: retryAttempt, isRetry: true });
+                            }}
+                          >
+                            {bookMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />} Try again
+                          </Button>
+                          <StillWorking active={bookMutation.isPending} />
+                        </div>
+                      )}
                     </div>
                   )}
                   {slotsFailed && (
@@ -730,6 +802,8 @@ export default function PublicBooking() {
                               onClick={() => {
                                 setSelectedSlot(s);
                                 setSubmitError(null);
+                                // PAC-82: another time is another attempt.
+                                setRetryAttempt(null);
                               }}
                               className="min-h-[44px] rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition hover:border-primary hover:bg-primary-muted"
                             >
@@ -787,7 +861,21 @@ export default function PublicBooking() {
                       setSubmitError("Please enter a valid email address.");
                       return;
                     }
-                    bookMutation.mutate();
+                    // PAC-82 AC-25: every press is a new attempt with a fresh key.
+                    setRetryAttempt(null);
+                    bookMutation.mutate({
+                      attempt: {
+                        key: newBookingAttemptKey(),
+                        input: {
+                          start: selectedSlot!.start,
+                          duration_minutes: duration!,
+                          name: name.trim(),
+                          email: email.trim(),
+                          notes: notes.trim() || undefined,
+                        },
+                      },
+                      isRetry: false,
+                    });
                   }}
                 >
                   <div className="space-y-2">

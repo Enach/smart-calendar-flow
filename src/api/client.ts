@@ -416,6 +416,14 @@ export const API_MESSAGES = {
   lostRead: "Can't reach Paceday right now. Check your connection and try again.",
   lostWrite: "Paceday didn't confirm this. It may or may not have been applied — refresh to check before trying again.",
   lostBooking: "We couldn't confirm your booking. It may have been saved — check your email for a confirmation before booking again.",
+  /**
+   * PAC-82 C-8 (orchestrator decision, factory default): a "Try again" refused
+   * with a slot 409 or a 410. The refusal proves only that no booking with
+   * this attempt's key existed when it was decided, so the text never says
+   * the earlier attempt was not saved.
+   */
+  retryRefusedBooking:
+    "This time can't be booked now. Your earlier attempt may still have been saved — check your email before booking another time.",
 } as const;
 
 /** In precedence order: cancelled, budget, too-large, lost, http. */
@@ -585,18 +593,32 @@ export function interpretResponse<T>(res: Response, text: string): T {
   return data as T;
 }
 
-export async function requestApi<T>(method: string, path: string, body?: unknown, query?: Record<string, string | undefined>, boundMs: number = CLIENT_REQUEST_BOUND_MS): Promise<T> {
+/**
+ * One bounded API exchange (PAC-83: one request, never re-sent here). `headers`
+ * adds request headers to the call (PAC-82: the booking's Idempotency-Key); a
+ * JSON body still sets Content-Type.
+ */
+export async function requestApi<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  query?: Record<string, string | undefined>,
+  boundMs: number = CLIENT_REQUEST_BOUND_MS,
+  headers?: Record<string, string>,
+): Promise<T> {
   const url = new URL(API_BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (v != null && v !== "") url.searchParams.set(k, v);
     }
   }
+  const sent: Record<string, string> = { ...(headers ?? {}) };
+  if (body) sent["Content-Type"] = "application/json";
   const { res, text } = await boundedExchange(
     url.toString(),
     {
       method,
-      headers: body ? { "Content-Type": "application/json" } : undefined,
+      headers: Object.keys(sent).length > 0 ? sent : undefined,
       body: body ? JSON.stringify(body) : undefined,
       credentials: "include",
     },

@@ -536,15 +536,26 @@ export const schedulingLinksApi = {
   // confirmed!" for a booking that does not exist. Preview data is used only
   // in an explicit demo session; otherwise the real call's error reaches the
   // page, which already says it can't reach the scheduling service.
+  //
+  // PAC-82: `idempotencyKey` labels one booking attempt (header
+  // Idempotency-Key). The page makes a fresh key per attempt and re-sends the
+  // same key, with the same input, only for that attempt's "Try again"; the
+  // server then answers the booking that attempt saved, never a second one.
   bookSlot: (
     slug: string,
     input: { start: string; duration_minutes: number; name: string; email: string; notes?: string },
+    idempotencyKey?: string,
   ) =>
     demoOrReal<BookingConfirmation>("schedulingLinksApi.bookSlot", [slug, input], async () => {
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
-        const raw = await requestApi<BackendBooking>("POST", `/book/${slug}`, {
-          name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes,
-        });
+        const raw = await requestApi<BackendBooking>(
+          "POST",
+          `/book/${slug}`,
+          { name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes },
+          undefined,
+          undefined,
+          idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+        );
         const link = publicLinkCache.get(slug);
         return {
           id: raw.id, link_slug: raw.link_slug ?? slug, title: raw.title ?? link?.title ?? slug,
@@ -554,3 +565,19 @@ export const schedulingLinksApi = {
         };
       }),
 };
+
+/**
+ * PAC-82 (spec D-8): a fresh key for one booking attempt, a random UUID (v4
+ * form) from the platform's cryptographic generator. It fits the contract's
+ * Idempotency-Key format (16 to 255 of A-Z a-z 0-9 - _). getRandomValues,
+ * unlike randomUUID, also exists outside a secure context. Kept in page
+ * memory only: never stored.
+ */
+export function newBookingAttemptKey(): string {
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
