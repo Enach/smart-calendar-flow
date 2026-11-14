@@ -2,9 +2,17 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
-import { fetchSsoStepupOptions, ssoStepupStartUrl, type SsoStepupOffer } from "@/api/client";
+import {
+  ApiRequestCancelledError,
+  fetchSsoStepupOptions,
+  isApiHttpError,
+  ssoStepupStartUrl,
+  type SsoStepupOffer,
+} from "@/api/client";
+import { isDemoSession } from "@/api/demoGate";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { isSsoStepupLanding } from "@/lib/orgAI";
-import type { SsoStepupProvider } from "@/api/generated/schemas";
+import { SsoWriteMembershipRequired, type SsoStepupProvider } from "@/api/generated/schemas";
 
 // PAC-50 AC-25 (owner, 2026-10-27; spec §9 D-11, D-13): the optional SSO
 // administrator step-up can be started from Settings at any time. The values
@@ -18,14 +26,23 @@ const PROVIDER_NAMES: Record<SsoStepupProvider, string> = {
   microsoft: "Microsoft 365",
 };
 
-/** What each known `without_stepup` code means. Unknown codes are not shown. */
-const WITHOUT_STEPUP_TEXT: Record<string, string> = {
+/**
+ * What each known `without_stepup` code means. Unknown codes are not shown.
+ * A Map, so only its own keys are found: a code such as `constructor` is
+ * unknown, never Object's prototype (PAC-75 contract md 5.3).
+ */
+const WITHOUT_STEPUP_TEXT = new Map<string, string>(Object.entries({
   sso_configuration_writes:
     "Without it, nobody in your organisation can create, replace or delete its single sign-on (SSO) configuration in Paceday, except a deployment operator on the break-glass list.",
-};
+}));
 
-/** The callback's denial reasons (contract ssoAdminStepupCallback), in plain words. */
-const DENIAL_TEXT: Record<string, string> = {
+/**
+ * The callback's denial reasons (contract ssoAdminStepupCallback, the ten
+ * values of its Location pattern), in plain words. A Map, so a `reason` that
+ * names a built-in object property (`constructor`, `__proto__`, ...) is an
+ * unknown reason, shown as a denial without detail (PAC-75 contract md 5.1).
+ */
+const DENIAL_TEXT = new Map<string, string>(Object.entries({
   state_mismatch: "the confirmation could not be matched to your session. Start it again from this page.",
   token_invalid: "the sign-in was cancelled, or the provider's answer could not be verified.",
   no_hd: "the Google account you used is not a Google Workspace account.",
@@ -36,7 +53,8 @@ const DENIAL_TEXT: Record<string, string> = {
   not_admin: "the account you used is not an administrator of your organisation.",
   identity_mismatch:
     "the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
-};
+  unavailable: "the confirmation could not be completed in time, so nothing was granted. Start it again from this page.",
+}));
 
 function StepupOutcome() {
   const [params] = useSearchParams();
@@ -54,7 +72,7 @@ function StepupOutcome() {
     );
   }
   if (stepup === "denied") {
-    const reason = DENIAL_TEXT[params.get("reason") ?? ""];
+    const reason = DENIAL_TEXT.get(params.get("reason") ?? "");
     return (
       <div role="status" className="mb-4 flex gap-2 rounded-lg border border-border bg-background p-3 text-sm text-foreground">
         <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
@@ -67,7 +85,7 @@ function StepupOutcome() {
 
 function StepupEntry({ offer }: { offer: SsoStepupOffer }) {
   const [chosen, setChosen] = useState<SsoStepupProvider | null>(null);
-  const losses = offer.withoutStepup.map((code) => WITHOUT_STEPUP_TEXT[code]).filter((t): t is string => !!t);
+  const losses = offer.withoutStepup.map((code) => WITHOUT_STEPUP_TEXT.get(code)).filter((t): t is string => !!t);
 
   return (
     <div className="space-y-3 text-sm text-foreground">
@@ -139,16 +157,38 @@ function StepupEntry({ offer }: { offer: SsoStepupOffer }) {
 }
 
 /**
+ * The options request failed with the documented no-organisation answer: a
+ * 403 whose body is SsoWriteMembershipRequired (`org membership required` or
+ * `org not found`). That user is offered nothing (PAC-75 contract md 5.4).
+ */
+function isNoOrganisation(error: unknown): boolean {
+  return isApiHttpError(error) && error.status === 403 && SsoWriteMembershipRequired.safeParse(error.data).success;
+}
+
+/**
  * The Settings section for the SSO administrator step-up. Rendered for every
  * signed-in user; it shows the step-up outcome on return from the callback,
  * and offers the entry point only when the options endpoint answers 200 (a
- * user with no organisation gets 403 and is offered nothing).
+ * user with no organisation gets 403 and is offered nothing). Any other
+ * failure of the options request is said in an error line, never hidden
+ * (PAC-75 contract md 5.4); a demo session shows nothing and asks nothing
+ * (md 5.5).
  */
 export function SsoAdminStepupSection() {
-  const options = useQuery({ queryKey: ["sso-stepup-options"], queryFn: () => fetchSsoStepupOptions(), retry: false });
+  const demo = isDemoSession();
+  const options = useQuery({
+    queryKey: ["sso-stepup-options"],
+    queryFn: () => fetchSsoStepupOptions(),
+    retry: false,
+    enabled: !demo,
+  });
   const [params] = useSearchParams();
   const hasOutcome = isSsoStepupLanding(params);
-  if (!options.data && !hasOutcome) return null;
+  if (demo) return null;
+  const error = options.error;
+  const cancelled = error instanceof ApiRequestCancelledError;
+  const showError = !!error && !cancelled && !isNoOrganisation(error);
+  if (!options.data && !hasOutcome && !showError) return null;
 
   return (
     <section
@@ -164,6 +204,11 @@ export function SsoAdminStepupSection() {
       </div>
       <StepupOutcome />
       {options.data && <StepupEntry offer={options.data} />}
+      {showError && (
+        <p data-testid="sso-stepup-options-error" className="text-sm text-destructive">
+          Administrator confirmation options could not be loaded. <ApiErrorText error={error} effect="read" />
+        </p>
+      )}
     </section>
   );
 }

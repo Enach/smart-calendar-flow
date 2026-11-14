@@ -249,3 +249,70 @@ describe("OrganizationAISection (PAC-73 Part 2)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Sign in again");
   });
 });
+
+// PAC-75 (contract md 5.1-5.3): own-key lookups on the organisation-AI
+// landing and in its step-up explanation; the `unavailable` reason (PAC-95).
+describe("OrganizationAISection (PAC-75)", () => {
+  const PROTOTYPE_KEYS = ["constructor", "toString", "valueOf", "hasOwnProperty", "__proto__", "isPrototypeOf"];
+  const REASONS: Record<string, string> = {
+    state_mismatch: "the confirmation could not be matched to your session. Start it again from this page.",
+    token_invalid: "the sign-in was cancelled, or the provider's answer could not be verified.",
+    no_hd: "the Google account you used is not a Google Workspace account.",
+    hd_mismatch: "the Google account you used belongs to a different Google Workspace domain than your organisation.",
+    tid_mismatch: "the Microsoft 365 organisation you used does not have your organisation's domain verified.",
+    tid_changed: "your organisation is already linked to a different Microsoft 365 organisation.",
+    email_mismatch: "the administrator account you used is not the account you are signed in to Paceday with.",
+    not_admin: "the account you used is not an administrator of your organisation.",
+    identity_mismatch:
+      "the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
+    unavailable: "the confirmation could not be completed in time, so nothing was granted. Start it again from this page.",
+  };
+  let consoleError: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    fetchMock.mockReset();
+    sent.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => consoleError.mockRestore());
+  afterAll(() => vi.unstubAllGlobals());
+
+  // AC-17
+  it.each(PROTOTYPE_KEYS)("states reason=%s on this landing as a denial without detail", async (key) => {
+    serve(configured);
+    renderAt(`/settings?stepup=denied&reason=${encodeURIComponent(key)}&purpose=llm_org_key_write`);
+    expect(await screen.findByTestId("org-ai-stepup-outcome")).toHaveTextContent(/^Administrator confirmation was denied\.$/);
+    expect(document.body.textContent).not.toMatch(/native code|function /);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  // AC-19, AC-29
+  it.each(Object.entries(REASONS))("states reason=%s on this landing in its own words", async (reason, text) => {
+    serve(configured);
+    renderAt(`/settings?stepup=denied&reason=${reason}&purpose=llm_org_key_write`);
+    expect(await screen.findByTestId("org-ai-stepup-outcome")).toHaveTextContent(`Administrator confirmation was denied: ${text}`);
+  });
+
+  // AC-18
+  it("explains only the known without_stepup codes, never a prototype's", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url === `${API}/organization/ai` && method === "GET") return json(configured);
+      if (url.startsWith(`${API}/admin/sso/stepup/options`)) {
+        return json({
+          stepup_url: "/api/admin/sso/stepup",
+          stepup_scopes: { google: [GOOGLE_SCOPE] },
+          without_stepup: [...PROTOTYPE_KEYS, "organization_ai_configuration_writes"],
+        });
+      }
+      return json({ error: "unexpected " + method + " " + url }, 599);
+    });
+    renderAt();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const explain = await screen.findByTestId("org-ai-stepup");
+    expect(explain).toHaveTextContent("nobody in your organisation can change its AI provider");
+    expect(document.body.textContent).not.toMatch(/native code|function /);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+});
