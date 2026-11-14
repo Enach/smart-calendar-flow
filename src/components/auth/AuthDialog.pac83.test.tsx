@@ -4,7 +4,7 @@
  * initial view of a non-production build only; a slow pre-sign-in check does
  * not block a sign-in.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -21,6 +21,7 @@ vi.mock("@/contexts/useAuth", () => ({
 import { AuthDialog } from "./AuthDialog";
 import { API_MESSAGES } from "@/api/client";
 import { resetApiAvailability } from "@/lib/api";
+import { findButton } from "@/test/findButton";
 
 const fetchMock = vi.fn<typeof fetch>();
 const assigned: string[] = [];
@@ -75,6 +76,15 @@ async function expectErrorViewWithoutDemo() {
 }
 
 describe("PAC-83 sign-in dialog", () => {
+  // PAC-117: the demo entry is a lazy chunk. Loaded on demand, the first test
+  // to show it also waits for Vite to transform that chunk, which under
+  // full-suite load used most of findBy's 1 s. Loading it here first means the
+  // dialog's own lazy import resolves from the module cache, so the waits below
+  // time the dialog, not the transform. The entry still renders only through
+  // the dialog's lazy/Suspense path, and AC-15d still checks the flag hides it.
+  beforeAll(async () => {
+    await import("@/demo/DemoEntry");
+  });
   beforeEach(() => {
     fetchMock.mockReset();
     enterDemo.mockReset();
@@ -112,7 +122,7 @@ describe("PAC-83 sign-in dialog", () => {
   it("AC-14: an unreachable health check before Google sign-in shows an error with a retry, never the demo; retry re-probes", async () => {
     serve({ "/api/health": down });
     renderDialog();
-    fireEvent.click(await screen.findByRole("button", { name: /continue with google/i }));
+    fireEvent.click(await findButton(/continue with google/i));
     await expectErrorViewWithoutDemo();
 
     // A failed probe is not cached: "Try again" re-probes, and a now-healthy server proceeds.
@@ -124,7 +134,7 @@ describe("PAC-83 sign-in dialog", () => {
   it("a11y: the failure view takes the focus (the step that held it is hidden)", async () => {
     serve({ "/api/health": down });
     renderDialog();
-    fireEvent.click(await screen.findByRole("button", { name: /continue with google/i }));
+    fireEvent.click(await findButton(/continue with google/i));
     const heading = await screen.findByTestId("sign-in-failure-heading");
     await waitFor(() => expect(heading).toHaveFocus());
   });
@@ -162,7 +172,7 @@ describe("PAC-83 sign-in dialog", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     serve({ "/api/health": () => new Promise((r) => setTimeout(() => r(json({ status: "ok" })), 3_000)) });
     renderDialog();
-    fireEvent.click(await screen.findByRole("button", { name: /continue with google/i }));
+    fireEvent.click(await findButton(/continue with google/i));
     await vi.advanceTimersByTimeAsync(3_000);
     await waitFor(() => expect(assigned).toEqual(["https://api.paceday.test/api/auth/google"]));
     expect(screen.queryByTestId("api-error")).not.toBeInTheDocument();
@@ -188,9 +198,9 @@ describe("PAC-83 sign-in dialog", () => {
 
     vi.stubGlobal("__PACEDAY_DEMO_BUILD__", false);
     renderDialog();
-    await screen.findByRole("button", { name: /continue with google/i });
+    const google = await findButton(/continue with google/i);
     await expect(screen.findByTestId("demo-entry", {}, { timeout: 300 })).rejects.toThrow();
-    fireEvent.click(screen.getByRole("button", { name: /continue with google/i }));
+    fireEvent.click(google);
     await screen.findByTestId("api-error");
     expect(screen.queryByTestId("demo-entry")).not.toBeInTheDocument();
   });
