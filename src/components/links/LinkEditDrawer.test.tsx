@@ -45,7 +45,12 @@ describe("LinkEditDrawer booking horizon and refusal message (PAC-72)", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("shows the link's settings and its zone, and saves the edited ones", async () => {
-    const update = vi.spyOn(schedulingLinksApi, "updateLink").mockResolvedValue({ ...link, booking_horizon_days: 90, refusal_message: "specific" });
+    // PAC-112: the editor reads its co-host baseline from the strict single-link read.
+    vi.spyOn(schedulingLinksApi, "getLink").mockResolvedValue(link);
+    const update = vi.spyOn(schedulingLinksApi, "updateLink").mockResolvedValue({
+      link: { ...link, booking_horizon_days: 90, refusal_message: "specific" },
+      co_host_list_sent: false,
+    });
     renderDrawer(link);
 
     const horizon = screen.getByLabelText("How far ahead visitors can book") as HTMLInputElement;

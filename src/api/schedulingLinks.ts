@@ -12,6 +12,7 @@ import type { components, operations } from "./generated/types";
 import {
   ArchivedSchedulingLinkDetail as ArchivedSchedulingLinkDetailSchema,
   ArchivedSchedulingLinkListResponse as ArchivedSchedulingLinkListResponseSchema,
+  SchedulingLinkCoHostChanges as SchedulingLinkCoHostChangesSchema,
 } from "./generated/schemas";
 import type { ArchivedSchedulingLinkDetail, ArchivedSchedulingLinkListResponse } from "./types";
 import {
@@ -66,7 +67,37 @@ type BackendSchedulingLink = {
     is_owner?: boolean;
     status: string;
   }>;
+  /** PAC-112: present on a create/PATCH answer exactly when the request carried co_host_emails. */
+  co_host_changes?: unknown;
 };
+
+/** PAC-112 (contract §2.1): what a save did to each listed address, and who it removed. */
+export type SchedulingLinkCoHostChanges = components["schemas"]["SchedulingLinkCoHostChanges"];
+
+/**
+ * PAC-112: the answer to a create or update. `link` is the server's answer
+ * (its roster is built non-strictly, so it is never a co-host baseline, contract
+ * §5.1). `co_host_changes` is the server's report, absent when no list was sent,
+ * or when a server without PAC-112 answered a save that sent one (§5.3 fallback).
+ */
+export interface SchedulingLinkSaveResult {
+  link: SchedulingLink;
+  co_host_changes?: SchedulingLinkCoHostChanges;
+  /** True when the request carried `co_host_emails`. */
+  co_host_list_sent: boolean;
+}
+
+/**
+ * The report from a save's answer, parsed strictly with the generated schema.
+ * A report that does not parse is treated as absent: the editor then says it
+ * could not confirm the co-hosts (contract §5.3 fallback) rather than inventing
+ * outcomes, and the save itself, which succeeded, is never reported as failed.
+ */
+function coHostChangesOf(raw: BackendSchedulingLink): SchedulingLinkCoHostChanges | undefined {
+  if (raw.co_host_changes === undefined || raw.co_host_changes === null) return undefined;
+  const parsed = SchedulingLinkCoHostChangesSchema.safeParse(raw.co_host_changes);
+  return parsed.success ? parsed.data : undefined;
+}
 
 /** The current-user read (CurrentUserResponse); the picture is `avatarUrl` there (PAC-35). */
 type BackendUser = { id: string; email: string; name?: string; avatarUrl?: string };
@@ -183,14 +214,6 @@ function backendLinkBody(input: {
 
 
 const publicLinkCache = new Map<string, PublicLinkInfo>();
-
-/**
- * A co-host the server has not listed yet (its invite is still being sent):
- * shown by address only — never with a name from anywhere else.
- */
-function pendingHost(email: string): SchedulingHost {
-  return { email, is_owner: false, status: "pending" };
-}
 
 /** Query keys shared by every scheduling-link consumer. */
 export const schedulingLinkKeys = {
@@ -337,27 +360,41 @@ export const schedulingLinksApi = {
   declineInvite: (linkId: string) =>
     demoOrReal<void>("schedulingLinksApi.declineInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/decline`)),
 
+  /**
+   * PAC-112 (contract §5.1): GET /scheduling-links/{id}, the strict single-link
+   * read. It answers 500 rather than a degraded roster (PAC-25), so it is the
+   * only read the link editor takes its co-host baseline from.
+   */
+  getLink: (id: string) =>
+    demoOrReal<SchedulingLink>("schedulingLinksApi.getLink", [id], async () => {
+        const [detail, user] = await Promise.all([
+          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`),
+          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
+        ]);
+        return normalizeSchedulingLink(detail, user);
+      }),
+
+  /**
+   * POST /scheduling-links/. PAC-112: `co_host_emails` is sent only when the
+   * caller passes it (the editor passes it only when the list changed, `[]`
+   * included), in the same request as the fields. The answer's
+   * `co_host_changes` is returned as the server gave it; no host is padded in.
+   */
   createLink: (input: {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
-    max_uses?: number; co_host_emails: string[];
+    max_uses?: number; co_host_emails?: string[];
     booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
   }) => {
     assertValidLinkBody(input);
-    return demoOrReal<SchedulingLink>("schedulingLinksApi.createLink", [input], async () => {
-        const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", backendLinkBody(input));
-
-        await Promise.allSettled(input.co_host_emails.map((email) =>
-          requestApi("POST", `/scheduling-links/${raw.id}/hosts`, { email }),
-        ));
-        const [user, detail] = await Promise.all([
-          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
-          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${raw.id}`),
-        ]);
-        const link = normalizeSchedulingLink(detail, user);
-        const existing = new Set(link.hosts.map((host) => host.email.toLowerCase()));
-        link.hosts.push(...input.co_host_emails.filter((email) => !existing.has(email.toLowerCase())).map((email) => pendingHost(email)));
-        return link;
+    return demoOrReal<SchedulingLinkSaveResult>("schedulingLinksApi.createLink", [input], async () => {
+        const listSent = input.co_host_emails !== undefined;
+        const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", {
+          ...backendLinkBody(input),
+          ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
+        });
+        const user = await requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined);
+        return { link: normalizeSchedulingLink(raw, user), co_host_changes: coHostChangesOf(raw), co_host_list_sent: listSent };
       });
   },
 
@@ -368,7 +405,7 @@ export const schedulingLinksApi = {
     max_uses: number | undefined; active: boolean; co_host_emails: string[];
     booking_horizon_days: number; refusal_message: BookingRefusalMessage;
   }>) =>
-    demoOrReal<SchedulingLink>("schedulingLinksApi.updateLink", [id, input], async () => {
+    demoOrReal<SchedulingLinkSaveResult>("schedulingLinksApi.updateLink", [id, input], async () => {
         const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
         const merged: LinkFormValues = {
           title: input.title ?? current.title,
@@ -387,29 +424,16 @@ export const schedulingLinksApi = {
           refusal_message: input.refusal_message ?? current.refusal_message,
         };
         assertValidLinkBody(merged);
-        const body = backendLinkBody({ ...merged, active: input.active });
-        await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
-
-        if (input.co_host_emails) {
-          // Invite only people who are not hosts yet. Re-inviting an existing
-          // co-host used to reset an accepted one to pending, dropping their
-          // calendar from the link's slots (PAC-61); the server no longer does
-          // that, but there is no reason to send the request at all.
-          const existing = new Set((current.hosts ?? []).map((h) => h.email.toLowerCase()));
-          const added = input.co_host_emails.filter((email) => !existing.has(email.trim().toLowerCase()));
-          await Promise.allSettled(added.map((email) =>
-            requestApi("POST", `/scheduling-links/${id}/hosts`, { email }),
-          ));
-        }
-        const [user, detail] = await Promise.all([
-          requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
-          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`),
-        ]);
-        const link = normalizeSchedulingLink(detail, user);
-        for (const email of input.co_host_emails ?? []) {
-          if (!link.hosts.some((host) => host.email.toLowerCase() === email.toLowerCase())) link.hosts.push(pendingHost(email));
-        }
-        return link;
+        // PAC-112: the co-host list travels in the PATCH itself (one request,
+        // all or nothing, PAC-101); absent when the caller did not pass it.
+        const listSent = input.co_host_emails !== undefined;
+        const body = {
+          ...backendLinkBody({ ...merged, active: input.active }),
+          ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
+        };
+        const raw = await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
+        const user = await requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined);
+        return { link: normalizeSchedulingLink(raw, user), co_host_changes: coHostChangesOf(raw), co_host_list_sent: listSent };
       }),
 
   deleteLink: (id: string) =>

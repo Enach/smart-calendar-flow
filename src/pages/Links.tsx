@@ -381,7 +381,7 @@ export default function LinksPage() {
   const updateLink = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
       schedulingLinksApi.updateLink(id, { active }),
-    onSuccess: (link) => {
+    onSuccess: ({ link }) => {
       toast.success(link.active ? "Link activated" : "Link paused");
       invalidateAll();
     },

@@ -22,7 +22,9 @@ const PROPOSAL = { eventId: "evt-1", title: "Sync", currentStart: "2026-11-02T10
 const PARSE = { intent: "schedule_meeting", title: "Sync", suggested_slots: [{ start: "2026-11-02T09:00:00Z", end: "2026-11-02T09:30:00Z", score: 1, reasons: [] }] } as unknown as ParseResult;
 const LINK = {
   title: "Intro", slug: "intro", durations: [30], days: ["mon" as const], window_start: "09:00", window_end: "17:00",
-  buffer_before: 0, buffer_after: 0, min_notice_minutes: 0, usage_type: "reusable" as const, co_host_emails: [],
+  buffer_before: 0, buffer_after: 0, min_notice_minutes: 0, usage_type: "reusable" as const,
+  // PAC-112: a list is sent only when it changed; `[]` is the changed-to-empty list.
+  co_host_emails: [] as string[],
 };
 
 /**
@@ -69,6 +71,7 @@ const OPERATION_SAMPLES: Record<string, { args: unknown[] }> = {
   "schedulingLinksApi.listInvites": { args: [] },
   "schedulingLinksApi.acceptInvite": { args: ["l1"] },
   "schedulingLinksApi.declineInvite": { args: ["l1"] },
+  "schedulingLinksApi.getLink": { args: ["l1"] },
   "schedulingLinksApi.createLink": { args: [LINK] },
   "schedulingLinksApi.updateLink": { args: ["l1", { title: "x" }] },
   "schedulingLinksApi.deleteLink": { args: ["l1"] },
