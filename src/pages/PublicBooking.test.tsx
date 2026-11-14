@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { findTimeButton, pickFirstSelectableDay } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
 import { ApiHttpError } from "@/api/client";
 import type { BookingRateLimitError, BookingSlotUnavailableError } from "@/api/generated/schemas";
@@ -40,21 +41,10 @@ describe("PublicBooking", () => {
     );
 
     renderPage();
-    await screen.findByRole("heading", { name: "Intro call" });
-
     // Any selectable future day; the mocked slots don't depend on which.
-    // PAC-88: days become selectable once the day overview answers.
-    const day = await vi.waitFor(() => {
-      const d = within(screen.getByRole("grid"))
-        .getAllByRole("button")
-        .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
-      if (!d) throw new Error("no selectable day yet");
-      return d;
-    });
-    expect(day).toBeDefined();
-    fireEvent.click(day!);
+    await pickFirstSelectableDay();
 
-    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    fireEvent.click(await findTimeButton());
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Slow Booker" } });
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "slow@co.com" } });
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
@@ -76,8 +66,8 @@ describe("PublicBooking", () => {
     vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(409, specific));
 
     renderPage();
-    await pickFirstDay();
-    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    await pickFirstSelectableDay();
+    fireEvent.click(await findTimeButton());
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Booker" } });
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "booker@co.com" } });
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
@@ -115,20 +105,6 @@ function pac88Answer(params: PublicSlotsParams) {
   return { ...base, slots: [], available_dates: days };
 }
 
-async function pickFirstDay() {
-  await screen.findByRole("heading", { name: "Intro call" });
-  // PAC-88: days become selectable once the day overview answers.
-  const day = await vi.waitFor(() => {
-    const d = within(screen.getByRole("grid"))
-      .getAllByRole("button")
-      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
-    if (!d) throw new Error("no selectable day yet");
-    return d;
-  });
-  expect(day).toBeDefined();
-  fireEvent.click(day!);
-}
-
 // PAC-105: the link was deleted or paused after the page loaded. The server
 // answers the first send with 404 {"error":"not found"} and writes nothing.
 describe("PublicBooking link gone on submit (PAC-105)", () => {
@@ -144,8 +120,8 @@ describe("PublicBooking link gone on submit (PAC-105)", () => {
     const toastError = vi.spyOn(toast, "error");
 
     renderPage();
-    await pickFirstDay();
-    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    await pickFirstSelectableDay();
+    fireEvent.click(await findTimeButton());
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Late Booker" } });
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "late@co.com" } });
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
@@ -190,8 +166,8 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     const toastError = vi.spyOn(toast, "error");
 
     renderPage();
-    await pickFirstDay();
-    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    await pickFirstSelectableDay();
+    fireEvent.click(await findTimeButton());
     fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Eager Booker" } });
     fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "eager@co.com" } });
     fireEvent.change(screen.getByLabelText(/notes/i), { target: { value: "About the demo" } });
@@ -222,7 +198,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     });
 
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
 
     expect(await screen.findByText(/too many requests for available times/i)).toBeInTheDocument();
     expect(screen.getByText(/wait a minute/i)).toBeInTheDocument();
@@ -230,7 +206,7 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     expect(slotsSpy.mock.calls.filter(([, p]) => p.date).length).toBe(1);
 
     fireEvent.click(screen.getByRole("button", { name: /try again/i } /* PAC-83: the manual retry is labelled "Try again" (spec §3.4) */));
-    expect(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ })).toBeInTheDocument();
+    expect(await findTimeButton()).toBeInTheDocument();
     expect(screen.queryByText(/too many requests for available times/i)).not.toBeInTheDocument();
   });
 });

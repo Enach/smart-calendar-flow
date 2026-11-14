@@ -9,6 +9,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { findTimeButton, pickFirstSelectableDay } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
 import { API_MESSAGES } from "@/api/client";
 import { addDaysToKey, dateKeyInZone } from "@/lib/timeZone";
@@ -64,21 +65,8 @@ function renderPage(slug = "intro") {
   );
 }
 
-async function pickFirstDay() {
-  await screen.findByRole("heading", { name: "Intro call" });
-  // PAC-88: days become selectable once the day overview answers.
-  const day = await vi.waitFor(() => {
-    const d = within(screen.getByRole("grid"))
-      .getAllByRole("button")
-      .find((b) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true");
-    if (!d) throw new Error("no selectable day yet");
-    return d;
-  });
-  fireEvent.click(day!);
-}
-
 async function fillAndSubmit() {
-  fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+  fireEvent.click(await findTimeButton());
   fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Booker" } });
   fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "booker@co.com" } });
   fireEvent.change(screen.getByLabelText(/notes/i), { target: { value: "Agenda" } });
@@ -149,7 +137,7 @@ describe("PAC-83 public booking", () => {
       throw new TypeError("Failed to fetch");
     };
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     const notice = await screen.findByTestId("api-error");
     expect(notice).toHaveAttribute("data-error-kind", "lost");
     expect(screen.getByTestId("api-error-retry")).toBeInTheDocument();
@@ -164,7 +152,7 @@ describe("PAC-83 public booking", () => {
       return new Promise((r) => setTimeout(() => r(slotsAnswer(url)), 20_000));
     };
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(7_000);
     });
@@ -177,7 +165,7 @@ describe("PAC-83 public booking", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(12_000);
     });
-    expect(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ })).toBeInTheDocument();
+    expect(await findTimeButton()).toBeInTheDocument();
     expect(screen.queryByTestId("still-working")).not.toBeInTheDocument();
   });
 
@@ -189,7 +177,7 @@ describe("PAC-83 public booking", () => {
       throw new TypeError("Failed to fetch");
     });
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fillAndSubmit();
     const notice = await screen.findByTestId("api-error");
     expect(notice).toHaveAttribute("data-effect", "booking");
@@ -204,7 +192,7 @@ describe("PAC-83 public booking", () => {
     expect(calls("POST", "/api/book/intro")).toBe(1);
     await vi.waitFor(() => expect(dayCalls()).toBe(2));
     // Re-picking keeps the typed details.
-    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    fireEvent.click(await findTimeButton());
     expect(screen.getByLabelText("Name", { exact: true })).toHaveValue("Booker");
     expect(screen.getByLabelText("Email", { exact: true })).toHaveValue("booker@co.com");
     expect(screen.getByLabelText(/notes/i)).toHaveValue("Agenda");
@@ -219,7 +207,7 @@ describe("PAC-83 public booking", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     serveBooking(() => new Promise<Response>(() => {}));
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fillAndSubmit();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(9_000);
@@ -248,7 +236,7 @@ describe("PAC-83 public booking", () => {
   ])("AC-22: %s says the booking may have been saved, never 'not made'", async (_label, answer) => {
     serveBooking(answer);
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fillAndSubmit();
     const notice = await screen.findByTestId("api-error");
     expect(notice).toHaveTextContent(API_MESSAGES.lostBooking);
@@ -260,7 +248,7 @@ describe("PAC-83 public booking", () => {
   it("AC-23: the budget 503 says the booking was not made; one request until the booker presses Book again", async () => {
     serveBooking(() => json({ error: "request timed out" }, 503));
     renderPage();
-    await pickFirstDay();
+    await pickFirstSelectableDay();
     await fillAndSubmit();
     const notice = await screen.findByTestId("api-error");
     expect(notice).toHaveAttribute("data-error-kind", "budget");
