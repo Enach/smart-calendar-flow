@@ -41,13 +41,23 @@ function options(scopes: Record<string, string[]>, without = ["sso_configuration
 
 function renderAt(path = "/settings") {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <SsoAdminStepupSection />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, qc };
+}
+
+/**
+ * Waits until the options request has failed and React Query has settled on
+ * it, so an assertion about what is shown is about the failure, not about the
+ * loading state, which also renders nothing (PAC-75 review F2).
+ */
+async function optionsFailed(qc: QueryClient) {
+  await waitFor(() => expect(qc.getQueryState(["sso-stepup-options"])?.status).toBe("error"));
 }
 
 describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
@@ -122,9 +132,11 @@ describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
 
   it("offers no entry point to a user without an organisation (403)", async () => {
     serveOptions(403, { error: "org membership required" });
-    const { container } = renderAt();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    const { container, qc } = renderAt();
+    await optionsFailed(qc);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("states a granted outcome and makes no write on return", async () => {
@@ -269,9 +281,11 @@ describe("SsoAdminStepupSection (PAC-75)", () => {
   // AC-21
   it.each(["org membership required", "org not found"])("shows nothing for the no-organisation 403 (%s)", async (error) => {
     serveOptions(403, { error });
-    const { container } = renderAt();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    const { container, qc } = renderAt();
+    await optionsFailed(qc);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
+    expect(container).toBeEmptyDOMElement();
   });
 
   // AC-22
@@ -294,9 +308,9 @@ describe("SsoAdminStepupSection (PAC-75)", () => {
 
   it("shows the outcome without an error line for the no-organisation 403 on return", async () => {
     serveOptions(403, { error: "org not found" });
-    renderAt("/settings?stepup=denied&reason=not_admin");
+    const { qc } = renderAt("/settings?stepup=denied&reason=not_admin");
     expect(await screen.findByText(`Administrator confirmation was denied: ${PAC75_REASONS.not_admin}`)).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await optionsFailed(qc);
     expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
   });
 
