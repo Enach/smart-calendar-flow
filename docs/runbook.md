@@ -7,6 +7,19 @@ cp .env.example .env
 docker compose up --wait
 ```
 
+## Error monitoring (Sentry, build-time)
+
+Web error monitoring is **off unless the image is built with a DSN** (PAC-86):
+there is no built-in default.
+
+| Variable | Where | Effect |
+|---|---|---|
+| `VITE_SENTRY_DSN` | frontend **build** (Vite inlines it) | Empty/unset: monitoring off, `Sentry.init` never runs. Set: errors go to that Sentry project, `environment` = the Vite mode. |
+| `NGINX_CSP_SENTRY_ORIGIN` | api repo, nginx runtime | Must be the origin (`scheme://host`) of that DSN so the CSP `connect-src` allows it. Empty by default: no Sentry origin is allowed. |
+
+Set both together, or neither. Changing the DSN needs a rebuild of the web
+image; changing the origin needs an nginx restart.
+
 ## Logs
 
 ```bash
