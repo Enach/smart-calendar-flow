@@ -14,36 +14,96 @@
  *
  * The time and day buttons are named by their `aria-label` (spec 3.9 / AC-27:
  * date, time, zone and offset), so `*ByLabelText` with `selector: "button"`
- * finds the same elements by the same accessible name without the
- * computed-style walk. Assertions about roles and names stay with `*ByRole`
- * where a test is about them; these helpers only drive the page.
+ * finds the same candidates by the same accessible name without walking
+ * every button of the page. The visibility check the role query made is kept,
+ * run only on the elements the label matched: the time helpers fail on a
+ * hidden or aria-hidden button, and hidden days are never picked. Assertions
+ * about roles and names stay with `*ByRole` where a test is about them.
  */
 import { fireEvent, screen, within } from "@testing-library/react";
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 
-/** A time button's accessible name carries a clock time ("…, 9:00 AM, UTC UTC+00:00"). */
-export const TIME_LABEL = /\d{1,2}:\d{2}/;
+/**
+ * What the role query's visibility check excluded: an element (or an
+ * ancestor) with `hidden`, `aria-hidden="true"`, `display: none` or
+ * `visibility: hidden`. Run only on the few elements a label query matched,
+ * never on every button of the page; `seen` shares ancestors' answers within
+ * one pass, as the role query does.
+ */
+function isExposed(el: Element, seen = new Map<Element, boolean>()): boolean {
+  const path: Element[] = [];
+  let ok = true;
+  for (let e: Element | null = el; e; e = e.parentElement) {
+    const known = seen.get(e);
+    if (known !== undefined) {
+      ok = known;
+      break;
+    }
+    path.push(e);
+    const style = getComputedStyle(e);
+    if (
+      e.hasAttribute("hidden") ||
+      e.getAttribute("aria-hidden") === "true" ||
+      style.display === "none" ||
+      style.visibility === "hidden"
+    ) {
+      ok = false;
+      break;
+    }
+  }
+  for (const e of path) seen.set(e, ok);
+  return ok;
+}
 
-/** Every time button on the page, now. */
-export const queryTimeButtons = (label: RegExp = TIME_LABEL) =>
-  screen.queryAllByLabelText(label, { selector: "button" });
+/** Fails the test unless `el` is visible and not hidden from assistive technology. */
+function expectExposed(el: HTMLElement) {
+  expect(el).toBeVisible();
+  expect(el.closest('[aria-hidden="true"]')).toBeNull();
+}
 
-/** Every time button, once at least one is shown. */
-export const findTimeButtons = (label: RegExp = TIME_LABEL) =>
-  screen.findAllByLabelText(label, { selector: "button" });
+/**
+ * A time button's accessible name carries the clock time followed by the
+ * zone ("Monday, January 11, 2027, 5:00 PM, Asia/Tokyo UTC+09:00"). The
+ * trailing "M," keeps the zone offset ("UTC+09:00") from matching on its own.
+ */
+export const TIME_LABEL = /\d{1,2}:\d{2}\s[AP]M,/;
 
-/** The only time button, once it is shown (fails on more than one, like findByRole). */
-export const findTimeButton = (label: RegExp = TIME_LABEL) =>
-  screen.findByLabelText(label, { selector: "button" });
+/** Every exposed time button on the page, now (hidden ones are left out, as a role query would). */
+export const queryTimeButtons = (label: RegExp = TIME_LABEL) => {
+  const seen = new Map<Element, boolean>();
+  return screen.queryAllByLabelText(label, { selector: "button" }).filter((b) => isExposed(b, seen));
+};
 
-/** The month grid's day buttons. */
-export const dayButtons = (): HTMLElement[] => Array.from(screen.getByRole("grid").querySelectorAll("button"));
+/** Every time button, once at least one is shown; fails if any of them is hidden. */
+export async function findTimeButtons(label: RegExp = TIME_LABEL): Promise<HTMLElement[]> {
+  const buttons = await screen.findAllByLabelText(label, { selector: "button" });
+  buttons.forEach(expectExposed);
+  return buttons;
+}
+
+/** The only time button, once it is shown (fails on more than one, like findByRole, and if it is hidden). */
+export async function findTimeButton(label: RegExp = TIME_LABEL): Promise<HTMLElement> {
+  const button = await screen.findByLabelText(label, { selector: "button" });
+  expectExposed(button);
+  return button;
+}
+
+const allDayButtons = (): HTMLElement[] => Array.from(screen.getByRole("grid").querySelectorAll("button"));
+
+/** The month grid's exposed day buttons (hidden ones are left out, as a role query would). */
+export const dayButtons = (): HTMLElement[] => {
+  const seen = new Map<Element, boolean>();
+  return allDayButtons().filter((b) => isExposed(b, seen));
+};
 
 const selectable = (b: HTMLElement) => !b.hasAttribute("disabled") && b.getAttribute("aria-disabled") !== "true";
 
-/** The month grid's day button whose label matches `name`. */
-export const dayButton = (name: RegExp): HTMLElement =>
-  within(screen.getByRole("grid")).getByLabelText(name, { selector: "button" });
+/** The month grid's day button whose label matches `name`; fails if it is hidden. */
+export const dayButton = (name: RegExp): HTMLElement => {
+  const button = within(screen.getByRole("grid")).getByLabelText(name, { selector: "button" });
+  expectExposed(button);
+  return button;
+};
 
 /**
  * Waits for the booking page to show its title. By text in the page's `h1`,
@@ -60,7 +120,9 @@ export const findPageTitle = (title: string | RegExp = "Intro call") => screen.f
 export async function pickFirstSelectableDay(title = "Intro call"): Promise<HTMLElement> {
   await findPageTitle(title);
   const day = await vi.waitFor(() => {
-    const d = dayButtons().find(selectable);
+    // Cheap attribute checks first; the visibility walk only for candidates.
+    const seen = new Map<Element, boolean>();
+    const d = allDayButtons().find((b) => selectable(b) && isExposed(b, seen));
     if (!d) throw new Error("no selectable day yet");
     return d;
   });

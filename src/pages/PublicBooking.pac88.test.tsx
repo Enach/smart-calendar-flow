@@ -286,6 +286,8 @@ describe("PAC-88 switcher on the page", () => {
     await pickDay("2027-01-11");
     const [btn] = await waitFor(() => { const b = timeButtons(); expect(b).toHaveLength(1); return b; });
     expect(norm(btn!.getAttribute("aria-label"))).toBe("Monday, January 11, 2027, 5:00 PM, Asia/Tokyo UTC+09:00");
+    // The role query, once: the button is exposed to assistive technology with this name.
+    expect(screen.getByRole("button", { name: /^Monday, January 11, 2027, 5:00\sPM, Asia\/Tokyo UTC\+09:00$/ })).toBe(btn);
     expect(btn!.className).toContain("min-h-[44px]");
     const region = screen.getByTestId("booking-tz-announcer");
     expect(region).toHaveAttribute("role", "status");
