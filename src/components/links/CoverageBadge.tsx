@@ -1,36 +1,16 @@
 import { Check, Clock, HelpCircle, Loader2, UserCheck } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { CoverageProvider, CoverageStatus } from "@/api/types";
-
 /**
- * Small status logo for the "Availability synced" badges.
- * Renders the providerʼs initial in a coloured pill — keeps the bundle tiny
- * (no SVG asset import) and matches the calm, minimal aesthetic.
+ * "On Paceday" and "Invite pending" come only from the link's own host record.
+ * "synced" and "unknown" are the two free/busy statuses the server sends; the
+ * answer does not say which calendar provider supplied the data, so the chip
+ * names none (PAC-41, API-046, D-2).
  */
-function ProviderLogo({ provider }: { provider?: CoverageProvider }) {
-  if (!provider || provider === "paceday") return null;
-  const isGoogle = provider === "google";
-  return (
-    <span
-      className={
-        "ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-[8px] font-bold leading-none " +
-        (isGoogle
-          ? "bg-white text-[#4285F4] ring-1 ring-[#4285F4]/40"
-          : "bg-white text-[#0078D4] ring-1 ring-[#0078D4]/40")
-      }
-      aria-label={isGoogle ? "Google" : "Microsoft"}
-      title={isGoogle ? "Google Calendar" : "Microsoft Outlook"}
-    >
-      {isGoogle ? "G" : "M"}
-    </span>
-  );
-}
-
 export type ChipState =
   | { kind: "loading" }
   | { kind: "paceday-accepted" }
   | { kind: "paceday-pending" }
-  | { kind: "synced"; provider?: CoverageProvider }
+  | { kind: "synced" }
   | { kind: "unknown" };
 
 interface CoverageBadgeProps {
@@ -77,12 +57,10 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
             <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-[#2F8B70]">
               <Check className="h-2.5 w-2.5" />
               Availability synced
-              <ProviderLogo provider={state.provider} />
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" className="max-w-xs text-xs">
-            We can read this person&apos;s calendar via{" "}
-            {state.provider === "outlook" ? "Microsoft Outlook" : "Google Calendar"}.
+            We can read this person&apos;s calendar.
             Slots will already exclude their busy time — no need to invite them to Paceday.
           </TooltipContent>
         </Tooltip>

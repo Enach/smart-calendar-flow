@@ -14,7 +14,6 @@ import type {
   ConferenceLink,
   ConferenceProvider,
   ConferenceProviderStatus,
-  CoverageProvider,
   CoverageStatus,
   FocusBlock,
   FocusRunBlock,
@@ -27,7 +26,7 @@ import type {
   PersonalCalendar,
   PersonalCalendarType,
   ProviderDisconnectResult,
-  Room,
+  CalendarRoom,
   Settings,
   SuggestedSlot,
   CompressionResult,
@@ -84,14 +83,18 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 
-const MOCK_ROOMS: Room[] = [
-  { id: "r1", name: "Helsinki", email: "room.helsinki@co.com", building: "HQ", floor: "3", capacity: 6 },
-  { id: "r2", name: "Reykjavik", email: "room.reykjavik@co.com", building: "HQ", floor: "3", capacity: 4 },
-  { id: "r3", name: "Oslo", email: "room.oslo@co.com", building: "HQ", floor: "2", capacity: 12 },
-  { id: "r4", name: "Stockholm", email: "room.stockholm@co.com", building: "HQ", floor: "2", capacity: 8 },
-  { id: "r5", name: "Copenhagen", email: "room.copenhagen@co.com", building: "Annex", floor: "1", capacity: 20 },
-  { id: "r6", name: "Phone Booth A", email: "room.booth-a@co.com", building: "HQ", floor: "1", capacity: 1 },
-  { id: "r7", name: "Phone Booth B", email: "room.booth-b@co.com", building: "HQ", floor: "1", capacity: 1 },
+/**
+ * Demo rooms have exactly what a live room has (PAC-41 D-5, AC-10): a name and
+ * an identifier that is a room address the live event save accepts.
+ */
+const MOCK_ROOMS: CalendarRoom[] = [
+  { id: "c_demo-helsinki@resource.calendar.google.com", name: "Helsinki" },
+  { id: "c_demo-reykjavik@resource.calendar.google.com", name: "Reykjavik" },
+  { id: "c_demo-oslo@resource.calendar.google.com", name: "Oslo" },
+  { id: "c_demo-stockholm@resource.calendar.google.com", name: "Stockholm" },
+  { id: "c_demo-copenhagen@resource.calendar.google.com", name: "Copenhagen" },
+  { id: "c_demo-phone-booth-a@resource.calendar.google.com", name: "Phone Booth A" },
+  { id: "c_demo-phone-booth-b@resource.calendar.google.com", name: "Phone Booth B" },
 ];
 
 const MOCK_DIRECTORY: Attendee[] = [
@@ -321,15 +324,6 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
 
 // ---------- Free/busy mock helper ----------
 
-const PACEDAY_DOMAINS = new Set(["paceday.com", "demo.paceday.com"]);
-const KNOWN_GOOGLE_DOMAINS = new Set(["co.com", "acme.com", "paceday.com", "demo.paceday.com"]);
-const KNOWN_OUTLOOK_DOMAINS = new Set([
-  "microsoft.com",
-  "outlook.com",
-  "hotmail.com",
-  "live.com",
-  "msn.com",
-]);
 const PERSONAL_DOMAINS = new Set([
   "gmail.com",
   "yahoo.com",
@@ -343,22 +337,23 @@ const PERSONAL_DOMAINS = new Set([
   "gmx.com",
 ]);
 
-function classifyEmail(email: string): { status: CoverageStatus; provider?: CoverageProvider } {
+/**
+ * The demo's free/busy, in the server's shape (PAC-41 D-5, AC-10): two
+ * statuses and no provider. A personal mail domain is `unknown`, as on the
+ * server; any other address is `known`, with no busy windows.
+ */
+function classifyEmail(email: string): CoverageStatus {
   const domain = email.toLowerCase().split("@")[1] ?? "";
-  if (PACEDAY_DOMAINS.has(domain)) return { status: "paceday_user", provider: "paceday" };
-  if (KNOWN_GOOGLE_DOMAINS.has(domain)) return { status: "known", provider: "google" };
-  if (KNOWN_OUTLOOK_DOMAINS.has(domain)) return { status: "known", provider: "outlook" };
-  if (PERSONAL_DOMAINS.has(domain)) return { status: "unknown" };
-  // Heuristic: any non-personal corporate domain → assume Google Workspace
-  if (domain && !domain.startsWith("@")) return { status: "known", provider: "google" };
-  return { status: "unknown" };
+  if (!domain || PERSONAL_DOMAINS.has(domain)) return "unknown";
+  return "known";
 }
 
 function mockFreebusy(input: { emails: string[]; start_time: string; end_time: string }): FreeBusyResponse {
-  const participants: ParticipantCoverage[] = input.emails.map((email) => {
-    const { status, provider } = classifyEmail(email);
-    return { email: email.toLowerCase(), status, provider };
-  });
+  const participants: ParticipantCoverage[] = input.emails.map((email) => ({
+    email: email.toLowerCase(),
+    status: classifyEmail(email),
+    busy: [],
+  }));
   return {
     start_time: input.start_time,
     end_time: input.end_time,
@@ -377,8 +372,7 @@ function coverageFromAttendees(attendees: string[] | undefined): { total: number
   const organizerCounted = 1;
   let checked = organizerCounted;
   for (const e of list) {
-    const c = classifyEmail(e);
-    if (c.status === "paceday_user" || c.status === "known") checked += 1;
+    if (classifyEmail(e) === "known") checked += 1;
   }
   return { total: list.length + organizerCounted, checked };
 }
@@ -710,32 +704,11 @@ export const demoClientOps = {
         logAudit("event.delete", `Deleted "${ev?.title ?? id}" (mock)`);
       },
 
-  searchRooms: (q: string, start?: string, end?: string) => {
+  // Like the server: a case-insensitive substring of the name or the address.
+  searchRooms: (q: string) => {
         const ql = q.trim().toLowerCase();
-        const matches = ql
-          ? MOCK_ROOMS.filter(
-              (r) =>
-                r.name.toLowerCase().includes(ql) ||
-                r.building?.toLowerCase().includes(ql) ||
-                r.email.toLowerCase().includes(ql),
-            )
-          : MOCK_ROOMS.slice();
-        const s = start ? new Date(start).getTime() : 0;
-        const e = end ? new Date(end).getTime() : 0;
-        return matches.map((r) => {
-          let available = true;
-          if (s && e) {
-            available = !mockState.events.some(
-              (ev) =>
-                ev.room_resource_email === r.email &&
-                new Date(ev.start).getTime() < e &&
-                new Date(ev.end).getTime() > s,
-            );
-            // pretend a couple are busy for demo flair
-            if (r.id === "r3" || r.id === "r6") available = false;
-          }
-          return { ...r, available };
-        });
+        if (!ql) return MOCK_ROOMS.map((r) => ({ ...r }));
+        return MOCK_ROOMS.filter((r) => r.name.toLowerCase().includes(ql) || r.id.toLowerCase().includes(ql)).map((r) => ({ ...r }));
       },
 
   suggestAttendees: (q: string) => {

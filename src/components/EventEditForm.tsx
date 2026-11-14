@@ -256,8 +256,6 @@ export function EventEditForm({ event, onBack, onClose }: EventEditFormProps) {
           <LocationPicker
             location={location}
             roomEmail={roomEmail}
-            start={start}
-            end={end}
             onChange={({ location: loc, room_resource_email }) => {
               setLocation(loc);
               setRoomEmail(room_resource_email);

@@ -16,7 +16,6 @@ import { api } from "@/api/client";
 import type {
   Attendee,
   CoverageStatus,
-  CoverageProvider,
   FreeBusyResponse,
   ParticipantCoverage,
   RsvpStatus,
@@ -98,12 +97,11 @@ export function clearFreebusyCache() {
 
 /**
  * Convenience helper for components that just want the per-email coverage
- * status (drawer chips, member badges, etc).
+ * status (drawer chips, member badges, etc). The status is all the server
+ * says: there is no provider to copy (PAC-41, API-046).
  */
-export async function getCoverageMap(
-  emails: string[],
-): Promise<Map<string, { status: CoverageStatus; provider?: CoverageProvider }>> {
-  const map = new Map<string, { status: CoverageStatus; provider?: CoverageProvider }>();
+export async function getCoverageMap(emails: string[]): Promise<Map<string, { status: CoverageStatus }>> {
+  const map = new Map<string, { status: CoverageStatus }>();
   if (emails.length === 0) return map;
   const now = new Date();
   const in14d = new Date(now.getTime() + 14 * 86400000);
@@ -113,7 +111,7 @@ export async function getCoverageMap(
     end_time: in14d.toISOString(),
   });
   for (const p of res.participants) {
-    map.set(p.email.toLowerCase(), { status: p.status, provider: p.provider });
+    map.set(p.email.toLowerCase(), { status: p.status });
   }
   return map;
 }

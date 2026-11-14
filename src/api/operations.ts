@@ -46,6 +46,7 @@ export const NOT_OPERATIONS: Record<string, string> = {
   "client.isRequestTooLarge": PURE,
   "client.canDisconnectCalendar": PURE,
   "client.isCalendarDisconnectUnsupported": PURE,
+  "client.roomListFailure": PURE,
   "client.ssoStepupRequired": PURE,
   "client.ssoStepupStartUrl": URL_BUILDER,
   "client.classifyApiFailure": PURE,
