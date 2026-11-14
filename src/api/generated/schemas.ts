@@ -56,7 +56,7 @@ export type AttendeeSuggestion = __TypedOpenapi.Schemas.AttendeeSuggestion;
 export const AttendeeSuggestion = z.strictObject({ email: z.email(), name: z.string() });
 
 export type AuditEntry = __TypedOpenapi.Schemas.AuditEntry;
-export const AuditEntry = z.strictObject({ id: z.number().int(), action: z.enum(["focus_created", "focus_cleared", "meeting_scheduled", "meeting_moved", "meeting_created", "nlp_parsed", "nlp_confirmed", "connection_lost", "provider_disconnected", "revocation_unconfirmed"]), details: z.string(), created_at: z.iso.datetime() });
+export const AuditEntry = z.strictObject({ id: z.number().int(), action: z.enum(["focus_created", "focus_cleared", "meeting_scheduled", "meeting_moved", "meeting_created", "nlp_parsed", "nlp_confirmed", "connection_lost", "provider_disconnected", "revocation_unconfirmed", "scheduling_link_bookers_erased"]), details: z.string(), created_at: z.iso.datetime() });
 
 export type AuthStatusResponse = __TypedOpenapi.Schemas.AuthStatusResponse;
 export const AuthStatusResponse = z.strictObject({ connected: z.boolean(), provider: z.enum(["google", "outlook", "webcal"]), email: z.string() });
