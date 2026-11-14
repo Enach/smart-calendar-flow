@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -163,8 +163,14 @@ describe("initSentry state transitions (contract §4)", () => {
 
 // PAC-86: no Sentry DSN or ingest host is hard-coded anywhere the web ships or
 // documents, so monitoring is on only when the build sets VITE_SENTRY_DSN.
+// PAC-114: the guard also scans public/, docker/ (when present) and .github/,
+// and matches the bare id of the Sentry org whose DSNs were once hard-coded.
 describe("no hard-coded Sentry DSN (PAC-86)", () => {
   const SENTRY_INGEST = /ingest\.(?:[a-z0-9-]+\.)*sentry\.io/i;
+  // Built from parts so this file, which the src/ scan reads, does not match.
+  const SENTRY_ORG_ID = ["o4512081", "160896512"].join("");
+
+  const leaks = (text: string) => SENTRY_INGEST.test(text) || text.includes(SENTRY_ORG_ID);
 
   const sources = import.meta.glob<string>(["/src/**/*.{ts,tsx}", "!/src/api/generated/**"], {
     query: "?raw",
@@ -172,20 +178,47 @@ describe("no hard-coded Sentry DSN (PAC-86)", () => {
     eager: true,
   });
 
+  // Every file under dir; read as latin1 so binary assets (images) scan too.
+  const filesUnder = (dir: string): string[] =>
+    readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return filesUnder(path);
+      return entry.isFile() ? [path] : [];
+    });
+
   it("scans the app sources", () => {
     expect(Object.keys(sources).length).toBeGreaterThan(10);
   });
 
-  it("has no Sentry ingest DSN in src/", () => {
+  it("has no Sentry ingest DSN or org id in src/", () => {
     const offenders = Object.entries(sources)
-      .filter(([, text]) => SENTRY_INGEST.test(text))
+      .filter(([, text]) => leaks(text))
       .map(([file]) => file);
     expect(offenders).toEqual([]);
   });
 
-  it.each([".env.example", "index.html", "vite.config.ts"])("has no Sentry ingest DSN in %s", (file) => {
+  it.each([".env.example", "index.html", "vite.config.ts"])("has no Sentry ingest DSN or org id in %s", (file) => {
     const text = readFileSync(resolve(process.cwd(), file), "utf8");
-    expect(SENTRY_INGEST.test(text)).toBe(false);
+    expect(leaks(text)).toBe(false);
+  });
+
+  it.each([
+    ["public", true],
+    [".github", true],
+    ["docker", false],
+  ] as const)("has no Sentry ingest DSN or org id under %s/", (dir, required) => {
+    const root = resolve(process.cwd(), dir);
+    if (!existsSync(root)) {
+      // public/ and .github/ exist; docker/ is scanned only if it appears.
+      expect(required).toBe(false);
+      return;
+    }
+    const files = filesUnder(root);
+    if (required) expect(files.length).toBeGreaterThan(0);
+    const offenders = files
+      .filter((file) => leaks(readFileSync(file, "latin1")))
+      .map((file) => relative(process.cwd(), file));
+    expect(offenders).toEqual([]);
   });
 
   it(".env.example ships an empty VITE_SENTRY_DSN", () => {
