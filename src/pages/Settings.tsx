@@ -26,6 +26,7 @@ import {
   KEY_HINTS,
   PROVIDER_LABELS,
   isKeyProvider,
+  editKey,
   keyIsSetFor,
   providerOptions,
   providerSwitch,
@@ -158,6 +159,9 @@ export default function SettingsPage() {
       // and it is then persisted through PATCH /api/settings like any other field.
       setDraft({
         ...data,
+        // The key is write-only and never read back, so the field starts
+        // untouched whatever the settings carry (the demo seeds "", PAC-74).
+        llm_api_key: undefined,
         working_hours: data.working_hours ?? defaultWorkingHours(data.work_start, data.work_end),
         out_of_hours_meetings_per_week: data.out_of_hours_meetings_per_week ?? 0,
         auto_decline_outside_working_hours: data.auto_decline_outside_working_hours ?? false,
@@ -230,7 +234,7 @@ export default function SettingsPage() {
     try {
       // The draft is intentionally kept as-is on failure so nothing is lost.
       const saved = await update.mutateAsync(draft);
-      setDraft({ ...saved });
+      setDraft({ ...saved, llm_api_key: undefined });
       toast.success("Settings saved");
     } catch (e) {
       toast.error(apiErrorMessage(e, effectOf("api.updateSettings")));
@@ -763,7 +767,10 @@ export default function SettingsPage() {
                   type="password"
                   autoComplete="off"
                   value={draft.llm_api_key ?? ""}
-                  onChange={(e) => set("llm_api_key", e.target.value)}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setDraft((d) => (d ? { ...d, ...editKey(d, text, data) } : d));
+                  }}
                   className={inputCls}
                   placeholder={keyIsSetFor(draft, draft.llm_provider) ? "A key is saved. Type to replace it" : "Paste an API key"}
                 />

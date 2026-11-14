@@ -211,6 +211,12 @@ export type ProviderSwitchPatch = Pick<Settings, "llm_provider" | "llm_model" | 
  * would be tested against and saved for Anthropic, and "Remove saved key"
  * followed by a switch would send `llmApiKey: ""` for the new provider and
  * delete its key while keeping the one the user removed.
+ *
+ * PAC-74 (AC-8, D-4): the single flag `llm_api_key_set` describes the provider
+ * it was reported for, so the switch recomputes it for `next`: from the
+ * per-provider map when the server sent one, and otherwise true only when
+ * `next` is the saved provider. Copying it as-is showed "A key is saved" for a
+ * provider with no key whenever the map was missing.
  */
 export function providerSwitch(next: LLMProvider | string, saved?: SavedProviderSettings): ProviderSwitchPatch {
   const llm_model = saved && saved.llm_provider === next ? saved.llm_model : "";
@@ -218,15 +224,47 @@ export function providerSwitch(next: LLMProvider | string, saved?: SavedProvider
     llm_provider: next,
     llm_model,
     llm_api_key: undefined,
-    llm_api_key_set: saved?.llm_api_key_set,
+    llm_api_key_set: savedKeyFlagFor(next, saved),
     llm_api_keys_set: saved?.llm_api_keys_set,
   };
 }
 
-/** Whether a key bound to `provider` is on file, as the server last reported. */
-export function keyIsSetFor(s: Settings, provider: KeyProvider): boolean {
+/** The saved "key on file" flag for `provider` (see providerSwitch, PAC-74 D-4). */
+function savedKeyFlagFor(provider: string, saved?: SavedProviderSettings): boolean | undefined {
+  if (!saved) return undefined;
+  if (saved.llm_api_keys_set) return isKeyProvider(provider) ? !!saved.llm_api_keys_set[provider] : false;
+  if (saved.llm_api_key_set === undefined) return undefined;
+  return saved.llm_provider === provider && !!saved.llm_api_key_set;
+}
+
+type KeyFlags = Pick<Settings, "llm_provider" | "llm_api_key_set" | "llm_api_keys_set">;
+
+/**
+ * Whether a key bound to `provider` is on file, as the server last reported.
+ * Without the per-provider map, the single flag answers for the provider it
+ * was reported for only (PAC-74 D-4); any other provider has no key on file.
+ */
+export function keyIsSetFor(s: KeyFlags, provider: KeyProvider): boolean {
   if (s.llm_api_keys_set) return !!s.llm_api_keys_set[provider];
   return s.llm_provider === provider && !!s.llm_api_key_set;
+}
+
+/**
+ * The draft change when the user edits the key field (PAC-74). Non-empty text
+ * is the key to save. An empty field is never an instruction by itself (D-2):
+ * it puts the field back to what it meant before the user typed (D-3), which
+ * is "remove" only when the user pressed "Remove saved key" for this provider
+ * (the draft shows no key on file while `saved` still has one), and otherwise
+ * "leave the stored key unchanged" (`undefined`: nothing is sent, and "Test
+ * connection" tests the stored key, D-5). The answer comes from the flags,
+ * never from an empty string already in the draft, so a stray `""` (the demo
+ * seed) is not taken for a removal the user chose.
+ */
+export function editKey(d: Settings, text: string, saved?: SavedProviderSettings): Pick<Settings, "llm_api_key"> {
+  if (text !== "") return { llm_api_key: text };
+  const provider = d.llm_provider;
+  const removalPending = isKeyProvider(provider) && !!saved && keyIsSetFor(saved, provider) && !keyIsSetFor(d, provider);
+  return { llm_api_key: removalPending ? "" : undefined };
 }
 
 /**
