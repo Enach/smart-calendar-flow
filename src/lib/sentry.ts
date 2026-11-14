@@ -7,17 +7,15 @@ import { z } from "zod";
  * Derives entirely from the approved contract `contracts/features/PAC-14.md` §4
  * (Frontend business rules) and the merged plan `PAC-14-plan.md`:
  *  - init once, before the React tree mounts;
- *  - DSN from `import.meta.env.VITE_SENTRY_DSN`, falling back to the documented default;
+ *  - DSN from the build-time `import.meta.env.VITE_SENTRY_DSN` only. There is no
+ *    default DSN (PAC-86, PAC-14 §4 amendment): unset or empty means web
+ *    monitoring is off and `Sentry.init` is never called;
  *  - `environment: import.meta.env.MODE`; `sendDefaultPii: false`;
  *  - allowed monitoring-status transitions: `uninitialized -> active`
  *    (init succeeds) and `uninitialized -> disabled` (no DSN / init throws).
  *    No other transitions; once `active` it stays `active` for the session and
  *    the app MUST NOT re-init.
  */
-
-/** Documented default DSN from the PAC-14 issue / contract §4. */
-export const DEFAULT_SENTRY_DSN =
-  "https://8141ab6e48ded81c6d47f8f074c1a648@o4512081160896512.ingest.de.sentry.io/4512083551060048";
 
 /**
  * Strict config schema (contract §4). No `.passthrough()`, no `.partial()`:
@@ -46,13 +44,16 @@ export function getMonitoringStatus(): MonitoringStatus {
 
 /**
  * Resolve the effective config from the environment.
- * An absent/empty DSN yields `enabled: false` (contract failure path: init no-ops).
+ * An absent/empty DSN yields `null`: monitoring is off (PAC-86, no default DSN).
  */
 export function resolveSentryConfig(env: {
   VITE_SENTRY_DSN?: string;
   MODE?: string;
-}): SentryConfig {
-  const rawDsn = (env.VITE_SENTRY_DSN ?? "").trim() || DEFAULT_SENTRY_DSN;
+}): SentryConfig | null {
+  const rawDsn = (env.VITE_SENTRY_DSN ?? "").trim();
+  if (rawDsn === "") {
+    return null;
+  }
   const environment = env.MODE ?? "development";
 
   // Validate the DSN through the strict schema. A malformed DSN throws in the
@@ -85,6 +86,12 @@ export function initSentry(
 
   try {
     const config = resolveSentryConfig(env);
+    if (config === null) {
+      // uninitialized -> disabled: no DSN configured at build time, so no
+      // event is ever sent anywhere (PAC-86).
+      status = "disabled";
+      return status;
+    }
     Sentry.init({
       dsn: config.dsn,
       environment: config.environment,

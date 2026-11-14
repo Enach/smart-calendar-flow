@@ -197,3 +197,55 @@ describe("PAC-74 the API key field", () => {
     expect(keyField()).toHaveAttribute("placeholder", "A key is saved. Type to replace it");
   });
 });
+
+/**
+ * PAC-111: the field is reset when the draft is first loaded and again after a
+ * save, whatever the settings carry. The demo seeds `llm_api_key: ""`
+ * (src/demo/clientMocks.ts), which without the reset reads as "Remove saved
+ * key", so "Test connection" would send `llmApiKey: ""`.
+ */
+describe("PAC-111 the key field starts untouched", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  const probeBody = () => {
+    const calls = fetchMock.mock.calls.filter(([url, init]) => String(url) === `${API}/llm/test` && init?.method === "POST");
+    expect(calls, "one probe was sent").toHaveLength(1);
+    return JSON.parse(String(calls[0][1]?.body)) as Record<string, unknown>;
+  };
+
+  it("at load: settings carrying llm_api_key \"\" send a probe without llmApiKey", async () => {
+    fetchMock.mockImplementation(async () => json({ ok: true, response: "pong", provider: "openai" }));
+    state.settings = { ...normalizeSettings(wire()), llm_api_key: "" };
+    renderPage();
+    await screen.findByLabelText(/^API key/);
+    expect(keyField()).toHaveAttribute("placeholder", "A key is saved. Type to replace it");
+    fireEvent.click(screen.getByRole("button", { name: /test connection/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = probeBody();
+    expect(body).not.toHaveProperty("llmApiKey");
+    expect(body).toEqual({ llmProvider: "openai", llmModel: "" });
+  });
+
+  it("after a save: a saved document carrying llm_api_key \"\" sends a probe without llmApiKey", async () => {
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url) === `${API}/settings` && init?.method === "PATCH") return json({ ...wire(), llmModel: "gpt-4o", llmApiKey: "" });
+      return json({ ok: true, response: "pong", provider: "openai" });
+    });
+    state.settings = normalizeSettings(wire());
+    renderPage();
+    await screen.findByLabelText(/^API key/);
+    fireEvent.change(screen.getByLabelText(/^Model/), { target: { value: "gpt-4o" } });
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+    await waitFor(() => expect(bodyOf("/settings", "PATCH")).toEqual({ llmModel: "gpt-4o" }));
+    await waitFor(() => expect(keyField()).toHaveAttribute("placeholder", "A key is saved. Type to replace it"));
+    fireEvent.click(screen.getByRole("button", { name: /test connection/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = probeBody();
+    expect(body).not.toHaveProperty("llmApiKey");
+    expect(body).toEqual({ llmProvider: "openai", llmModel: "gpt-4o" });
+  });
+});

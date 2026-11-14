@@ -49,7 +49,10 @@ const SLOTS_RATE_LIMITED_MESSAGE =
 /** PAC-88 (contract section 2.4): the server's 400 for a zone its tz database lacks. */
 const DISPLAY_ZONE_REFUSED = "invalid display_time_zone, use an IANA time zone name";
 /** PAC-88 (spec 3.8): the link's zone changed and re-reading it did not settle it. */
-const ZONE_CHANGED_MESSAGE = "The host's time zone just changed. Try again to see the times.";
+/** A 404 for the link, on page load or on submit (PAC-105). */
+const LINK_NOT_ACTIVE_MESSAGE = "This booking link doesn't exist or is no longer active.";
+
+const ZONE_CHANGED_MESSAGE ="The host's time zone just changed. Try again to see the times.";
 
 function httpStatus(e: unknown): number | undefined {
   return isApiHttpError(e) ? e.status : (e as { status?: number } | null)?.status;
@@ -131,6 +134,13 @@ export default function PublicBooking() {
    * Shown with the booking wording; never re-sent by code.
    */
   const [submitFailure, setSubmitFailure] = useState<unknown>(null);
+  /**
+   * PAC-105: the first send of a booking answered 404 — the link was deleted
+   * or paused after the page loaded. Nothing was written (contract
+   * `createPublicBooking` 404), so the page shows the page-load "no longer
+   * active" wording, offers no retry and never says it may have been saved.
+   */
+  const [linkInactiveOnSubmit, setLinkInactiveOnSubmit] = useState(false);
   /**
    * The time of a booking whose outcome is unknown. The booker is sent back
    * to the refreshed list and must pick a time again: nothing re-sends the
@@ -387,6 +397,9 @@ export default function PublicBooking() {
         setSubmitError(detail ?? "Please check your details and try again.");
       } else if (status === 410) {
         setSubmitError(detail ?? "This link is no longer accepting bookings.");
+      } else if (status === 404) {
+        // PAC-105: never the server's raw "not found", never a toast.
+        setLinkInactiveOnSubmit(true);
       } else if (kind === "budget") {
         // The one answer that proves nothing was saved: the booker may press Book again.
         setSubmitFailure(e);
@@ -409,6 +422,26 @@ export default function PublicBooking() {
 
 
   // ---------- Render: not found / no longer available ----------
+  if (linkInactiveOnSubmit) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="max-w-md text-center" data-testid="booking-link-inactive">
+          <h1 className="font-serif text-3xl text-foreground">Link no longer active</h1>
+          <p role="alert" className="mt-2 text-sm text-muted-foreground">
+            {LINK_NOT_ACTIVE_MESSAGE} Your booking was not made.
+          </p>
+          <a
+            data-testid="booking-error-home-link"
+            href="/"
+            target={TOP_LEVEL_LINK_TARGET}
+            className="mt-6 inline-block text-sm font-medium text-primary hover:underline"
+          >
+            ← Back to Paceday
+          </a>
+        </div>
+      </div>
+    );
+  }
   if (linkQuery.isError) {
     const err = linkQuery.error as unknown;
     const kind = classifyApiFailure(err);
@@ -445,7 +478,7 @@ export default function PublicBooking() {
     const body = gone
       ? "This booking link has been used up or paused. Reach out to the host for another time."
       : notFound
-        ? "This booking link doesn't exist or is no longer active."
+        ? LINK_NOT_ACTIVE_MESSAGE
         : apiErrorMessage(err);
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
