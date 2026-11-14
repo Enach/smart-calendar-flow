@@ -951,7 +951,8 @@ const SETTINGS_PATCH_KEYS = new Set(Object.keys(SettingsUpdate.shape).filter((k)
  * Build the PATCH /api/settings body (PAC-24): only contract properties, and
  * only those whose value differs from `previous` (the settings as last read).
  * The provider key is never read back, so it is sent only when the user typed
- * one or cleared it (`llm_api_key` set, possibly to "").
+ * one or pressed "Remove saved key" (`llm_api_key` set, to "" for a removal).
+ * An emptied key field is never "" in the draft (PAC-74, see editKey).
  */
 export function settingsPatchBody(s: Settings, previous?: Settings): Record<string, unknown> {
   const next = settingsRequestBody(s);

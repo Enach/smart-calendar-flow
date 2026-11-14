@@ -8,7 +8,7 @@ import {
   validateLunchWithinWorkingHours,
   workingHoursCapacity,
 } from "@/lib/schedulingPresets";
-import { keyIsSetFor, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
+import { editKey, keyIsSetFor, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
 import type { Settings } from "./types";
 
 const base = {
@@ -222,10 +222,12 @@ describe("PATCH body", () => {
     expect(body).toEqual({});
   });
 
-  it("sends the key only when typed or cleared", () => {
+  // PAC-74 (D-2): the draft holds "" only after "Remove saved key", so the
+  // removal is what sends llmApiKey: "" (an emptied field is never "").
+  it("sends the key only when typed or removed with Remove saved key", () => {
     expect(settingsPatchBody({ ...read }, read).llmApiKey).toBeUndefined();
     expect(settingsPatchBody({ ...read, llm_api_key: "sk-new" }, read)).toEqual({ llmApiKey: "sk-new" });
-    expect(settingsPatchBody({ ...read, llm_api_key: "" }, read)).toEqual({ llmApiKey: "" });
+    expect(settingsPatchBody(removeSavedKey({ ...read }), read)).toEqual({ llmApiKey: "" });
   });
 
   it("removes the last per-day lunch override with an empty map", () => {
@@ -302,6 +304,120 @@ describe("provider switch and the draft key", () => {
     const back = { ...removed, ...providerSwitch("openai", old) };
     expect(keyIsSetFor(back, "openai")).toBe(true);
     expect(llmTestBody(back)).not.toHaveProperty("llmApiKey");
+  });
+});
+
+// PAC-74: an emptied key field never deletes the saved key; only "Remove
+// saved key" does. The single "key on file" flag describes the saved
+// provider only.
+describe("PAC-74 the key field", () => {
+  const saved = {
+    ...normalizeSettings({
+      ...patchPayload,
+      llmProvider: "openai",
+      llmApiKeySet: true,
+      llmApiKeysSet: { openai: true, anthropic: false, azure_openai: false, bedrock: false, vertex: false },
+    }),
+    calendar_id: "primary",
+  } as Settings;
+  const type = (d: Settings, text: string, from: Settings = saved): Settings => ({ ...d, ...editKey(d, text, from) });
+  const typeAndErase = (d: Settings, from: Settings = saved): Settings => type(type(type(d, "s", from), "sk", from), "", from);
+
+  it("AC-1: type then erase, change another setting, save: no key instruction, the other setting is sent", () => {
+    const draft = { ...typeAndErase({ ...saved }), timezone: "Europe/Paris" };
+    expect(draft.llm_api_key).toBeUndefined();
+    const body = settingsPatchBody(draft, saved);
+    expect(body).not.toHaveProperty("llmApiKey");
+    expect(body).toEqual({ timezone: "Europe/Paris" });
+  });
+
+  it("AC-1: erasing in one edit (select-all + delete, cut) never sends an empty key either", () => {
+    const draft = type(type({ ...saved }, "sk-whole-key"), "");
+    expect(settingsPatchBody(draft, saved)).toEqual({});
+  });
+
+  it("AC-3: type then erase shows the key as saved again, with the field untouched", () => {
+    const draft = typeAndErase({ ...saved });
+    expect(keyIsSetFor(draft, "openai")).toBe(true);
+    expect(draft.llm_api_key).toBeUndefined();
+  });
+
+  it("AC-4: type then erase, then Test connection tests the stored key", () => {
+    const body = llmTestBody(typeAndErase({ ...saved }));
+    expect(body).toEqual({ llmProvider: "openai", llmModel: "" });
+    expect(body).not.toHaveProperty("llmApiKey");
+  });
+
+  it("AC-5: Remove saved key then save asks for the key to be removed", () => {
+    const draft = { ...removeSavedKey({ ...saved }), timezone: "Europe/Paris" };
+    expect(keyIsSetFor(draft, "openai")).toBe(false);
+    expect(settingsPatchBody(draft, saved)).toEqual({ llmApiKey: "", timezone: "Europe/Paris" });
+  });
+
+  it("AC-6: Remove saved key, then type and erase: the removal still stands", () => {
+    const draft = typeAndErase(removeSavedKey({ ...saved }));
+    expect(draft.llm_api_key).toBe("");
+    expect(keyIsSetFor(draft, "openai")).toBe(false);
+    expect(settingsPatchBody(draft, saved)).toEqual({ llmApiKey: "" });
+    expect(llmTestBody(draft)).toHaveProperty("llmApiKey", "");
+  });
+
+  it("AC-7: a new key typed and saved is sent exactly", () => {
+    expect(settingsPatchBody(type({ ...saved }, "sk-new-key"), saved)).toEqual({ llmApiKey: "sk-new-key" });
+    // Typing over a pending removal replaces the key too.
+    expect(settingsPatchBody(type(removeSavedKey({ ...saved }), "sk-other"), saved)).toEqual({ llmApiKey: "sk-other" });
+  });
+
+  it("an erased field is untouched when no key is on file", () => {
+    const none = {
+      ...saved,
+      llm_api_key_set: false,
+      llm_api_keys_set: { openai: false, anthropic: false, azure_openai: false, bedrock: false, vertex: false },
+    } as Settings;
+    const draft = typeAndErase({ ...none }, none);
+    expect(draft.llm_api_key).toBeUndefined();
+    expect(settingsPatchBody(draft, none)).toEqual({});
+  });
+
+  it("a stray empty key already in the draft (the demo seed) is not taken for a removal", () => {
+    const demo = { ...saved, llm_api_key: "", llm_api_key_set: undefined, llm_api_keys_set: undefined } as Settings;
+    expect(typeAndErase({ ...demo }, demo).llm_api_key).toBeUndefined();
+  });
+
+  describe("without the per-provider map", () => {
+    const old = { ...saved, llm_api_keys_set: undefined } as Settings;
+    const switchTo = (d: Settings, next: string): Settings => ({ ...d, ...providerSwitch(next, old) });
+
+    it("AC-8: switching to another provider shows no key on file for it", () => {
+      const draft = switchTo({ ...old }, "anthropic");
+      expect(draft.llm_api_key_set).toBe(false);
+      expect(keyIsSetFor(draft, "anthropic")).toBe(false);
+      // Type and erase on Anthropic is not a removal either.
+      expect(typeAndErase(draft, old).llm_api_key).toBeUndefined();
+    });
+
+    it("AC-9: switching back shows the saved key again, and drops a removal made before switching", () => {
+      const back = switchTo(switchTo({ ...old }, "anthropic"), "openai");
+      expect(keyIsSetFor(back, "openai")).toBe(true);
+      const removedThenBack = switchTo(switchTo(removeSavedKey({ ...old }), "anthropic"), "openai");
+      expect(keyIsSetFor(removedThenBack, "openai")).toBe(true);
+      expect(settingsPatchBody(removedThenBack, old)).toEqual({});
+    });
+
+    it("AC-1 and AC-6 hold on the saved provider without the map too", () => {
+      expect(settingsPatchBody(typeAndErase({ ...old }, old), old)).toEqual({});
+      expect(settingsPatchBody(typeAndErase(removeSavedKey({ ...old }), old), old)).toEqual({ llmApiKey: "" });
+    });
+  });
+
+  it("AC-10: with the map, each provider shows its own value across switches", () => {
+    const switchTo = (d: Settings, next: string): Settings => ({ ...d, ...providerSwitch(next, saved) });
+    const anthropic = switchTo({ ...saved }, "anthropic");
+    expect(keyIsSetFor(anthropic, "anthropic")).toBe(false);
+    expect(anthropic.llm_api_key_set).toBe(false);
+    const openai = switchTo(anthropic, "openai");
+    expect(keyIsSetFor(openai, "openai")).toBe(true);
+    expect(openai.llm_api_key_set).toBe(true);
   });
 });
 

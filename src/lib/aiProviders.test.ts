@@ -109,7 +109,9 @@ describe("AI provider values follow the contract", () => {
   });
 
   // Contract challenge rev. 2.1, W-1: a switch drops the draft key and puts
-  // the "key on file" flags back to what the server last reported.
+  // the "key on file" flags back to what the server last reported. PAC-74
+  // (D-4): the map is carried over as reported, and the single flag is the
+  // reported value for the provider switched to, never the saved provider's.
   it("switching provider drops the draft key and restores the saved key flags", () => {
     const saved = {
       llm_provider: "openai",
@@ -127,6 +129,12 @@ describe("AI provider values follow the contract", () => {
     });
     expect(patch).toHaveProperty("llm_api_key", undefined);
     expect(providerSwitch("openai")).toHaveProperty("llm_api_key", undefined);
+    // The single flag follows the map entry of the provider switched to.
+    expect(providerSwitch("bedrock", saved)).toMatchObject({ llm_api_key_set: false, llm_api_keys_set: saved.llm_api_keys_set });
+    // Without the map, it holds for the saved provider only.
+    const old = { ...saved, llm_api_keys_set: undefined };
+    expect(providerSwitch("anthropic", old)).toMatchObject({ llm_api_key_set: false, llm_api_keys_set: undefined });
+    expect(providerSwitch("openai", old)).toMatchObject({ llm_api_key_set: true, llm_api_keys_set: undefined });
   });
 
 });
