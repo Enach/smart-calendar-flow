@@ -38,13 +38,22 @@ const STEPUP_PROVIDER_NAMES: Record<SsoStepupProvider, string> = {
   microsoft: "Microsoft 365",
 };
 
-/** What a known `without_stepup` code of this purpose means. */
-const WITHOUT_STEPUP_TEXT: Record<string, string> = {
+/**
+ * What a known `without_stepup` code of this purpose means. A Map, so only
+ * its own keys are found (PAC-75 contract md 5.3): unknown codes, including
+ * built-in object property names, are omitted.
+ */
+const WITHOUT_STEPUP_TEXT = new Map<string, string>(Object.entries({
   organization_ai_configuration_writes:
     "Without it, nobody in your organisation can change its AI provider, model, key, destination or personal-keys setting in Paceday, except a deployment operator on the break-glass list.",
-};
+}));
 
-const DENIAL_TEXT: Record<string, string> = {
+/**
+ * The callback's denial reasons (the ten values of its Location pattern). A
+ * Map, so any other `reason`, including `constructor` or `__proto__`, is a
+ * denial without detail (PAC-75 contract md 5.1).
+ */
+const DENIAL_TEXT = new Map<string, string>(Object.entries({
   state_mismatch: "the confirmation could not be matched to your session. Start it again from this page.",
   token_invalid: "the sign-in was cancelled, or the provider's answer could not be verified.",
   no_hd: "the Google account you used is not a Google Workspace account.",
@@ -55,7 +64,8 @@ const DENIAL_TEXT: Record<string, string> = {
   not_admin: "the account you used is not an administrator of your organisation.",
   identity_mismatch:
     "the account you used is not the Google or Microsoft account you sign in to Paceday with, even if it has the same email address.",
-};
+  unavailable: "the confirmation could not be completed in time, so nothing was granted. Start it again from this page.",
+}));
 
 function destinationText(c: OrganizationAIConfiguration): string {
   switch (c.provider) {
@@ -109,7 +119,7 @@ function Labeled({ label, hint, children }: { label: string; hint?: string; chil
 }
 
 function StepupExplanation({ offer }: { offer: SsoStepupOffer }) {
-  const losses = offer.withoutStepup.map((code) => WITHOUT_STEPUP_TEXT[code]).filter((t): t is string => !!t);
+  const losses = offer.withoutStepup.map((code) => WITHOUT_STEPUP_TEXT.get(code)).filter((t): t is string => !!t);
   return (
     <div className="space-y-3 rounded-lg border border-border bg-background p-3 text-sm text-foreground" data-testid="org-ai-stepup">
       <p>
@@ -163,7 +173,7 @@ function StepupLanding() {
       </div>
     );
   }
-  const reason = DENIAL_TEXT[params.get("reason") ?? ""];
+  const reason = DENIAL_TEXT.get(params.get("reason") ?? "");
   return (
     <div role="status" data-testid="org-ai-stepup-outcome" className="mb-4 flex gap-2 rounded-lg border border-border bg-background p-3 text-sm">
       <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
