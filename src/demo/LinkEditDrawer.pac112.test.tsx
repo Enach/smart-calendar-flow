@@ -67,9 +67,15 @@ describe("demo mode follows the same rules (contract §5.5, AC-26)", () => {
     addCoHost("c@nowhere.io");
     save(/create link/i);
     expect(await screen.findByText("c@nowhere.io couldn't be added as a co-host.")).toBeInTheDocument();
-    expect(success).toHaveBeenCalledWith(
-      "Link created. 1 co-host invited — they can accept from Paceday. 1 address couldn't be added as a co-host.",
-    );
+    const results = Array.from(screen.getByRole("status", { name: "Save results" }).querySelectorAll("p")).map((p) => p.textContent);
+    expect(results).toEqual([
+      "Link created.",
+      "1 co-host invited — they can accept from Paceday.",
+      "1 address couldn't be added as a co-host.",
+      "c@nowhere.io couldn't be added as a co-host.",
+    ]);
+    // Announced once, by the live region: no toast while the editor stays open (M6).
+    expect(success).not.toHaveBeenCalled();
     await waitFor(() => expect(chipEmails()).toEqual(["bob@co.com"]));
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Demo PAC-112 renamed" } });

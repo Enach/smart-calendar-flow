@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { LinkEditDrawer } from "./LinkEditDrawer";
@@ -73,6 +73,9 @@ function addCoHost(email: string) {
 const removeChip = (email: string) => fireEvent.click(screen.getByRole("button", { name: `Remove ${email}` }));
 const chipEmails = () =>
   screen.queryAllByRole("button", { name: /^Remove / }).map((b) => (b.getAttribute("aria-label") ?? "").replace(/^Remove /, ""));
+/** The lines of the always-mounted "Save results" live region (empty until a save keeps the editor open). */
+const results = () =>
+  Array.from(screen.getByRole("status", { name: "Save results" }).querySelectorAll("p")).map((p) => p.textContent ?? "");
 const save = (name = /save changes/i) => fireEvent.click(screen.getByRole("button", { name }));
 const PENDING = "Loading co-hosts…";
 const FAILED = "Co-hosts can't be edited right now because the current list couldn't be loaded. Reopen the editor to try again.";
@@ -270,10 +273,19 @@ describe("messages (contract §5.3)", () => {
     addCoHost("h@co.com");
     addCoHost("c@nowhere.io");
     save();
-    const text =
-      "Link updated. 2 co-hosts invited — they can accept from Paceday. Removed 1 co-host. 1 address couldn't be added as a co-host.";
-    await waitFor(() => expect(success).toHaveBeenCalledWith(text));
-    for (const [message] of success.mock.calls) expect(String(message)).not.toMatch(/sent|email|no paceday account/i);
+    // The editor stays open (one address not added): the summary is in the
+    // "Save results" region, and no toast repeats it (M6).
+    await waitFor(() =>
+      expect(results()).toEqual([
+        "Link updated.",
+        "2 co-hosts invited — they can accept from Paceday.",
+        "Removed 1 co-host.",
+        "1 address couldn't be added as a co-host.",
+        "c@nowhere.io couldn't be added as a co-host.",
+      ]),
+    );
+    expect(success).not.toHaveBeenCalled();
+    for (const line of results()) expect(line.replace(/\S+@\S+/g, "ADDR")).not.toMatch(/sent|email|no paceday account/i);
   });
 
   it("AC-12: an answer of zero invited says zero, though the editor's own diff would say one", async () => {
@@ -295,9 +307,13 @@ describe("messages (contract §5.3)", () => {
     await waitFor(() => expect(emailInput()).not.toBeDisabled());
     addCoHost("g@co.com");
     save();
-    const text = "Link updated. Paceday couldn't confirm which co-hosts were added — check the co-host list.";
-    await waitFor(() => expect(success).toHaveBeenCalledWith(text));
-    expect(within(screen.getByRole("status", { name: "Save results" })).getByText(/couldn't confirm/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(results()).toEqual([
+        "Link updated.",
+        "Paceday couldn't confirm which co-hosts were added — check the co-host list.",
+      ]),
+    );
+    expect(success).not.toHaveBeenCalled();
     await waitFor(() => expect(getLink).toHaveBeenCalledTimes(2));
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
@@ -333,9 +349,8 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     addCoHost("c@nowhere.io");
     save();
 
-    const panel = await screen.findByRole("status", { name: "Save results" });
-    expect(panel).toHaveTextContent("c@nowhere.io couldn't be added as a co-host.");
-    expect(panel).toHaveTextContent("1 co-host invited — they can accept from Paceday.");
+    await waitFor(() => expect(results()).toContain("c@nowhere.io couldn't be added as a co-host."));
+    expect(results()).toContain("1 co-host invited — they can accept from Paceday.");
     await waitFor(() => expect(getLink).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(chipEmails()).toEqual(["b@co.com"]));
     const cached = client.getQueryData<{ owned: SchedulingLink[] }>(schedulingLinkKeys.links);
@@ -359,7 +374,7 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     await waitFor(() => expect(chipEmails()).toEqual(["e@co.com"]));
     addCoHost("c@nowhere.io");
     save();
-    await screen.findByRole("status", { name: "Save results" });
+    await waitFor(() => expect(results()).not.toEqual([]));
     await waitFor(() => expect(chipEmails()).toEqual(["e@co.com"]));
 
     addCoHost("g@co.com");
@@ -385,7 +400,7 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     addCoHost("b@co.com");
     addCoHost("c@nowhere.io");
     save();
-    await screen.findByRole("status", { name: "Save results" });
+    await waitFor(() => expect(results()).not.toEqual([]));
     await waitFor(() => expect(chipEmails()).toEqual(["b@co.com"]));
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Renamed" } });
@@ -437,7 +452,15 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     save(/create link/i);
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(create.mock.calls[0][0].co_host_emails).toEqual(["c@nowhere.io"]);
-    expect(success).toHaveBeenCalledWith("Link created. 0 co-hosts invited. 1 address couldn't be added as a co-host.");
+    await waitFor(() =>
+      expect(results()).toEqual([
+        "Link created.",
+        "0 co-hosts invited.",
+        "1 address couldn't be added as a co-host.",
+        "c@nowhere.io couldn't be added as a co-host.",
+      ]),
+    );
+    expect(success).not.toHaveBeenCalled();
     await waitFor(() => expect(getLink).toHaveBeenCalledWith("new"));
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New title" } });
@@ -459,5 +482,43 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     addCoHost("alias@co.com");
     save();
     expect(await screen.findByText("alias@co.com is your own address — you're the link's owner.")).toBeInTheDocument();
+  });
+});
+
+describe("review minors (M5, M6)", () => {
+  it("M5: a failed save after a stay-open create removes the previous Save results", async () => {
+    vi.spyOn(schedulingLinksApi, "createLink").mockResolvedValue(saved(makeLink([], "new"), changes({
+      addresses: [{ email: "c@nowhere.io", outcome: "not_added" }], not_added_count: 1,
+    })));
+    vi.spyOn(schedulingLinksApi, "getLink").mockResolvedValue(makeLink([], "new"));
+    const update = vi.spyOn(schedulingLinksApi, "updateLink").mockRejectedValue(new Error("boom"));
+    renderDrawer(null);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New" } });
+    addCoHost("c@nowhere.io");
+    save(/create link/i);
+    await waitFor(() => expect(results()).toContain("c@nowhere.io couldn't be added as a co-host."));
+
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New title" } });
+    save();
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    // The panel stays mounted (the e2e suite finds it by role and name), now empty.
+    expect(screen.getByRole("status", { name: "Save results" })).toBeEmptyDOMElement();
+  });
+
+  it("M6: both live regions are mounted before their text is set, and the panel keeps its role and name", async () => {
+    const read = deferred<SchedulingLink>();
+    vi.spyOn(schedulingLinksApi, "getLink").mockReturnValue(read.promise);
+    renderDrawer(makeLink([]));
+    const reason = document.getElementById("co-hosts-blocked") as HTMLElement;
+    expect(reason).toHaveAttribute("role", "status");
+    expect(reason).toHaveTextContent(PENDING);
+    expect(screen.getByRole("status", { name: "Save results" })).toBeEmptyDOMElement();
+
+    read.resolve(makeLink([]));
+    await waitFor(() => expect(emailInput()).not.toBeDisabled());
+    // The same node, still mounted and now empty, ready to announce a later reason.
+    expect(document.getElementById("co-hosts-blocked")).toBe(reason);
+    expect(reason).toBeEmptyDOMElement();
   });
 });

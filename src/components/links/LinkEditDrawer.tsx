@@ -345,10 +345,11 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       );
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
-      toast.success(summary.join(" "));
       if (staysOpenAfter(result)) {
         // Contract §5.4: name the addresses, re-read the baseline, and edit the
         // saved link from now on (a create becomes an edit, never a second POST).
+        // The "Save results" live region announces the summary there; no toast,
+        // so it is not announced twice.
         setOutcomes([...summary, ...outcomeLines(result.co_host_changes)]);
         setEditingId(saved.id);
         setSlug(saved.slug);
@@ -358,6 +359,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
         nextBaselineRead();
         return;
       }
+      toast.success(summary.join(" "));
       onOpenChange(false);
     },
 
@@ -376,6 +378,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       return;
     }
     setError(null);
+    // A previous save's results never stay on screen beside this save's outcome.
+    setOutcomes([]);
     mutation.mutate();
   }
 
@@ -696,11 +700,14 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>
-            {coHostsBlockedReason && (
-              <p id="co-hosts-blocked" role="status" className="text-xs text-muted-foreground">
-                {coHostsBlockedReason}
-              </p>
-            )}
+            {/* Always mounted, so screen readers announce the text when it is set. */}
+            <p
+              id="co-hosts-blocked"
+              role="status"
+              className={coHostsBlockedReason ? "text-xs text-muted-foreground" : "sr-only"}
+            >
+              {coHostsBlockedReason ?? ""}
+            </p>
 
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
@@ -728,17 +735,17 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           </div>
         </div>
 
-        {outcomes.length > 0 && (
-          <div
-            role="status"
-            aria-label="Save results"
-            className="mt-4 space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-foreground"
-          >
-            {outcomes.map((line) => (
-              <p key={line}>{line}</p>
-            ))}
-          </div>
-        )}
+        {/* Always mounted (empty until a save keeps the editor open), so the
+            results are announced when they appear. */}
+        <div role="status" aria-label="Save results">
+          {outcomes.length > 0 && (
+            <div className="mt-4 space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
+              {outcomes.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          )}
+        </div>
 
         {error && (
           <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
