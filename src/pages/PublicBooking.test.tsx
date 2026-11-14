@@ -129,6 +129,55 @@ async function pickFirstDay() {
   fireEvent.click(day!);
 }
 
+// PAC-105: the link was deleted or paused after the page loaded. The server
+// answers the first send with 404 {"error":"not found"} and writes nothing.
+describe("PublicBooking link gone on submit (PAC-105)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a 404 on submit shows the page-load 'no longer active' wording, offers no retry, does not toast and never says it may have been saved", async () => {
+    vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
+    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => pac88Answer(params));
+    const book = vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(404, { error: "not found" }));
+    book.mockClear(); // the first describe block does not restore its spies
+    const toastError = vi.spyOn(toast, "error");
+
+    renderPage();
+    await pickFirstDay();
+    fireEvent.click(await screen.findByRole("button", { name: /\d{1,2}:\d{2}/ }));
+    fireEvent.change(screen.getByLabelText("Name", { exact: true }), { target: { value: "Late Booker" } });
+    fireEvent.change(screen.getByLabelText("Email", { exact: true }), { target: { value: "late@co.com" } });
+    fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
+
+    expect(await screen.findByRole("heading", { name: "Link no longer active" })).toBeInTheDocument();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("This booking link doesn't exist or is no longer active.");
+    expect(alert).toHaveTextContent("Your booking was not made.");
+
+    // Not the raw server text, no toast.
+    expect(screen.queryByText(/^not found$/i)).not.toBeInTheDocument();
+    expect(toastError).not.toHaveBeenCalled();
+    // No retry of any kind.
+    expect(screen.queryByRole("button", { name: /confirm booking/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("booking-try-again")).not.toBeInTheDocument();
+    // Never the "may have been saved" notice.
+    expect(screen.queryByTestId("api-error")).not.toBeInTheDocument();
+    expect(screen.queryByText(/may have been|may or may not/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/you are confirmed/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId("booking-error-home-link")).toHaveAttribute("href", "/");
+    expect(book).toHaveBeenCalledTimes(1);
+  });
+
+  it("the page-load 404 keeps its wording (same sentence as the submit 404)", async () => {
+    vi.spyOn(schedulingLinksApi, "getPublicLink").mockRejectedValue(new ApiHttpError(404, { error: "not found" }));
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Link not found" })).toBeInTheDocument();
+    expect(screen.getByText("This booking link doesn't exist or is no longer active.")).toBeInTheDocument();
+  });
+});
+
 describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
