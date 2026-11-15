@@ -3359,7 +3359,22 @@ export interface paths {
          * @description The caller is inserted as an `accepted` host. An empty/omitted `slug` is auto-generated from the owner's name.
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none cannot be invited.
          *
-         *     PAC-112 (spec §3.4-§3.8, D-2, D-4, D-8; contract contracts/features/PAC-112.md §2-§4): the create is all or nothing. The link, the owner's `accepted` host row and every co-host invitation are written in one transaction, opened with or without a session guard (with one, the PAC-71 re-check stays its first statement), whose lock waits are bounded at 10 seconds each as on PATCH (PAC-101): the answer is either 201 with all of them or an error with none of them (no link, no host row). A failed owner-host write, a failed co-host lookup and a failed co-host write are each the 500 with nothing created (before PAC-112 the first left the link created and the other two were silently skipped). Each listed entry gets an outcome, reported in the 201's `co_host_changes` (present exactly when `co_host_emails` is carried, `[]` included): `invited`, `own_address` (the address's one domain-confirmed holder is the caller; the owner's host row stays `accepted`, never demoted to `pending`: API-048's create-path remnant, fixed) or `not_added` (no single domain-confirmed holder; the same outcome whether nobody, an unconfirmed carrier or several accounts hold it, so it reveals nothing about any account). `already_host` cannot occur on create. Two entries that reach the same account write one host row and count once. A list with more than 5 entries is refused 422 unless every entry reaches the owner (on create the owner is the only current host; contract md §3). A blank entry is refused 422. Nothing protects a retry after a lost 201: saving again creates a second link (spec §5, accepted risk).
+         *     PAC-112 (spec §3.4-§3.8, D-2, D-4, D-8; contract contracts/features/PAC-112.md §2-§4): the create is all or nothing. The link, the owner's `accepted` host row and every co-host invitation are written in one transaction, opened with or without a session guard (with one, the PAC-71 re-check stays its first statement), whose lock waits are bounded at 10 seconds each as on PATCH (PAC-101): the answer is either 201 with all of them or an error with none of them (no link, no host row). A failed owner-host write, a failed co-host lookup and a failed co-host write are each the 500 with nothing created (before PAC-112 the first left the link created and the other two were silently skipped). Each listed entry gets an outcome, reported in the 201's `co_host_changes` (present exactly when `co_host_emails` is carried, `[]` included): `invited`, `own_address` (the address's one domain-confirmed holder is the caller; the owner's host row stays `accepted`, never demoted to `pending`: API-048's create-path remnant, fixed) or `not_added` (no single domain-confirmed holder; the same outcome whether nobody, an unconfirmed carrier or several accounts hold it, so it reveals nothing about any account). `already_host` cannot occur on create. Two entries that reach the same account write one host row and count once. A list with more than 5 entries is refused 422 unless every entry reaches the owner (on create the owner is the only current host; contract md §3). A blank entry is refused 422.
+         *
+         *     PAC-119 (spec docs/specs/PAC-119.md §3; contract contracts/features/PAC-119.md §1-§4): a create is safe to retry when it carries the optional `Idempotency-Key` header (see the parameter). The key is scoped to the caller's account. A create without a key, or with an empty one, behaves exactly as before PAC-119, so saving it again creates a second link. For a keyed create the server stores the key with the link it created, in the same transaction. A later create by the same account with the same key is then answered by the first matching rule, and writes nothing:
+         *     1. the link that key created was deleted: 409
+         *        `{"error":"idempotency key already used by a deleted link"}`, at any
+         *        age and for any body. It names no link;
+         *
+         *     2. the original save is 24 hours old or more, by the database clock: 409
+         *        `{"error":"idempotency key expired","link_id":"<id>"}`, for any body.
+         *        It is never a replay and never a create;
+         *
+         *     3. the request is the same as the original's: the replay 201;
+         *     4. the request differs: 409
+         *        `{"error":"idempotency key already used","link_id":"<id>"}`.
+         *
+         *     "The same" compares a SHA-256 digest of the request's normalised form (contract md §2.3): aliases resolved, defaults applied, title trimmed, and the co-host list trimmed, lowered, deduplicated and sorted. `null` and an absent list are the same; `[]` is different. Order of evaluation: requireAuth's 401, then the key's 400, then the body's 400, then the field and blank-entry 422s, then the owner and zone reads, then the key resolution (rules 1-4), then the slug check or generation, then the write. With a key, a slug conflict (the explicit slug's pre-check or the slug's unique constraint at insert) and a key conflict both resolve the key again. A stored key then decides by rules 1-4, so a keyed create is never answered "slug already exists" while its own key is stored. Refusals decided inside the write, the over-5 422 among them, come after key resolution: a retry whose list normalises to the original's is replayed. Every replay and every refusal is decided in a transaction whose PAC-71 re-check runs before the key read and again after it. A moved generation is therefore requireAuth's 401, with nothing of the link. When two requests with the same account and key run at once, exactly one link is created. The other waits for it, at most the 10 s lock bound, and is then answered by rules 1-4 in a new short guarded transaction. If the first rolls back, the other proceeds as a new create. A create that fails or is refused stores no key. The co-host outcomes and the request digest kept for a replay are removed within one hour after the 24-hour window. The key, the account, the link's id and the save's time are kept for ever, since links are never purged. Before PAC-119, nothing protected a retry after a lost 201 (API-095).
          */
         post: operations["createSchedulingLink"];
         delete?: never;
@@ -6267,6 +6282,20 @@ export interface components {
             /** @enum {string} */
             outcome: "invited" | "already_host" | "own_address" | "not_added";
         };
+        /** @description The 409 of `createSchedulingLink`. Exactly one variant applies, told apart by `error` alone, since the three `error` sets are disjoint (the PublicBookingConflict pattern). Every variant keeps the shared `{error}` envelope, so a client that reads only `error` still shows a message. */
+        SchedulingLinkCreateConflict: components["schemas"]["SchedulingLinkSlugTakenError"] | components["schemas"]["SchedulingLinkCreateKeyLinkError"] | components["schemas"]["SchedulingLinkCreateKeyDeletedError"];
+        /** @description A keyed `createSchedulingLink` refused because the link that its `Idempotency-Key` created has been deleted (PAC-40), at any age and for any request (PAC-119). The body is exactly `{"error":"idempotency key already used by a deleted link"}`. It names no link, since no read can find a deleted one. A client that wants a new link sends a new key. Nothing was written. */
+        SchedulingLinkCreateKeyDeletedError: {
+            /** @enum {string} */
+            error: "idempotency key already used by a deleted link";
+        };
+        /** @description A keyed `createSchedulingLink` refused because its `Idempotency-Key` already created a live link of the caller's (PAC-119). The key named in `link_id` was used either for a different request less than 24 hours ago (`idempotency key already used`) or 24 hours ago or more, whatever the request (`idempotency key expired`). `link_id` is always the caller's own link, never another account's, and the body carries nothing else of it. A client recovers by editing that link (`getSchedulingLink`, `updateSchedulingLink`). Nothing was written. */
+        SchedulingLinkCreateKeyLinkError: {
+            /** @enum {string} */
+            error: "idempotency key already used" | "idempotency key expired";
+            /** Format: uuid */
+            link_id: string;
+        };
         /** @description backend/api/handlers_scheduling_links.go schedulingHostDTO - the host shape embedded in SchedulingLink. Distinct from SchedulingLinkHostRecord, which is the raw DB row returned by POST /{id}/hosts. */
         SchedulingLinkHost: {
             /**
@@ -6410,6 +6439,11 @@ export interface components {
              */
             my_status?: "pending" | "accepted" | "declined";
             co_host_changes?: components["schemas"]["SchedulingLinkCoHostChanges"];
+        };
+        /** @description The slug 409 of `createSchedulingLink`, pinned so that the 409 variants are disjoint (PAC-119). The body is exactly `{"error":"slug already exists"}` and is written by api.writeError. A keyed create gets it only when no link is stored under its key once the key has been resolved again. */
+        SchedulingLinkSlugTakenError: {
+            /** @enum {string} */
+            error: "slug already exists";
         };
         /** @description The settings document for ONE user, returned by GET and by PATCH. Every property is always present. It has NO `llmApiKey` property at all: the key is write-only and is never returned (spec AC-11); `llmApiKeySet` reports whether one is on file. Property names come straight from the json tags on storage.Settings, camelCase throughout. `ID`, `MicrosoftTokens` and `ZoomTokens` are `json:"-"` and never appear.
          *     PAC-24 revision 3 makes this a concrete schema rather than an `allOf` over a shared field set with `readOnly`/`writeOnly` markers: all three generators (oapi-codegen, openapi-typescript, typed-openapi) dropped those markers and generated a response type carrying `llmApiKey`, and typed-openapi also dropped the `required` list (contract challenge, revision 2, finding 1). The property map is shared with `SettingsUpdate` through a YAML anchor, so the two cannot drift; every `Settings` document is a valid `SettingsUpdate` body.
@@ -7614,6 +7648,8 @@ export interface components {
         /** @description Formal team UUID. Required on this route: a missing or whitespace-only value is 400 "team_id is required".
          *      */
         RequiredTeamIdQuery: string;
+        /** @description Optional label of one logical link create (PAC-119), using the same carrier and format as PAC-82's `BookingIdempotencyKey`. It is sent as a bare token, not the IETF draft's quoted structured-field string, so a value with quotes is the 400. The client chooses it fresh for each logical create: the web editor makes a random UUID on the first Create link press of an editor session, and re-sends it only on further presses in that session. Format: 16 to 255 characters from `A-Z a-z 0-9 - _`, compared byte for byte (case-sensitive). An empty value is treated as absent; this is not part of the schema, so send no header instead. Any other value outside the format, or the header sent on two or more field lines, is 400 "invalid Idempotency-Key header". That check comes before the body is read, and nothing is written. Scope: the authenticated account. The same key from another account is unrelated, and the same key from another session of the same account is that account's key. Booking keys (PAC-82) and link-create keys are separate scopes. Window: 24 hours from the stored time of the keyed save (its transaction's `now()`), by the database clock. The resolution rules are in the operation description. The key is never returned in any response and is never removed from storage. */
+        SchedulingLinkCreateIdempotencyKey: string;
         /** @description Scheduling-link UUID. Parsed with uuid.Parse; a non-UUID value yields 400 "invalid id". */
         SchedulingLinkIdPath: string;
         /** @description Formal team UUID. */
@@ -12391,7 +12427,10 @@ export interface operations {
     createSchedulingLink: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional label of one logical link create (PAC-119), using the same carrier and format as PAC-82's `BookingIdempotencyKey`. It is sent as a bare token, not the IETF draft's quoted structured-field string, so a value with quotes is the 400. The client chooses it fresh for each logical create: the web editor makes a random UUID on the first Create link press of an editor session, and re-sends it only on further presses in that session. Format: 16 to 255 characters from `A-Z a-z 0-9 - _`, compared byte for byte (case-sensitive). An empty value is treated as absent; this is not part of the schema, so send no header instead. Any other value outside the format, or the header sent on two or more field lines, is 400 "invalid Idempotency-Key header". That check comes before the body is read, and nothing is written. Scope: the authenticated account. The same key from another account is unrelated, and the same key from another session of the same account is that account's key. Booking keys (PAC-82) and link-create keys are separate scopes. Window: 24 hours from the stored time of the keyed save (its transaction's `now()`), by the database clock. The resolution rules are in the operation description. The key is never returned in any response and is never removed from storage. */
+                "Idempotency-Key"?: components["parameters"]["SchedulingLinkCreateIdempotencyKey"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -12401,7 +12440,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Link created, with its owner host row and every invitation. The roster in `hosts` is read after the write without the strict read's guarantee (it can come back degraded, spec §2.4): clients must not use it as the co-host baseline; `getSchedulingLink` is the strict read. `co_host_changes` is computed inside the write and is never degraded. */
+            /** @description Link created, with its owner host row and every invitation. The roster in `hosts` is read after the write without the strict read's guarantee (it can come back degraded, spec §2.4): clients must not use it as the co-host baseline; `getSchedulingLink` is the strict read. `co_host_changes` is computed inside the write and is never degraded. PAC-119 replay: a keyed retry of the same request within 24 hours (operation description, rule 3) is answered 201 with the same schema and no replay marker. `id` and `slug` are the original link's. The other link fields and `hosts` are the link's current values, read as on every 201. `co_host_changes` is present exactly when the original carried a list, and is the original answer's object unchanged. Its outcomes and counts are not re-evaluated, and nobody is invited or removed. Nothing is written. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -12410,7 +12449,7 @@ export interface operations {
                     "application/json": components["schemas"]["SchedulingLinkSaved"];
                 };
             };
-            /** @description Body is not valid JSON. Body: {"error":"invalid request body"} */
+            /** @description Body: {"error":"invalid Idempotency-Key header"} (PAC-119) when the `Idempotency-Key` value is outside the parameter's format (quoted included) or the header is sent on two or more field lines. This check comes before the body is read, so a malformed key with a body that is not valid JSON, or with a body that would be a 422, is this 400. Otherwise {"error":"invalid request body"} when the body is not valid JSON. Nothing is written in either case. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12420,17 +12459,17 @@ export interface operations {
                 };
             };
             401: components["responses"]["BookingUnauthorized"];
-            /** @description Explicit slug collides with an existing link, deleted links included: a deleted link keeps its slug (PAC-40 D-3). Body: {"error":"slug already exists"} */
+            /** @description Exactly one variant, told apart by `error` alone (contract PAC-119 md §1.3). `slug already exists`: the explicit slug collides with an existing link, deleted links included, since a deleted link keeps its slug (PAC-40 D-3). With a key, this is answered only when no link is stored under that key once the key has been resolved again. PAC-119, keyed creates only (operation description, rules 1, 2 and 4): `idempotency key already used by a deleted link`, with no `link_id`; `idempotency key expired` and `idempotency key already used`, each with the `link_id` of the caller's own live link that the key created. None of them writes anything. */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BookingError"];
+                    "application/json": components["schemas"]["SchedulingLinkCreateConflict"];
                 };
             };
             422: components["responses"]["SchedulingLinkValidationError"];
-            /** @description `error` is one of "user not found", "slug generation failed", "slug check failed" or "internal error" (insert or owner-host insert failed, or the owner's settings, needed for `time_zone`, could not be read; PAC-72 revision 3.1, never the UTC fallback). The detail is written to the server log and Sentry only (PAC-21). PAC-112: also "internal error" when a co-host lookup or invitation could not be stored, or when a lock on an invitee's account was not obtained within 10 seconds (the PATCH bound, PAC-101). Every 500 from this operation leaves nothing behind: no link, no host row (spec D-4; before PAC-112 a failed owner-host insert left the link created). */
+            /** @description `error` is one of "user not found", "slug generation failed", "slug check failed" or "internal error" (insert or owner-host insert failed, or the owner's settings, needed for `time_zone`, could not be read; PAC-72 revision 3.1, never the UTC fallback). The detail is written to the server log and Sentry only (PAC-21). PAC-112: also "internal error" when a co-host lookup or invitation could not be stored, or when a lock on an invitee's account was not obtained within 10 seconds (the PATCH bound, PAC-101). Every 500 from this operation leaves nothing behind: no link, no host row (spec D-4; before PAC-112 a failed owner-host insert left the link created). PAC-119: also "internal error" when the key could not be read or stored, or when a keyed create waited more than 10 seconds for a concurrent create with the same key. No key is stored in either case, so a later retry with the key is resolved by the operation's rules. "internal error" also stays the answer to a keyless create whose generated slug was taken by a concurrent create. That is a pre-existing defect, out of scope (spec §5). It applies to a keyed create too, when the key is not stored after it is resolved again, that is when the concurrent create was another account's or used another key. A keyed create racing a create with its own key is answered by the key's rules instead. */
             500: {
                 headers: {
                     [name: string]: unknown;
