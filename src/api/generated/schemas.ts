@@ -487,6 +487,9 @@ export const SchedulingLinkCreateConflict = z.union([SchedulingLinkSlugTakenErro
 export type SchedulingLinkHostInvite = __TypedOpenapi.Schemas.SchedulingLinkHostInvite;
 export const SchedulingLinkHostInvite = z.strictObject({ link_id: z.uuid(), link_title: z.string(), owner_name: z.string(), owner_email: z.email(), invited_at: z.iso.datetime() });
 
+export type SchedulingLinkHostLimitError = __TypedOpenapi.Schemas.SchedulingLinkHostLimitError;
+export const SchedulingLinkHostLimitError = z.strictObject({ error: z.literal("this link has reached its limit of 5 co-hosts; remove a co-host before inviting another") });
+
 export type SchedulingLinkHostRecord = __TypedOpenapi.Schemas.SchedulingLinkHostRecord;
 export const SchedulingLinkHostRecord = z.strictObject({ id: z.uuid(), link_id: z.uuid(), user_id: z.uuid(), status: z.enum(["pending", "accepted", "declined"]), invited_at: z.iso.datetime(), responded_at: z.iso.datetime().optional() });
 
