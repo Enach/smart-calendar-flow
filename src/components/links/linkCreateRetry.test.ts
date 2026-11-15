@@ -66,6 +66,7 @@ describe("texts (contract §7.4, exact)", () => {
     expect(linkRefusalText("expired", true)).toBe(
       "Your earlier save, more than a day ago, already created this link. This form now edits it, but its co-hosts couldn't be loaded, so co-host changes can't be applied yet. Press Save changes to save the other fields to this link, then open it from the Links page to change its co-hosts.",
     );
+    expect(LINK_CREATE_TEXT.refusalBaselinePending).toBe("Your earlier save already created this link. Loading it…");
     expect(LINK_CREATE_TEXT.keyDeleted).toBe(
       "The link your earlier save created has since been deleted. Press Create link to create a new link.",
     );

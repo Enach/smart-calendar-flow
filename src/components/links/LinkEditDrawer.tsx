@@ -208,6 +208,10 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const baseline = useMemo(() => baselineHosts.map((h) => h.email), [baselineHosts]);
   // A new link's baseline is empty; an existing one's is the read, once it answered.
   const coHostsEditable = !editingId || baselineQuery.isSuccess;
+  // PAC-119 (review M-1): after a link refusal, until L's baseline settles,
+  // nothing can be saved. A save now would carry no co-host list (the
+  // baseline is unavailable) and silently drop the chips the owner typed (AC-31).
+  const refusalBaselinePending = refusal !== null && !baselineQuery.isSuccess && !baselineQuery.isError;
   const coHostsBlockedReason = coHostsEditable
     ? null
     : baselineQuery.isError
@@ -473,6 +477,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   });
 
   function submit() {
+    if (refusalBaselinePending) return;
     const problem = validateLinkForm(formValues);
     if (problem) {
       setError(problem);
@@ -531,7 +536,14 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
 
   const canSave = validateLinkForm(formValues) === null;
   // After a link refusal the message depends on whether L's baseline loaded.
-  const shownError = error ?? (refusal ? linkRefusalText(refusal, baselineQuery.isError) : null);
+  // While that baseline is pending, a loading text, never "press Save changes".
+  const shownError =
+    error ??
+    (refusal
+      ? refusalBaselinePending
+        ? LINK_CREATE_TEXT.refusalBaselinePending
+        : linkRefusalText(refusal, baselineQuery.isError)
+      : null);
 
   // PAC-119 (contract §7.3, AC-27): while a save is pending, no close path
   // closes the drawer. Radix routes the X button, Escape and a click outside
@@ -877,7 +889,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           <Button variant="ghost" onClick={() => requestOpenChange(false)} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!canSave || mutation.isPending}>
+          <Button onClick={submit} disabled={!canSave || mutation.isPending || refusalBaselinePending}>
             {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? "Save changes" : "Create link"}
           </Button>

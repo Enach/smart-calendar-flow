@@ -19,6 +19,12 @@ export const LINK_CREATE_TEXT = {
     "Your earlier save, more than a day ago, already created this link. This form now edits it — press Save changes to save the form to this link.",
   keyExpiredBaselineFailed:
     "Your earlier save, more than a day ago, already created this link. This form now edits it, but its co-hosts couldn't be loaded, so co-host changes can't be applied yet. Press Save changes to save the other fields to this link, then open it from the Links page to change its co-hosts.",
+  /**
+   * After a key-reused or expired refusal, while the link's baseline read is
+   * pending (review M-1): Save changes is disabled meanwhile. Not a contract
+   * text; worded like PAC-112's "Loading co-hosts…".
+   */
+  refusalBaselinePending: "Your earlier save already created this link. Loading it…",
   keyDeleted: "The link your earlier save created has since been deleted. Press Create link to create a new link.",
   /**
    * The co-host section's reason after a link refusal whose baseline read

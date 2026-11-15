@@ -425,6 +425,42 @@ describe.each([
     expect(createLink).toHaveBeenCalledTimes(2);
   });
 
+  it("AC-31 (review M-1): while L's baseline is pending, Save changes is disabled and sends nothing; once it answers, Save sends exactly {G}", async () => {
+    const read = deferred<SchedulingLink>();
+    createLink.mockRejectedValueOnce(LOST()).mockRejectedValueOnce(refusal());
+    getLink.mockReturnValue(read.promise);
+    updateLink.mockResolvedValue(saved(makeLink([host("g@co.com", "pending")])));
+    renderDrawer();
+    setTitle("Intro");
+    addCoHost("b@co.com");
+    pressCreate();
+    await waitFor(() => expect(alertText()).toBe(LINK_CREATE_TEXT.outcomeUnknown));
+    removeChip("b@co.com");
+    addCoHost("g@co.com");
+    pressCreate();
+    await waitFor(() => expect(getLink).toHaveBeenCalledWith(L));
+    await waitFor(() => expect(heading()).toBe("Edit link"));
+
+    expect(alertText()).toBe(LINK_CREATE_TEXT.refusalBaselinePending);
+    expect(alertText()).not.toMatch(/press Save changes/i);
+    const saveButton = screen.getByRole("button", { name: /save changes/i });
+    expect(saveButton).toBeDisabled();
+    pressSave();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(updateLink).not.toHaveBeenCalled();
+    expect(createLink).toHaveBeenCalledTimes(2);
+    expect(chipEmails()).toEqual(["g@co.com"]);
+
+    await act(async () => read.resolve(makeLink([host("b@co.com", "pending")])));
+    await waitFor(() => expect(alertText()).toBe(text));
+    expect(screen.getByRole("button", { name: /save changes/i })).not.toBeDisabled();
+    expect(chipEmails()).toEqual(["g@co.com"]);
+    pressSave();
+    await waitFor(() => expect(updateLink).toHaveBeenCalledTimes(1));
+    expect(updateLink.mock.calls[0][0]).toBe(L);
+    expect(updateLink.mock.calls[0][1].co_host_emails).toEqual(["g@co.com"]);
+  });
+
   it("AC-31: chips equal to the baseline as case-insensitive sets send no list", async () => {
     createLink.mockRejectedValueOnce(LOST()).mockRejectedValueOnce(refusal());
     getLink.mockResolvedValue(makeLink([host("B@Co.com", "pending")]));
