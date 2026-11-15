@@ -193,7 +193,10 @@ describe("what a save sends (contract §5.1, AC-5)", () => {
     save();
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
     expect(update.mock.calls[0][1].co_host_emails).toEqual([]);
+    // PAC-119 AC-18: an edit carries no attempt key.
+    expect(update.mock.calls[0]).toHaveLength(2);
     expect(success).toHaveBeenCalledWith("Link updated. 0 co-hosts invited. Removed 1 co-host.");
+    // PAC-119 AC-27: the close guard only refuses while pending; a settled save closes as before.
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -207,7 +210,10 @@ describe("what a save sends (contract §5.1, AC-5)", () => {
     save(/create link/i);
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     expect(create.mock.calls[0][0]).not.toHaveProperty("co_host_emails");
+    // PAC-119 (contract §7.1): the create carries the editor's attempt key as a separate argument.
+    expect(create.mock.calls[0][1]).toMatch(/^[A-Za-z0-9_-]{16,255}$/);
     expect(success).toHaveBeenCalledWith("Link created.");
+    // PAC-119 AC-27: the close guard only refuses while pending; a settled save closes as before.
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });
