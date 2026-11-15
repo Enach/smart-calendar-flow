@@ -6,13 +6,14 @@
  * only in an explicit demo session of a non-production build.
  */
 
-import { requestApi } from "./client";
+import { isApiHttpError, requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
 import type { components, operations } from "./generated/types";
 import {
   ArchivedSchedulingLinkDetail as ArchivedSchedulingLinkDetailSchema,
   ArchivedSchedulingLinkListResponse as ArchivedSchedulingLinkListResponseSchema,
   SchedulingLinkCoHostChanges as SchedulingLinkCoHostChangesSchema,
+  SchedulingLinkCreateConflict as SchedulingLinkCreateConflictSchema,
 } from "./generated/schemas";
 import type { ArchivedSchedulingLinkDetail, ArchivedSchedulingLinkListResponse } from "./types";
 import {
@@ -379,20 +380,33 @@ export const schedulingLinksApi = {
    * caller passes it (the editor passes it only when the list changed, `[]`
    * included), in the same request as the fields. The answer's
    * `co_host_changes` is returned as the server gave it; no host is padded in.
+   *
+   * PAC-119 (contract §7.1): `idempotencyKey` labels one logical create
+   * (header Idempotency-Key), a separate argument as in bookSlot. The editor
+   * makes it on its first Create link press and re-sends it on every further
+   * press of that editor session, so a retry after a lost answer never
+   * creates a second link. The demo receives `[input]` only and ignores it.
    */
   createLink: (input: {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses?: number; co_host_emails?: string[];
     booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
-  }) => {
+  }, idempotencyKey?: string) => {
     assertValidLinkBody(input);
     return demoOrReal<SchedulingLinkSaveResult>("schedulingLinksApi.createLink", [input], async () => {
         const listSent = input.co_host_emails !== undefined;
-        const raw = await requestApi<BackendSchedulingLink>("POST", "/scheduling-links/", {
-          ...backendLinkBody(input),
-          ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
-        });
+        const raw = await requestApi<BackendSchedulingLink>(
+          "POST",
+          "/scheduling-links/",
+          {
+            ...backendLinkBody(input),
+            ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
+          },
+          undefined,
+          undefined,
+          idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+        );
         const user = await requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined);
         return { link: normalizeSchedulingLink(raw, user), co_host_changes: coHostChangesOf(raw), co_host_list_sent: listSent };
       });
@@ -590,12 +604,27 @@ export const schedulingLinksApi = {
       }),
 };
 
+/** PAC-119: the 409 of a link create, one of three variants told apart by `error` alone. */
+export type SchedulingLinkCreateConflict = components["schemas"]["SchedulingLinkCreateConflict"];
+
+/**
+ * PAC-119 (contract §1.3, §7.4): the create 409's variant, parsed strictly
+ * against the generated `oneOf`, or null when `e` is not such a 409. A body
+ * that matches no variant is null too, so it keeps today's handling.
+ */
+export function linkCreateConflict(e: unknown): SchedulingLinkCreateConflict | null {
+  if (!isApiHttpError(e) || e.status !== 409) return null;
+  const parsed = SchedulingLinkCreateConflictSchema.safeParse(e.data);
+  return parsed.success ? (parsed.data as SchedulingLinkCreateConflict) : null;
+}
+
 /**
  * PAC-82 (spec D-8): a fresh key for one booking attempt, a random UUID (v4
  * form) from the platform's cryptographic generator. It fits the contract's
  * Idempotency-Key format (16 to 255 of A-Z a-z 0-9 - _). getRandomValues,
  * unlike randomUUID, also exists outside a secure context. Kept in page
- * memory only: never stored.
+ * memory only: never stored. PAC-119 (contract §7.1) uses the same generator,
+ * unchanged, for a link create's key.
  */
 export function newBookingAttemptKey(): string {
   const b = new Uint8Array(16);

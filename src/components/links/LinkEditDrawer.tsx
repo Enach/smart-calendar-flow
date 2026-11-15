@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  newBookingAttemptKey,
   schedulingLinkKeys,
   schedulingLinksApi,
   publicBookingUrl,
@@ -40,6 +41,12 @@ import {
   saveSummary,
   staysOpenAfter,
 } from "@/components/links/coHostSave";
+import {
+  LINK_CREATE_TEXT,
+  classifyCreateFailure,
+  linkRefusalText,
+  type LinkRefusal,
+} from "@/components/links/linkCreateRetry";
 
 interface LinkEditDrawerProps {
   open: boolean;
@@ -142,8 +149,29 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   // retries it. 0 while closed, so no read starts before the opening effect.
   const [baselineRead, setBaselineRead] = useState(0);
   const readCounter = useRef(0);
-  const nextBaselineRead = () => setBaselineRead(++readCounter.current);
+  const nextBaselineRead = () => {
+    const read = ++readCounter.current;
+    setBaselineRead(read);
+    return read;
+  };
   const [outcomes, setOutcomes] = useState<string[]>([]);
+
+  // PAC-119 (contract §7.2): the attempt key of this create-mode editor
+  // session. Page memory only (a ref): never localStorage, sessionStorage,
+  // IndexedDB, a cookie, the URL or history.state (AC-23). Made on the first
+  // Create link press, re-sent on every further press, dropped on a 201, a
+  // close, or a refusal; an edit never carries it.
+  const attemptKey = useRef<string | null>(null);
+  // PAC-119 (contract §7.4): whether a create of this session may have saved
+  // a link nobody has seen. Set by a lost answer, the budget 503 or a 5xx;
+  // cleared only by a 201 or the deleted refusal. While set, closing the
+  // editor refreshes the links list (AC-22).
+  const outcomeUnknown = useRef(false);
+  // PAC-119 (contract §7.4): after a key-reused or expired refusal, which one
+  // (for the message), and the baseline read whose arrival keeps the typed
+  // chips instead of replacing them (AC-31) and sets the slug from it.
+  const [refusal, setRefusal] = useState<LinkRefusal | null>(null);
+  const refusalRead = useRef(0);
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
@@ -180,10 +208,16 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const baseline = useMemo(() => baselineHosts.map((h) => h.email), [baselineHosts]);
   // A new link's baseline is empty; an existing one's is the read, once it answered.
   const coHostsEditable = !editingId || baselineQuery.isSuccess;
+  // PAC-119 (review M-1): after a link refusal, until L's baseline settles,
+  // nothing can be saved. A save now would carry no co-host list (the
+  // baseline is unavailable) and silently drop the chips the owner typed (AC-31).
+  const refusalBaselinePending = refusal !== null && !baselineQuery.isSuccess && !baselineQuery.isError;
   const coHostsBlockedReason = coHostsEditable
     ? null
     : baselineQuery.isError
-      ? CO_HOST_TEXT.baselineFailed
+      ? refusal
+        ? LINK_CREATE_TEXT.coHostsBlockedAfterRefusal
+        : CO_HOST_TEXT.baselineFailed
       : CO_HOST_TEXT.baselinePending;
   const ownerEmails = useMemo(() => {
     const out = new Set<string>();
@@ -194,17 +228,44 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
     return out;
   }, [signedInEmail, baselineLink, link]);
 
-  // The chips are the baseline read's roster as soon as it answers.
+  // The chips are the baseline read's roster as soon as it answers, except
+  // for the read that follows a link refusal (PAC-119 AC-31): there the chips
+  // the owner typed stay, as unsaved edits over that baseline, and only the
+  // slug comes from it, marked dirty (contract §7.4).
   useEffect(() => {
-    if (baselineLink) setCoHosts(baselineLink.hosts.filter((h) => !h.is_owner).map((h) => h.email));
+    if (!baselineLink) return;
+    if (refusalRead.current !== 0 && refusalRead.current === readCounter.current) {
+      setSlug(baselineLink.slug);
+      setSlugDirty(true);
+      return;
+    }
+    setCoHosts(baselineLink.hosts.filter((h) => !h.is_owner).map((h) => h.email));
   }, [baselineLink]);
+
+  // PAC-119 AC-22: leaving the page with an unknown outcome still refreshes the list.
+  useEffect(
+    () => () => {
+      if (outcomeUnknown.current) qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+    },
+    [qc],
+  );
 
   // Reset / hydrate when opening.
   useEffect(() => {
+    // PAC-119 (contract §7.2): every open and every close ends the logical
+    // create; a reopened editor starts with no key (AC-17).
+    attemptKey.current = null;
+    refusalRead.current = 0;
+    setRefusal(null);
     if (!open) {
       setBaselineRead(0);
+      // AC-22: a create whose outcome is unknown may have saved a link that
+      // the list does not hold yet.
+      if (outcomeUnknown.current) qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+      outcomeUnknown.current = false;
       return;
     }
+    outcomeUnknown.current = false;
     setError(null);
     setOutcomes([]);
     setCoHostEmail("");
@@ -243,7 +304,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setHorizonDays(BOOKING_HORIZON_DEFAULT_DAYS);
       setRefusalMessage("generic");
     }
-  }, [open, link]);
+  }, [open, link, qc]);
 
   // Auto-derive slug from title until user manually edits it.
   useEffect(() => {
@@ -312,7 +373,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   );
 
   const mutation = useMutation({
-    mutationFn: async (): Promise<SchedulingLinkSaveResult> => {
+    // `key` is the create's attempt key, null for an edit (PAC-119 AC-18).
+    mutationFn: async ({ key }: { key: string | null }): Promise<SchedulingLinkSaveResult> => {
       // PAC-112 (contract §5.1): the complete list only when it changed from the
       // baseline, `[]` included; never while the baseline is unavailable.
       const sendList = coHostsEditable && coHostsChanged(coHosts, baseline);
@@ -323,12 +385,17 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
         ...(sendList ? { co_host_emails: [...coHosts] } : {}),
       };
       if (editingId) return schedulingLinksApi.updateLink(editingId, payload);
-      return schedulingLinksApi.createLink(payload);
+      return schedulingLinksApi.createLink(payload, key ?? undefined);
     },
     onSuccess: (result) => {
       const created = !editingId;
       const saved = result.link;
       const summary = saveSummary(result, created);
+      if (created) {
+        // PAC-119: a 201 (new or replayed) ends the logical create.
+        attemptKey.current = null;
+        outcomeUnknown.current = false;
+      }
       setError(null);
       // Seed the cache with the link the server actually returned (no host is
       // added to it), so the saved data stays visible even if the list refetch
@@ -363,8 +430,46 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       onOpenChange(false);
     },
 
-    onError: (e) => {
+    onError: (e, { key }) => {
+      if (key !== null) {
+        // PAC-119 (contract §7.4): a create, answered by status and `error`.
+        const failure = classifyCreateFailure(e);
+        if (failure.kind === "outcome-unknown") {
+          // Keep the input and the key: pressing again cannot create a second link.
+          outcomeUnknown.current = true;
+          setError(LINK_CREATE_TEXT.outcomeUnknown);
+          toast.error(LINK_CREATE_TEXT.outcomeUnknown);
+          return;
+        }
+        if (failure.kind === "link-refusal") {
+          // The key already created live link L: edit L from now on, keeping
+          // everything typed (chips included) as unsaved edits over L's strict
+          // baseline. The list holds L at once, so the Links page row that the
+          // failed-baseline texts point to is there.
+          attemptKey.current = null;
+          qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
+          setEditingId(failure.linkId);
+          // Empty and dirty until L's baseline names its slug: never the
+          // title-derived preview as L's address.
+          setSlug("");
+          setSlugDirty(true);
+          refusalRead.current = nextBaselineRead();
+          setRefusal(failure.refusal);
+          setError(null);
+          return;
+        }
+        if (failure.kind === "deleted") {
+          // Stay a create editor with the typed values; the next press makes
+          // a new key. No read or edit of the deleted link.
+          attemptKey.current = null;
+          outcomeUnknown.current = false;
+          setError(LINK_CREATE_TEXT.keyDeleted);
+          toast.error(LINK_CREATE_TEXT.keyDeleted);
+          return;
+        }
+      }
       // 409 / 422 and friends keep the drawer open with an actionable message.
+      // An edit keeps PAC-83's wording (lostWrite, budget + suffix).
       const message = apiErrorMessage(e, effectOf("schedulingLinksApi.updateLink"));
       setError(message);
       toast.error(message);
@@ -372,15 +477,24 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   });
 
   function submit() {
+    if (refusalBaselinePending) return;
     const problem = validateLinkForm(formValues);
     if (problem) {
       setError(problem);
       return;
     }
     setError(null);
+    setRefusal(null);
     // A previous save's results never stay on screen beside this save's outcome.
     setOutcomes([]);
-    mutation.mutate();
+    // PAC-119 (contract §7.2): a create carries this session's key, made on
+    // the first press and re-sent on every further one; an edit carries none.
+    let key: string | null = null;
+    if (!editingId) {
+      if (!attemptKey.current) attemptKey.current = newBookingAttemptKey();
+      key = attemptKey.current;
+    }
+    mutation.mutate({ key });
   }
 
   function toggleDuration(d: number) {
@@ -421,11 +535,29 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   }
 
   const canSave = validateLinkForm(formValues) === null;
+  // After a link refusal the message depends on whether L's baseline loaded.
+  // While that baseline is pending, a loading text, never "press Save changes".
+  const shownError =
+    error ??
+    (refusal
+      ? refusalBaselinePending
+        ? LINK_CREATE_TEXT.refusalBaselinePending
+        : linkRefusalText(refusal, baselineQuery.isError)
+      : null);
+
+  // PAC-119 (contract §7.3, AC-27): while a save is pending, no close path
+  // closes the drawer. Radix routes the X button, Escape and a click outside
+  // through this one callback; Cancel is disabled below. The answer therefore
+  // always lands in the editor session that sent it.
+  const requestOpenChange = (next: boolean) => {
+    if (!next && mutation.isPending) return;
+    onOpenChange(next);
+  };
 
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+    <Sheet open={open} onOpenChange={requestOpenChange}>
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl" closeDisabled={mutation.isPending}>
         <SheetHeader className="text-left">
           <SheetTitle className="font-serif text-2xl">{isEdit ? "Edit link" : "New scheduling link"}</SheetTitle>
           <SheetDescription>Set when you (and your co-hosts) are bookable.</SheetDescription>
@@ -747,17 +879,17 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
           )}
         </div>
 
-        {error && (
+        {shownError && (
           <p role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {error}
+            {shownError}
           </p>
         )}
 
         <div className="mt-8 flex justify-end gap-2 border-t border-border pt-4">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={mutation.isPending}>
+          <Button variant="ghost" onClick={() => requestOpenChange(false)} disabled={mutation.isPending}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!canSave || mutation.isPending}>
+          <Button onClick={submit} disabled={!canSave || mutation.isPending || refusalBaselinePending}>
             {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEdit ? "Save changes" : "Create link"}
           </Button>

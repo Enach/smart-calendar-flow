@@ -472,6 +472,18 @@ export const SchedulingLinkRemovedHost = z.strictObject({ user_id: z.uuid(), ema
 export type SchedulingLinkCoHostChanges = __TypedOpenapi.Schemas.SchedulingLinkCoHostChanges;
 export const SchedulingLinkCoHostChanges = z.strictObject({ addresses: z.array(SchedulingLinkCoHostOutcome), removed: z.array(SchedulingLinkRemovedHost), invited_count: z.number().int().min(0), removed_count: z.number().int().min(0), not_added_count: z.number().int().min(0) });
 
+export type SchedulingLinkSlugTakenError = __TypedOpenapi.Schemas.SchedulingLinkSlugTakenError;
+export const SchedulingLinkSlugTakenError = z.strictObject({ error: z.literal("slug already exists") });
+
+export type SchedulingLinkCreateKeyLinkError = __TypedOpenapi.Schemas.SchedulingLinkCreateKeyLinkError;
+export const SchedulingLinkCreateKeyLinkError = z.strictObject({ error: z.enum(["idempotency key already used", "idempotency key expired"]), link_id: z.uuid() });
+
+export type SchedulingLinkCreateKeyDeletedError = __TypedOpenapi.Schemas.SchedulingLinkCreateKeyDeletedError;
+export const SchedulingLinkCreateKeyDeletedError = z.strictObject({ error: z.literal("idempotency key already used by a deleted link") });
+
+export type SchedulingLinkCreateConflict = __TypedOpenapi.Schemas.SchedulingLinkCreateConflict;
+export const SchedulingLinkCreateConflict = z.union([SchedulingLinkSlugTakenError, SchedulingLinkCreateKeyLinkError, SchedulingLinkCreateKeyDeletedError]).refine((data) => [SchedulingLinkSlugTakenError.safeParse(data).success, SchedulingLinkCreateKeyLinkError.safeParse(data).success, SchedulingLinkCreateKeyDeletedError.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
+
 export type SchedulingLinkHostInvite = __TypedOpenapi.Schemas.SchedulingLinkHostInvite;
 export const SchedulingLinkHostInvite = z.strictObject({ link_id: z.uuid(), link_title: z.string(), owner_name: z.string(), owner_email: z.email(), invited_at: z.iso.datetime() });
 
