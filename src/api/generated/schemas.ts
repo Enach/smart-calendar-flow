@@ -137,7 +137,7 @@ export type CreatePublicBookingRequest = __TypedOpenapi.Schemas.CreatePublicBook
 export const CreatePublicBookingRequest = z.strictObject({ name: z.string().min(1), email: z.string().min(1), start: z.iso.datetime(), end: z.iso.datetime().optional(), notes: z.string().optional(), duration: z.number().int().nullable().optional(), duration_minutes: z.number().int().nullable().optional() });
 
 export type CreateSchedulingLinkRequest = __TypedOpenapi.Schemas.CreateSchedulingLinkRequest;
-export const CreateSchedulingLinkRequest = z.strictObject({ title: z.string(), slug: z.string(), duration_options: z.array(z.number().int().min(1)).nullable(), durations: z.array(z.number().int().min(1)).nullable(), days_of_week: z.array(z.number().int().min(0).max(6)).nullable(), days: z.array(z.string()).nullable(), window_start_time: z.string().nullable(), window_start: z.string().nullable(), window_end_time: z.string().nullable(), window_end: z.string().nullable(), buffer_before: z.number().int().min(0).default(0), buffer_after: z.number().int().min(0).default(0), min_notice_minutes: z.number().int().min(0).default(0), booking_horizon_days: z.number().int().min(1).max(365).nullable().default(60), refusal_message: z.enum(["generic", "specific"]).nullable().default("generic"), usage_type: z.enum(["reusable", "recurring", "single_use"]).default("reusable"), max_uses: z.number().int().min(1).nullable(), co_host_emails: z.array(z.email()) }).partial();
+export const CreateSchedulingLinkRequest = z.strictObject({ title: z.string(), slug: z.string(), duration_options: z.array(z.number().int().min(1)).nullable(), durations: z.array(z.number().int().min(1)).nullable(), days_of_week: z.array(z.number().int().min(0).max(6)).nullable(), days: z.array(z.string()).nullable(), window_start_time: z.string().nullable(), window_start: z.string().nullable(), window_end_time: z.string().nullable(), window_end: z.string().nullable(), buffer_before: z.number().int().min(0).default(0), buffer_after: z.number().int().min(0).default(0), min_notice_minutes: z.number().int().min(0).default(0), booking_horizon_days: z.number().int().min(1).max(365).nullable().default(60), refusal_message: z.enum(["generic", "specific"]).nullable().default("generic"), usage_type: z.enum(["reusable", "recurring", "single_use"]).default("reusable"), max_uses: z.number().int().min(1).nullable(), co_host_emails: z.array(z.string().min(1).regex(new RegExp("\\S"))).nullable() }).partial();
 
 export type OrgSummary = __TypedOpenapi.Schemas.OrgSummary;
 export const OrgSummary = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.string(), createdAt: z.iso.datetime() });
@@ -463,6 +463,15 @@ export const SchedulingLink = z.strictObject({ id: z.uuid(), owner_id: z.uuid(),
 export type SchedulingLinkBookingRecord = __TypedOpenapi.Schemas.SchedulingLinkBookingRecord;
 export const SchedulingLinkBookingRecord = z.strictObject({ id: z.uuid(), link_id: z.uuid(), booker_name: z.string(), booker_email: z.string(), start_time: z.iso.datetime(), end_time: z.iso.datetime(), status: z.string(), notes: z.string(), created_at: z.iso.datetime() });
 
+export type SchedulingLinkCoHostOutcome = __TypedOpenapi.Schemas.SchedulingLinkCoHostOutcome;
+export const SchedulingLinkCoHostOutcome = z.strictObject({ email: z.string(), outcome: z.enum(["invited", "already_host", "own_address", "not_added"]) });
+
+export type SchedulingLinkRemovedHost = __TypedOpenapi.Schemas.SchedulingLinkRemovedHost;
+export const SchedulingLinkRemovedHost = z.strictObject({ user_id: z.uuid(), email: z.string(), status: z.enum(["pending", "accepted", "declined"]) });
+
+export type SchedulingLinkCoHostChanges = __TypedOpenapi.Schemas.SchedulingLinkCoHostChanges;
+export const SchedulingLinkCoHostChanges = z.strictObject({ addresses: z.array(SchedulingLinkCoHostOutcome), removed: z.array(SchedulingLinkRemovedHost), invited_count: z.number().int().min(0), removed_count: z.number().int().min(0), not_added_count: z.number().int().min(0) });
+
 export type SchedulingLinkHostInvite = __TypedOpenapi.Schemas.SchedulingLinkHostInvite;
 export const SchedulingLinkHostInvite = z.strictObject({ link_id: z.uuid(), link_title: z.string(), owner_name: z.string(), owner_email: z.email(), invited_at: z.iso.datetime() });
 
@@ -474,6 +483,9 @@ export const SchedulingLinkInviteResponse = z.strictObject({ status: z.enum(["ac
 
 export type SchedulingLinkListResponse = __TypedOpenapi.Schemas.SchedulingLinkListResponse;
 export const SchedulingLinkListResponse = z.strictObject({ owned: z.array(SchedulingLink), shared: z.array(SchedulingLink) });
+
+export type SchedulingLinkSaved = __TypedOpenapi.Schemas.SchedulingLinkSaved;
+export const SchedulingLinkSaved = z.strictObject({ id: z.uuid(), owner_id: z.uuid(), title: z.string(), slug: z.string(), durations: z.array(z.number().int()), days: z.array(z.enum(["sun", "mon", "tue", "wed", "thu", "fri", "sat"])), window_start: z.string(), window_end: z.string(), buffer_before: z.number().int().min(0), buffer_after: z.number().int().min(0), min_notice_minutes: z.number().int().min(0), booking_horizon_days: z.number().int().min(1).max(365), refusal_message: BookingRefusalMessage, time_zone: z.string(), usage_type: z.enum(["reusable", "recurring", "single_use"]), max_uses: z.number().int().optional(), uses_count: z.number().int().min(0), active: z.boolean(), hosts: z.array(SchedulingLinkHost), created_at: z.iso.datetime(), is_owner: z.boolean(), my_status: z.enum(["pending", "accepted", "declined"]).optional(), co_host_changes: SchedulingLinkCoHostChanges.optional() });
 
 export type WorkingHoursSchedule = __TypedOpenapi.Schemas.WorkingHoursSchedule;
 export const WorkingHoursSchedule = z.strictObject({ mode: z.enum(["", "all_days", "by_day"]), default: DaySchedule, days: z.record(z.string(), DaySchedule) });
@@ -554,7 +566,7 @@ export type TeamSlotList = __TypedOpenapi.Schemas.TeamSlotList;
 export const TeamSlotList = z.strictObject({ slots: z.array(TeamSlot) });
 
 export type UpdateSchedulingLinkRequest = __TypedOpenapi.Schemas.UpdateSchedulingLinkRequest;
-export const UpdateSchedulingLinkRequest = z.strictObject({ title: z.string().nullable(), slug: z.string().nullable(), duration_options: z.array(z.number().int()).nullable(), durations: z.array(z.number().int()).nullable(), days_of_week: z.array(z.number().int().min(0).max(6)).nullable(), days: z.array(z.string()).nullable(), window_start_time: z.string().nullable(), window_start: z.string().nullable(), window_end_time: z.string().nullable(), window_end: z.string().nullable(), buffer_before: z.number().int().min(0).nullable(), buffer_after: z.number().int().min(0).nullable(), min_notice_minutes: z.number().int().min(0).nullable(), booking_horizon_days: z.number().int().min(1).max(365).nullable(), refusal_message: z.enum(["generic", "specific"]).nullable(), usage_type: z.enum(["reusable", "recurring", "single_use"]).nullable(), max_uses: z.number().int().nullable(), active: z.boolean().nullable(), co_host_emails: z.array(z.email()) }).partial();
+export const UpdateSchedulingLinkRequest = z.strictObject({ title: z.string().nullable(), slug: z.string().nullable(), duration_options: z.array(z.number().int()).nullable(), durations: z.array(z.number().int()).nullable(), days_of_week: z.array(z.number().int().min(0).max(6)).nullable(), days: z.array(z.string()).nullable(), window_start_time: z.string().nullable(), window_start: z.string().nullable(), window_end_time: z.string().nullable(), window_end: z.string().nullable(), buffer_before: z.number().int().min(0).nullable(), buffer_after: z.number().int().min(0).nullable(), min_notice_minutes: z.number().int().min(0).nullable(), booking_horizon_days: z.number().int().min(1).max(365).nullable(), refusal_message: z.enum(["generic", "specific"]).nullable(), usage_type: z.enum(["reusable", "recurring", "single_use"]).nullable(), max_uses: z.number().int().nullable(), active: z.boolean().nullable(), co_host_emails: z.array(z.string().min(1).regex(new RegExp("\\S"))).nullable() }).partial();
 
 export type UserProfileGoStruct = __TypedOpenapi.Schemas.UserProfileGoStruct;
 export const UserProfileGoStruct = z.strictObject({ user_id: z.uuid(), is_manager: z.boolean(), detected_at: z.iso.datetime().nullable(), analytics_shared_with_manager: z.boolean(), updated_at: z.iso.datetime() });

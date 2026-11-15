@@ -6,7 +6,7 @@
  */
 import { BOOKING_HORIZON_DEFAULT_DAYS } from "@/api/types";
 import { ApiHttpError } from "@/api/client";
-import type { PublicSlotsAnswer, PublicSlotsParams } from "@/api/schedulingLinks";
+import type { PublicSlotsAnswer, PublicSlotsParams, SchedulingLinkCoHostChanges, SchedulingLinkSaveResult } from "@/api/schedulingLinks";
 import { addDaysToKey, dateKeyInZone, groupStartsByDay, offsetMinutes, wallTimeInZone } from "@/lib/timeZone";
 import type {
   ArchivedSchedulingLinkBooking,
@@ -327,6 +327,68 @@ function isLinkExhausted(link: SchedulingLink): boolean {
 }
 
 
+// ---------- PAC-112: the co-host list a save carries (contract §2, §3.3, §5.5) ----------
+
+const DEMO_OVER_FIVE =
+  "a co-host list longer than 5 can only keep or remove co-hosts, and this one names someone who is not a current host of the link";
+const DEMO_BLANK = "co_host_emails must not contain a blank address";
+
+/** ECMA-262 `\s` (the contract's trim and blank test). */
+const trimEcma = (value: string) => value.replace(/^\s+|\s+$/g, "");
+
+/**
+ * The demo's answer to a list, by the server's rules with "domain-confirmed
+ * holder" meaning an address of the demo directory: own address, already a
+ * host, invited (directory addresses only), or not added. Throws the server's
+ * 422 for a blank entry, or for a list longer than 5 that names someone who is
+ * not a current host (the owner counts as one). Nothing is changed on a throw.
+ */
+function demoCoHostPlan(
+  entries: string[],
+  owner: SchedulingHost,
+  currentCoHosts: SchedulingHost[],
+): { hosts: SchedulingHost[]; changes: SchedulingLinkCoHostChanges } {
+  if (entries.some((e) => trimEcma(e) === "")) throw new ApiHttpError(422, { error: DEMO_BLANK });
+  const ownerKey = owner.email.toLowerCase();
+  const hostByKey = new Map(currentCoHosts.map((h) => [h.email.toLowerCase(), h]));
+  const keys = entries.map((e) => trimEcma(e).toLowerCase());
+  if (keys.length > 5 && keys.some((k) => k !== ownerKey && !hostByKey.has(k))) {
+    throw new ApiHttpError(422, { error: DEMO_OVER_FIVE });
+  }
+  const kept = new Map<string, SchedulingHost>();
+  const invited = new Map<string, SchedulingHost>();
+  const notAdded = new Set<string>();
+  const addresses = entries.map((entry, i): SchedulingLinkCoHostChanges["addresses"][number] => {
+    const email = trimEcma(entry);
+    const key = keys[i];
+    if (key === ownerKey) return { email, outcome: "own_address" };
+    const host = hostByKey.get(key);
+    if (host) {
+      kept.set(key, host);
+      return { email, outcome: "already_host" };
+    }
+    if (KNOWN_DIRECTORY[key]) {
+      if (!invited.has(key)) invited.set(key, buildHostFromEmail(email, "pending"));
+      return { email, outcome: "invited" };
+    }
+    notAdded.add(key);
+    return { email, outcome: "not_added" };
+  });
+  const removed = currentCoHosts
+    .filter((h) => !kept.has(h.email.toLowerCase()))
+    .map((h) => ({ user_id: h.user_id ?? `u_${h.email}`, email: h.email, status: h.status }));
+  return {
+    hosts: [...currentCoHosts.filter((h) => kept.has(h.email.toLowerCase())), ...invited.values()],
+    changes: {
+      addresses,
+      removed,
+      invited_count: invited.size,
+      removed_count: removed.length,
+      not_added_count: notAdded.size,
+    },
+  };
+}
+
 /** The demo answer of each schedulingLinksApi operation, keyed by its name. */
 export const demoSchedulingLinksOps = {
   listLinks: () => ({
@@ -344,12 +406,21 @@ export const demoSchedulingLinksOps = {
         mockState.invites = mockState.invites.filter((i) => i.link_id !== linkId);
       },
 
+  getLink: (id: string) => {
+        const link = mockState.links.find((l) => l.id === id);
+        if (!link) throw new ApiHttpError(404, { error: "not found" });
+        return { ...link, hosts: [...link.hosts] };
+      },
+
   createLink: (input: {
     title: string; slug: string; durations: number[]; days: Weekday[]; window_start: string; window_end: string;
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
-    max_uses?: number; co_host_emails: string[];
+    max_uses?: number; co_host_emails?: string[];
     booking_horizon_days?: number; refusal_message?: BookingRefusalMessage;
-  }) => {
+  }): SchedulingLinkSaveResult => {
+        const owner = makeOwnerHost();
+        const listSent = input.co_host_emails !== undefined && input.co_host_emails !== null;
+        const plan = listSent ? demoCoHostPlan(input.co_host_emails ?? [], owner, []) : undefined;
         const link: SchedulingLink = {
           id: `lnk_${++mockState.nextId}`, owner_id: ME_USER.id, title: input.title, slug: input.slug,
           durations: input.durations, days: input.days, window_start: input.window_start, window_end: input.window_end,
@@ -357,11 +428,11 @@ export const demoSchedulingLinksOps = {
           usage_type: input.usage_type, max_uses: input.usage_type === "recurring" ? input.max_uses : undefined, uses_count: 0,
           booking_horizon_days: input.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS,
           refusal_message: input.refusal_message ?? "generic",
-          active: true, hosts: [makeOwnerHost(), ...input.co_host_emails.map((e) => buildHostFromEmail(e, "pending"))],
+          active: true, hosts: [owner, ...(plan?.hosts ?? [])],
           created_at: new Date().toISOString(), is_owner: true,
         };
         mockState.links.unshift(link);
-        return { ...link, hosts: [...link.hosts] };
+        return { link: { ...link, hosts: [...link.hosts] }, co_host_changes: plan?.changes, co_host_list_sent: listSent };
       },
 
   updateLink: (id: string, input: Partial<{
@@ -369,19 +440,20 @@ export const demoSchedulingLinksOps = {
     buffer_before: number; buffer_after: number; min_notice_minutes: number; usage_type: LinkUsageType;
     max_uses: number | undefined; active: boolean; co_host_emails: string[];
     booking_horizon_days: number; refusal_message: BookingRefusalMessage;
-  }>) => {
+  }>): SchedulingLinkSaveResult => {
         const idx = mockState.links.findIndex((l) => l.id === id);
-        if (idx < 0) throw new Error("not found");
+        if (idx < 0) throw new ApiHttpError(404, { error: "not found" });
         const current = mockState.links[idx];
-        const updated: SchedulingLink = { ...current, ...input } as SchedulingLink;
+        const { co_host_emails: list, ...fields } = input;
+        const listSent = list !== undefined && list !== null;
+        // Decided before anything changes: a refused list changes nothing (contract §3.3).
+        const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
+        const plan = listSent ? demoCoHostPlan(list ?? [], owner, current.hosts.filter((h) => !h.is_owner)) : undefined;
+        const updated: SchedulingLink = { ...current, ...fields } as SchedulingLink;
         if (input.usage_type && input.usage_type !== "recurring") updated.max_uses = undefined;
-        if (input.co_host_emails) {
-          const owner = current.hosts.find((h) => h.is_owner) ?? makeOwnerHost();
-          const byEmail = new Map(current.hosts.filter((h) => !h.is_owner).map((h) => [h.email.toLowerCase(), h]));
-          updated.hosts = [owner, ...input.co_host_emails.map((e) => byEmail.get(e.toLowerCase()) ?? buildHostFromEmail(e, "pending"))];
-        }
+        if (plan) updated.hosts = [owner, ...plan.hosts];
         mockState.links[idx] = updated;
-        return { ...updated, hosts: [...updated.hosts] };
+        return { link: { ...updated, hosts: [...updated.hosts] }, co_host_changes: plan?.changes, co_host_list_sent: listSent };
       },
 
   deleteLink: (id: string) => {

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LinkEditDrawer } from "./LinkEditDrawer";
 import { api } from "@/api/client";
 import { clearFreebusyCache } from "@/api/coverageCache";
+import { schedulingLinksApi } from "@/api/schedulingLinks";
 import type { CoverageStatus, SchedulingLink } from "@/api/types";
 
 // PAC-41: the co-host chip reads free/busy's two statuses, names no calendar
@@ -117,6 +118,8 @@ describe("LinkEditDrawer co-host chips (PAC-41)", () => {
     for (const status of ["known", "unknown"] as const) {
       clearFreebusyCache();
       const freebusy = freebusyAnswers({ "bob@co.com": status });
+      // PAC-112: the host record comes from the strict single-link read.
+      const getLink = vi.spyOn(schedulingLinksApi, "getLink").mockResolvedValue(link);
       const view = renderDrawer(link);
       // Let the free/busy answer arrive before reading the chip.
       await waitFor(() => expect(freebusy).toHaveBeenCalled());
@@ -126,6 +129,7 @@ describe("LinkEditDrawer co-host chips (PAC-41)", () => {
       expect(within(li).queryByText(/Availability/)).toBeNull();
       view.unmount();
       freebusy.mockRestore();
+      getLink.mockRestore();
     }
   });
 });

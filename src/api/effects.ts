@@ -51,6 +51,7 @@ export const OPERATION_EFFECTS = {
   "schedulingLinksApi.listInvites": "read",
   "schedulingLinksApi.acceptInvite": "write",
   "schedulingLinksApi.declineInvite": "write",
+  "schedulingLinksApi.getLink": "read",
   "schedulingLinksApi.createLink": "write",
   "schedulingLinksApi.updateLink": "write",
   "schedulingLinksApi.deleteLink": "write",

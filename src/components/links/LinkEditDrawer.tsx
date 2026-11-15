@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, Plus, Loader2 } from "lucide-react";
 
@@ -13,8 +13,9 @@ import {
   publicBookingUrl,
   validateLinkForm,
   type LinkFormValues,
+  type SchedulingLinkSaveResult,
 } from "@/api/schedulingLinks";
-import { api, apiErrorMessage } from "@/api/client";
+import { apiErrorMessage } from "@/api/client";
 
 import { getFreebusy } from "@/api/coverageCache";
 import {
@@ -30,6 +31,15 @@ import {
 import { CoverageBadge, type ChipState } from "@/components/links/CoverageBadge";
 import { toast } from "@/hooks/useToast";
 import { effectOf } from "@/api/effects";
+import { AuthContext } from "@/contexts/auth-context";
+import {
+  CO_HOST_ADD_CAP,
+  CO_HOST_TEXT,
+  coHostsChanged,
+  outcomeLines,
+  saveSummary,
+  staysOpenAfter,
+} from "@/components/links/coHostSave";
 
 interface LinkEditDrawerProps {
   open: boolean;
@@ -119,7 +129,21 @@ function emailValid(email: string) {
 
 export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps) {
   const qc = useQueryClient();
-  const isEdit = !!link;
+  // The signed-in user, when the drawer is inside the auth provider: the
+  // owner's own address is refused as a chip (PAC-112 AC-14).
+  const signedInEmail = useContext(AuthContext)?.user?.email;
+  // PAC-112 (contract §5.4): the link this editor saves to. It starts as the
+  // link it was opened on; after a create that keeps the editor open it is the
+  // created link, so a further save edits it and never creates another.
+  const [editingId, setEditingId] = useState<string | null>(link?.id ?? null);
+  const isEdit = !!editingId;
+  // A fresh value on every open and after every save that keeps the editor
+  // open: each value is one strict baseline read (contract §5.1), so reopening
+  // retries it. 0 while closed, so no read starts before the opening effect.
+  const [baselineRead, setBaselineRead] = useState(0);
+  const readCounter = useRef(0);
+  const nextBaselineRead = () => setBaselineRead(++readCounter.current);
+  const [outcomes, setOutcomes] = useState<string[]>([]);
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
@@ -138,16 +162,56 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   const [coHostEmail, setCoHostEmail] = useState("");
   const [coHosts, setCoHosts] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const initialEmails = useMemo(
-    () => (link ? link.hosts.filter((h) => !h.is_owner).map((h) => h.email) : []),
-    [link],
-  );
+
+  // PAC-112 (contract §5.1): the co-host baseline comes only from the strict
+  // single-link read, never from the links list or a save's answer.
+  const baselineQuery = useQuery({
+    queryKey: ["scheduling-link-baseline", editingId, baselineRead],
+    queryFn: () => schedulingLinksApi.getLink(editingId as string),
+    enabled: open && !!editingId && baselineRead > 0,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const baselineLink = editingId ? baselineQuery.data : undefined;
+  const baselineHosts = useMemo(() => (baselineLink ? baselineLink.hosts.filter((h) => !h.is_owner) : []), [baselineLink]);
+  const baseline = useMemo(() => baselineHosts.map((h) => h.email), [baselineHosts]);
+  // A new link's baseline is empty; an existing one's is the read, once it answered.
+  const coHostsEditable = !editingId || baselineQuery.isSuccess;
+  const coHostsBlockedReason = coHostsEditable
+    ? null
+    : baselineQuery.isError
+      ? CO_HOST_TEXT.baselineFailed
+      : CO_HOST_TEXT.baselinePending;
+  const ownerEmails = useMemo(() => {
+    const out = new Set<string>();
+    if (signedInEmail) out.add(signedInEmail.trim().toLowerCase());
+    for (const h of [...(baselineLink?.hosts ?? []), ...(link?.hosts ?? [])]) {
+      if (h.is_owner && h.email) out.add(h.email.trim().toLowerCase());
+    }
+    return out;
+  }, [signedInEmail, baselineLink, link]);
+
+  // The chips are the baseline read's roster as soon as it answers.
+  useEffect(() => {
+    if (baselineLink) setCoHosts(baselineLink.hosts.filter((h) => !h.is_owner).map((h) => h.email));
+  }, [baselineLink]);
 
   // Reset / hydrate when opening.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setBaselineRead(0);
+      return;
+    }
     setError(null);
+    setOutcomes([]);
     setCoHostEmail("");
+    setEditingId(link?.id ?? null);
+    nextBaselineRead();
+    // Never the links list's roster (AC-6): the chips wait for the strict read.
+    setCoHosts([]);
     if (link) {
       setTitle(link.title);
       setSlug(link.slug);
@@ -163,7 +227,6 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setMaxUses(link.max_uses ?? 5);
       setHorizonDays(link.booking_horizon_days ?? BOOKING_HORIZON_DEFAULT_DAYS);
       setRefusalMessage(link.refusal_message ?? "generic");
-      setCoHosts(link.hosts.filter((h) => !h.is_owner).map((h) => h.email));
     } else {
       setTitle("");
       setSlug("");
@@ -179,7 +242,6 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setMaxUses(5);
       setHorizonDays(BOOKING_HORIZON_DEFAULT_DAYS);
       setRefusalMessage("generic");
-      setCoHosts([]);
     }
   }, [open, link]);
 
@@ -215,12 +277,12 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   }, [coverageQuery.data]);
 
   function chipStateFor(email: string): ChipState {
-    const wasAlreadyHere = initialEmails.includes(email);
-    // Co-hosts who already accepted in a prior session are full Paceday users.
-    if (link && wasAlreadyHere) {
-      const host = link.hosts.find((h) => h.email.toLowerCase() === email.toLowerCase());
-      if (host?.status === "accepted" && host.user_id) return { kind: "paceday-accepted" };
-      if (host?.status === "pending") return { kind: "paceday-pending" };
+    // The host record comes from the strict baseline read (PAC-112), never the list.
+    const host = baselineHosts.find((h) => h.email.toLowerCase() === email.toLowerCase());
+    if (host) {
+      // Co-hosts who already accepted in a prior session are full Paceday users.
+      if (host.status === "accepted" && host.user_id) return { kind: "paceday-accepted" };
+      if (host.status === "pending") return { kind: "paceday-pending" };
     }
     if (coverageQuery.isLoading) return { kind: "loading" };
     const cov = coverageByEmail.get(email.toLowerCase());
@@ -250,40 +312,54 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   );
 
   const mutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (): Promise<SchedulingLinkSaveResult> => {
+      // PAC-112 (contract §5.1): the complete list only when it changed from the
+      // baseline, `[]` included; never while the baseline is unavailable.
+      const sendList = coHostsEditable && coHostsChanged(coHosts, baseline);
       const payload = {
         ...formValues,
         title: title.trim(),
         slug: slug.trim(),
-        co_host_emails: coHosts,
+        ...(sendList ? { co_host_emails: [...coHosts] } : {}),
       };
-      if (link) return schedulingLinksApi.updateLink(link.id, payload);
+      if (editingId) return schedulingLinksApi.updateLink(editingId, payload);
       return schedulingLinksApi.createLink(payload);
     },
-    onSuccess: (saved) => {
-      const newCount = coHosts.filter((e) => !initialEmails.includes(e)).length;
+    onSuccess: (result) => {
+      const created = !editingId;
+      const saved = result.link;
+      const summary = saveSummary(result, created);
       setError(null);
-      // Seed the cache with the link the server actually returned, so the saved
-      // data stays visible even if the list refetch below fails.
-      if (saved) {
-        qc.setQueryData<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(
-          schedulingLinkKeys.links,
-          (prev) => {
-            const base = prev ?? { owned: [], shared: [] };
-            const owned = base.owned.some((l) => l.id === saved.id)
-              ? base.owned.map((l) => (l.id === saved.id ? saved : l))
-              : [saved, ...base.owned];
-            return { owned, shared: base.shared };
-          },
-        );
-      }
+      // Seed the cache with the link the server actually returned (no host is
+      // added to it), so the saved data stays visible even if the list refetch
+      // below fails.
+      qc.setQueryData<{ owned: SchedulingLink[]; shared: SchedulingLink[] }>(
+        schedulingLinkKeys.links,
+        (prev) => {
+          const base = prev ?? { owned: [], shared: [] };
+          const owned = base.owned.some((l) => l.id === saved.id)
+            ? base.owned.map((l) => (l.id === saved.id ? saved : l))
+            : [saved, ...base.owned];
+          return { owned, shared: base.shared };
+        },
+      );
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.links });
       qc.invalidateQueries({ queryKey: schedulingLinkKeys.invites });
-      if (newCount > 0) {
-        toast.success(`Invites sent to ${newCount} co-host${newCount === 1 ? "" : "s"}`);
-      } else {
-        toast.success(isEdit ? "Link updated" : "Link created");
+      if (staysOpenAfter(result)) {
+        // Contract §5.4: name the addresses, re-read the baseline, and edit the
+        // saved link from now on (a create becomes an edit, never a second POST).
+        // The "Save results" live region announces the summary there; no toast,
+        // so it is not announced twice.
+        setOutcomes([...summary, ...outcomeLines(result.co_host_changes)]);
+        setEditingId(saved.id);
+        setSlug(saved.slug);
+        setSlugDirty(true);
+        setCoHosts([]);
+        setCoHostEmail("");
+        nextBaselineRead();
+        return;
       }
+      toast.success(summary.join(" "));
       onOpenChange(false);
     },
 
@@ -302,6 +378,8 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       return;
     }
     setError(null);
+    // A previous save's results never stay on screen beside this save's outcome.
+    setOutcomes([]);
     mutation.mutate();
   }
 
@@ -313,6 +391,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   }
 
   function addCoHost() {
+    if (!coHostsEditable) return;
     const email = coHostEmail.trim().toLowerCase();
     setError(null);
     if (!email) return;
@@ -320,12 +399,16 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       setError("Please enter a valid email address.");
       return;
     }
-    if (coHosts.includes(email)) {
-      setError("This co-host is already added.");
+    if (ownerEmails.has(email)) {
+      setError(CO_HOST_TEXT.ownAddressRefused);
       return;
     }
-    if (coHosts.length >= 5) {
-      setError("You can invite up to 5 co-hosts.");
+    if (coHosts.some((e) => e.toLowerCase() === email)) {
+      setError(CO_HOST_TEXT.duplicate);
+      return;
+    }
+    if (coHosts.length >= CO_HOST_ADD_CAP) {
+      setError(CO_HOST_TEXT.cap);
       return;
     }
     setCoHosts((prev) => [...prev, email]);
@@ -333,6 +416,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
   }
 
   function removeCoHost(email: string) {
+    if (!coHostsEditable) return;
     setCoHosts((prev) => prev.filter((e) => e !== email));
   }
 
@@ -599,6 +683,9 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             <div className="flex gap-2">
               <Input
                 type="email"
+                aria-label="Co-host email"
+                disabled={!coHostsEditable}
+                aria-describedby={coHostsBlockedReason ? "co-hosts-blocked" : undefined}
                 value={coHostEmail}
                 onChange={(e) => setCoHostEmail(e.target.value)}
                 onKeyDown={(e) => {
@@ -609,11 +696,19 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                 }}
                 placeholder="teammate@example.com"
               />
-              <Button type="button" variant="outline" size="sm" onClick={addCoHost} className="shrink-0">
+              <Button type="button" variant="outline" size="sm" onClick={addCoHost} disabled={!coHostsEditable} className="shrink-0">
                 <Plus className="h-4 w-4" /> Add
               </Button>
             </div>
-            
+            {/* Always mounted, so screen readers announce the text when it is set. */}
+            <p
+              id="co-hosts-blocked"
+              role="status"
+              className={coHostsBlockedReason ? "text-xs text-muted-foreground" : "sr-only"}
+            >
+              {coHostsBlockedReason ?? ""}
+            </p>
+
             {coHosts.length > 0 && (
               <ul className="flex flex-wrap gap-2 pt-1">
                 {coHosts.map((email) => (
@@ -625,6 +720,7 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
                     <CoverageBadge state={chipStateFor(email)} />
                     <button
                       type="button"
+                      disabled={!coHostsEditable}
                       onClick={() => removeCoHost(email)}
                       className="rounded-full p-0.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                       aria-label={`Remove ${email}`}
@@ -637,6 +733,18 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
             )}
             <p className="pt-1 text-[11px] text-muted-foreground">{coHosts.length}/5 co-hosts</p>
           </div>
+        </div>
+
+        {/* Always mounted (empty until a save keeps the editor open), so the
+            results are announced when they appear. */}
+        <div role="status" aria-label="Save results">
+          {outcomes.length > 0 && (
+            <div className="mt-4 space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-foreground">
+              {outcomes.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          )}
         </div>
 
         {error && (

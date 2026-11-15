@@ -67,12 +67,10 @@ describe("scheduling links contract", () => {
     });
   });
 
-  it("sends the frozen backend body names when creating a link", async () => {
+  it("sends the frozen backend body names when creating a link, with the co-host list in the same POST (PAC-112)", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const path = requestPath(input);
-      if (path === "/api/scheduling-links/" && init?.method === "POST") return jsonResponse(BACKEND_LINK);
-      if (path === "/api/scheduling-links/l1/hosts") return jsonResponse({ ok: true });
-      if (path === "/api/scheduling-links/l1") return jsonResponse(BACKEND_LINK);
+      if (path === "/api/scheduling-links/" && init?.method === "POST") return jsonResponse(BACKEND_LINK, 201);
       return jsonResponse({ id: "u1", email: "owner@co.com" });
     });
 
@@ -104,53 +102,157 @@ describe("scheduling links contract", () => {
       buffer_after: 10,
       min_notice_minutes: 60,
       usage_type: "reusable",
+      co_host_emails: ["mate@co.com"],
     });
     expect(body).not.toHaveProperty("durations");
     expect(body).not.toHaveProperty("days");
     expect(body).not.toHaveProperty("slug");
 
-    const hostCall = fetchMock.mock.calls.find(([input]) => requestPath(input) === "/api/scheduling-links/l1/hosts");
-    expect(JSON.parse(String(hostCall?.[1]?.body))).toEqual({ email: "mate@co.com" });
+    // PAC-112 D-1: no per-address invitation request any more.
+    expect(fetchMock.mock.calls.some(([input]) => requestPath(input).endsWith("/hosts"))).toBe(false);
   });
 
-  it("invites only new co-hosts when a link is saved, never existing ones", async () => {
-    const posted: string[] = [];
+  it("PAC-112: a create without a list sends no co_host_emails key; an emptied list is sent as []", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      if (requestPath(input) === "/api/scheduling-links/" && init?.method === "POST") {
+        bodies.push(JSON.parse(String(init?.body)));
+        return jsonResponse(BACKEND_LINK, 201);
+      }
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    const base = {
+      title: "Intro", slug: "", durations: [30], days: ["mon"] as Weekday[], window_start: "09:00", window_end: "17:00",
+      buffer_before: 0, buffer_after: 0, min_notice_minutes: 0, usage_type: "reusable" as const,
+    };
+    const without = await schedulingLinksApi.createLink(base);
+    await schedulingLinksApi.createLink({ ...base, co_host_emails: [] });
+    expect(bodies[0]).not.toHaveProperty("co_host_emails");
+    expect(bodies[1].co_host_emails).toEqual([]);
+    expect(without.co_host_list_sent).toBe(false);
+    expect(without.co_host_changes).toBeUndefined();
+  });
+
+  it("PAC-112 AC-13: the save returns the server's co_host_changes and only the hosts the server returned", async () => {
+    const changes = {
+      addresses: [
+        { email: "b@co.com", outcome: "invited" },
+        { email: "c@nowhere.io", outcome: "not_added" },
+      ],
+      removed: [],
+      invited_count: 1,
+      removed_count: 0,
+      not_added_count: 1,
+    };
+    fetchMock.mockImplementation(async (input, init) => {
+      if (requestPath(input) === "/api/scheduling-links/" && init?.method === "POST") {
+        return jsonResponse({
+          ...BACKEND_LINK,
+          hosts: [...BACKEND_LINK.hosts, { user_id: "u2", email: "b@co.com", is_owner: false, status: "pending" }],
+          co_host_changes: changes,
+        }, 201);
+      }
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+
+    const saved = await schedulingLinksApi.createLink({
+      title: "Intro", slug: "", durations: [30], days: ["mon"] as Weekday[], window_start: "09:00", window_end: "17:00",
+      buffer_before: 0, buffer_after: 0, min_notice_minutes: 0, usage_type: "reusable", co_host_emails: ["b@co.com", "c@nowhere.io"],
+    });
+    expect(saved.co_host_list_sent).toBe(true);
+    expect(saved.co_host_changes).toEqual(changes);
+    // No pending host is invented for c@nowhere.io.
+    expect(saved.link.hosts.map((h) => h.email)).toEqual(["owner@co.com", "b@co.com"]);
+    expect(saved.link).not.toHaveProperty("co_host_changes");
+  });
+
+  it("PAC-112 §5.3 fallback: an answer without co_host_changes, or with one that does not parse, reports none", async () => {
+    let answer: Record<string, unknown> = BACKEND_LINK;
     fetchMock.mockImplementation(async (input, init) => {
       const path = requestPath(input);
-      if (path === "/api/scheduling-links/l1/hosts") {
-        posted.push(JSON.parse(String(init?.body)).email);
-        return jsonResponse({}, 201);
+      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") return jsonResponse(answer);
+      if (path === "/api/scheduling-links/l1") return jsonResponse(BACKEND_LINK);
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    const old = await schedulingLinksApi.updateLink("l1", { co_host_emails: ["b@co.com"] });
+    expect(old).toMatchObject({ co_host_list_sent: true, co_host_changes: undefined });
+
+    answer = { ...BACKEND_LINK, co_host_changes: { addresses: [], invited_count: "one" } };
+    const malformed = await schedulingLinksApi.updateLink("l1", { co_host_emails: ["b@co.com"] });
+    expect(malformed).toMatchObject({ co_host_list_sent: true, co_host_changes: undefined });
+  });
+
+  it("PAC-112 AC-5: an update carries the fields and the complete list in one PATCH, never a /hosts call", async () => {
+    const patches: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init?.body)));
+        return jsonResponse({ ...BACKEND_LINK, title: "Renamed" });
       }
-      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") return jsonResponse({});
+      if (path.endsWith("/hosts")) throw new Error("no per-address request may be sent");
       if (path === "/api/scheduling-links/l1") {
         return jsonResponse({
           ...BACKEND_LINK,
           hosts: [
             { email: "owner@co.com", is_owner: true, status: "accepted" },
-            { email: "Accepted@co.com", status: "accepted" },
+            { email: "E@co.com", status: "accepted" },
           ],
         });
       }
       return jsonResponse({ id: "u1", email: "owner@co.com" });
     });
 
-    await schedulingLinksApi.updateLink("l1", {
-      title: "Renamed",
-      co_host_emails: ["accepted@co.com", "new@co.com"],
-    });
-    expect(posted).toEqual(["new@co.com"]);
+    await schedulingLinksApi.updateLink("l1", { title: "Renamed", co_host_emails: ["g@co.com"] });
+    expect(patches).toHaveLength(1);
+    expect(patches[0]).toMatchObject({ title: "Renamed", co_host_emails: ["g@co.com"] });
+
+    await schedulingLinksApi.updateLink("l1", { title: "Again" });
+    expect(patches[1]).not.toHaveProperty("co_host_emails");
+    await schedulingLinksApi.updateLink("l1", { co_host_emails: [] });
+    expect(patches[2].co_host_emails).toEqual([]);
   });
 
-  it("returns the server response after an update, not the local form state", async () => {
+  it("PAC-72 with PAC-112: a co-host change keeps the server's booking horizon and refusal message", async () => {
+    let patch: Record<string, unknown> = {};
     fetchMock.mockImplementation(async (input, init) => {
       const path = requestPath(input);
-      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") return jsonResponse({});
-      if (path === "/api/scheduling-links/l1") return jsonResponse({ ...BACKEND_LINK, title: "Server title" });
+      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") {
+        patch = JSON.parse(String(init?.body));
+        return jsonResponse({ ...BACKEND_LINK, booking_horizon_days: 21, refusal_message: "specific" });
+      }
+      if (path === "/api/scheduling-links/l1") {
+        return jsonResponse({ ...BACKEND_LINK, booking_horizon_days: 21, refusal_message: "specific" });
+      }
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    await schedulingLinksApi.updateLink("l1", { co_host_emails: ["g@co.com"] });
+    expect(patch).toMatchObject({ booking_horizon_days: 21, refusal_message: "specific", co_host_emails: ["g@co.com"] });
+  });
+
+  it("returns the server's answer to an update, not the local form state", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/l1" && init?.method === "PATCH") return jsonResponse({ ...BACKEND_LINK, title: "Server title" });
+      if (path === "/api/scheduling-links/l1") return jsonResponse(BACKEND_LINK);
       return jsonResponse({ id: "u1", email: "owner@co.com" });
     });
 
     const updated = await schedulingLinksApi.updateLink("l1", { title: "Local title" });
-    expect(updated.title).toBe("Server title");
+    expect(updated.link.title).toBe("Server title");
+  });
+
+  it("PAC-112 §5.1: getLink is the strict single-link read and a failure stays an error", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = requestPath(input);
+      if (path === "/api/scheduling-links/l1") return jsonResponse({ ...BACKEND_LINK, hosts: [...BACKEND_LINK.hosts, { user_id: "u2", email: "Pat@Acme.com", status: "accepted" }] });
+      return jsonResponse({ id: "u1", email: "owner@co.com" });
+    });
+    const link = await schedulingLinksApi.getLink("l1");
+    expect(link.hosts.filter((h) => !h.is_owner).map((h) => h.email)).toEqual(["Pat@Acme.com"]);
+
+    fetchMock.mockImplementation(async () => jsonResponse({ error: "internal error" }, 500));
+    await expect(schedulingLinksApi.getLink("l1")).rejects.toSatisfy((e: unknown) => isApiHttpError(e) && e.status === 500);
   });
 
   it("handles 204 responses on delete and leave without a JSON parse error", async () => {
@@ -306,16 +408,17 @@ describe("strict backend validation alignment (422)", () => {
     const created = { ...BACKEND_LINK, id: "new", slug: "server-slug" };
     fetchMock.mockImplementation(async (input, init) => {
       const path = requestPath(input);
-      if (path === "/api/scheduling-links/" && init?.method === "POST") return jsonResponse(created);
-      if (path === "/api/scheduling-links/new") return jsonResponse(created);
+      if (path === "/api/scheduling-links/" && init?.method === "POST") return jsonResponse(created, 201);
       if (path === "/api/auth/me") return jsonResponse({ id: "u1", email: "owner@co.com" });
-      return jsonResponse({ id: "u1", email: "owner@co.com" });
+      return jsonResponse({ detail: "unexpected request" }, 500);
     });
 
+    // PAC-112: the created link is the POST's answer; no read after the write
+    // can turn a committed create into an error the owner would retry.
     const saved = await schedulingLinksApi.createLink(base);
     // The server-generated slug is what the UI renders — never a fabricated one.
-    expect(saved.slug).toBe("server-slug");
-    expect(saved.id).toBe("new");
+    expect(saved.link.slug).toBe("server-slug");
+    expect(saved.link.id).toBe("new");
 
     // The subsequent list refetch fails with an HTTP error: it must stay an
     // error (no demo links) while the created link above remains valid data.
