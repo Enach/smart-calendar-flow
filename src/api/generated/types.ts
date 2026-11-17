@@ -9467,7 +9467,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
-            /** @description Storage failure. Body: {"error":"internal error"}. Includes a failed read of the link owner's settings, needed for `time_zone` (PAC-72 revision 3.1): never answered with the UTC fallback. Includes a failed read of the link's accepted hosts or of a host's user record (PAC-122 SF-027): never a 200 with `hosts` emptied, a host left out or `coverage` undercounted. */
+            /** @description Storage failure. Body: {"error":"internal error"}. Includes a failed read of the link owner's settings, needed for `time_zone` (PAC-72 revision 3.1): never answered with the UTC fallback. Includes a failed read of the link's accepted hosts or of a host's user record (PAC-122 SF-027): never a 200 with `hosts` emptied, a host left out or `coverage.total` undercounted. */
             500: {
                 headers: {
                     [name: string]: unknown;
