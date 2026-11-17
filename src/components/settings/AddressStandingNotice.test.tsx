@@ -15,10 +15,12 @@ function renderWith(user: AuthUser | null) {
     isDemo: false,
     loading: false,
     sessionStale: false,
+    signOutFailure: null,
     refresh: async () => {},
     enterDemo: () => {},
     exitDemo: () => {},
-    logout: async () => {},
+    logout: async () => true,
+    dismissSignOutFailure: () => {},
   };
   return render(
     <AuthContext.Provider value={value}>
