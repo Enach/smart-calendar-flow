@@ -66,7 +66,7 @@ import {
 } from "@/api/manager";
 import { failedManagerTeam, loadingManagerTeam, managerTeamFromRoster } from "@/business/managerTeam";
 import type { ScanPreview } from "@/contracts/managerTeam";
-import { teamsApi, validateTeamName } from "@/api/teams";
+import { teamsApi, validateTeamEmail, validateTeamName } from "@/api/teams";
 import { apiErrorMessage } from "@/api/client";
 import { ProtectedHoursTab } from "@/components/team/ProtectedHoursTab";
 import { FindATimeTab } from "@/components/team/FindATimeTab";
@@ -1280,30 +1280,96 @@ export function AddPersonDialog({
   );
 }
 
-function CreateTeamDialog({
+type CreatedTeam = ReturnType<typeof teamsApi.list>[number];
+
+interface CreateTeamResult {
+  team: CreatedTeam;
+  sent: string[];
+  failed: { email: string; message: string }[];
+}
+
+export function CreateTeamDialog({
   open,
   onOpenChange,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (t: ReturnType<typeof teamsApi.list>[number]) => void;
+  onCreated: (t: CreatedTeam) => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitees, setInvitees] = useState<string[]>([]);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  // Set only when some invites failed: the team exists, and the dialog stays
+  // open to say exactly which addresses were not invited.
+  const [result, setResult] = useState<CreateTeamResult | null>(null);
+
+  const reset = () => {
+    setName("");
+    setError(null);
+    setInviteEmail("");
+    setInvitees([]);
+    setInviteError(null);
+    setResult(null);
+  };
+
+  const noopResolved = useCallback(() => {}, []);
+
+  const addInvitee = () => {
+    const invalid = validateTeamEmail(inviteEmail);
+    if (invalid) {
+      setInviteError(invalid);
+      return;
+    }
+    const norm = inviteEmail.trim().toLowerCase();
+    setInvitees((list) => (list.includes(norm) ? list : [...list, norm]));
+    setInviteEmail("");
+    setInviteError(null);
+  };
 
   const createMut = useMutation({
-    mutationFn: () => teamsApi.remote.createTeam(name),
-    // Keep the typed name on error.
+    mutationFn: async (): Promise<CreateTeamResult> => {
+      const team = await teamsApi.remote.createTeam(name);
+      const sent: string[] = [];
+      const failed: CreateTeamResult["failed"] = [];
+      // One at a time, through the same path as the team's Invite dialog.
+      for (const email of invitees) {
+        try {
+          await teamsApi.remote.inviteMember(team.id, email);
+          sent.push(email);
+        } catch (e) {
+          failed.push({ email, message: apiErrorMessage(e, effectOf("teams.inviteMember")) });
+        }
+      }
+      return { team, sent, failed };
+    },
+    // Keep the typed name and invitees on error: the team was not created.
     onError: (e) => setError(apiErrorMessage(e, effectOf("teams.createTeam"))),
-    onSuccess: (t) => {
-      toast.success(`Team "${t.name}" created.`);
-      setName("");
-      setError(null);
+    onSuccess: (r) => {
+      if (r.failed.length > 0) {
+        setError(null);
+        setResult(r);
+        return;
+      }
+      toast.success(
+        r.sent.length > 0
+          ? `Team "${r.team.name}" created. Invites sent to ${peopleCount(r.sent.length)}.`
+          : `Team "${r.team.name}" created.`,
+      );
+      reset();
       onOpenChange(false);
-      onCreated(t);
+      onCreated(r.team);
     },
   });
+
+  const finish = () => {
+    const team = result?.team;
+    reset();
+    onOpenChange(false);
+    if (team) onCreated(team);
+  };
 
   const submit = () => {
     const invalid = validateTeamName(name);
@@ -1319,11 +1385,12 @@ function CreateTeamDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) {
-          setName("");
-          setError(null);
+        if (!o && result) {
+          finish();
+          return;
         }
+        onOpenChange(o);
+        if (!o) reset();
       }}
     >
       <DialogContent className="sm:max-w-md">
@@ -1333,37 +1400,122 @@ function CreateTeamDialog({
             Coordinate protected hours, find meeting times, and see team analytics together.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <label className="block text-xs font-medium text-foreground">
-            Team name <span className="text-[#EF4444]">*</span>
-            <input
-              type="text"
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              className={inputCls + " mt-1"}
-              placeholder="Platform team"
-            />
-          </label>
-          {error && (
+        {result ? (
+          <div className="space-y-3" data-testid="create-team-invite-result">
+            <p className="text-sm text-foreground">
+              Team &ldquo;{result.team.name}&rdquo; was created.
+              {result.sent.length > 0 && ` Invites sent to ${peopleCount(result.sent.length)}.`}
+            </p>
             <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
-              {error}
+              <p className="font-medium">
+                {result.failed.length === 1
+                  ? "This invite was not sent:"
+                  : `These ${result.failed.length} invites were not sent:`}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {result.failed.map((f) => (
+                  <li key={f.email}>
+                    <span className="font-medium">{f.email}</span> — {f.message}
+                  </li>
+                ))}
+              </ul>
             </div>
-          )}
-          <p className="text-[11px] text-muted-foreground">
-            You will be the team owner. Invite teammates after creation.
-          </p>
-        </div>
+            <p className="text-[11px] text-muted-foreground">
+              You can invite them again with the Invite button on the team page.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-foreground">
+              Team name <span className="text-[#EF4444]">*</span>
+              <input
+                type="text"
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                className={inputCls + " mt-1"}
+                placeholder="Platform team"
+              />
+            </label>
+            <div className="text-xs font-medium text-foreground">
+              Invite people <span className="text-muted-foreground">(optional)</span>
+              <div className="mt-1 flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <ContactEmailAutocomplete
+                    label="Invite by email"
+                    value={inviteEmail}
+                    onValueChange={(v) => {
+                      setInviteEmail(v);
+                      setInviteError(null);
+                    }}
+                    onContactResolved={noopResolved}
+                    exclude={invitees}
+                    onSubmit={addInvitee}
+                    inputClassName={inputCls}
+                  />
+                </div>
+                <Button type="button" variant="outline" onClick={addInvitee} className="h-10 shrink-0">
+                  Add
+                </Button>
+              </div>
+            </div>
+            {inviteError && (
+              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                {inviteError}
+              </div>
+            )}
+            {invitees.length > 0 && (
+              <ul aria-label="People to invite" className="flex flex-wrap gap-1.5">
+                {invitees.map((email) => (
+                  <li
+                    key={email}
+                    className="inline-flex items-center gap-1 rounded-full bg-muted py-1 pl-2.5 pr-1 text-xs text-foreground"
+                  >
+                    {email}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${email}`}
+                      onClick={() => setInvitees((list) => list.filter((x) => x !== email))}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {error && (
+              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                {error}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              You will be the team owner. Invites are sent once the team is created.
+            </p>
+          </div>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={createMut.isPending} className="bg-primary text-white hover:bg-primary/90">
-            {createMut.isPending ? "Creating…" : "Create team"}
-          </Button>
+          {result ? (
+            <Button onClick={finish} className="bg-primary text-white hover:bg-primary/90">
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={submit} disabled={createMut.isPending} className="bg-primary text-white hover:bg-primary/90">
+                {createMut.isPending ? "Creating…" : invitees.length > 0 ? "Create and invite" : "Create team"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+function peopleCount(n: number): string {
+  return `${n} ${n === 1 ? "person" : "people"}`;
 }
