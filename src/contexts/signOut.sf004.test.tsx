@@ -4,7 +4,9 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 import { AuthProvider } from "./AuthContext";
 import { useAuth } from "./useAuth";
-import { SignOutFailedAlert, SIGN_OUT_NOT_CONFIRMED_TITLE } from "@/components/SignOutFailedAlert";
+import { SignOutFailedAlert } from "@/components/SignOutFailedAlert";
+import { SIGN_OUT_NOT_CONFIRMED_TITLE, signOutFailureReason } from "@/components/signOutFailure";
+import { ApiHttpError } from "@/api/client";
 import { Navbar } from "@/components/Navbar";
 import Logout from "@/pages/Logout";
 
@@ -20,7 +22,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function Probe() {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, refresh } = useAuth();
   const location = useLocation();
   if (loading) return <span>loading</span>;
   return (
@@ -28,6 +30,8 @@ function Probe() {
       <span data-testid="who">{user ? `user:${user.email}` : "anon"}</span>
       <span data-testid="where">{location.pathname}</span>
       <button onClick={() => void logout()}>sign out</button>
+      <button onClick={() => void refresh()}>refresh</button>
+      <main>page</main>
     </div>
   );
 }
@@ -44,6 +48,12 @@ function renderApp(initial = "/app") {
       </AuthProvider>
     </MemoryRouter>,
   );
+}
+
+async function failSignOut(fail: () => void = () => fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"))) {
+  fail();
+  fireEvent.click(screen.getByRole("button", { name: "sign out" }));
+  return screen.findByRole("alert");
 }
 
 async function signedIn() {
@@ -172,6 +182,9 @@ describe("SF-004: a failed sign-out is not shown as signed out", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(SIGN_OUT_NOT_CONFIRMED_TITLE);
     expect(screen.getByTestId("where")).toHaveTextContent("/app");
     expect(screen.getByTestId("who")).toHaveTextContent("user:a@x.com");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.getByRole("button", { name: "Account menu" })).toHaveFocus();
   });
 
   it.runIf(__PACEDAY_DEMO_BUILD__)("signing out of a demo sends no logout request and raises no alert", async () => {
@@ -183,5 +196,74 @@ describe("SF-004: a failed sign-out is not shown as signed out", () => {
     await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"));
     expect(logoutCalls()).toHaveLength(0);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  // ---- review follow-ups on PR #169 ----
+
+  it("is fixed above the sticky navbar and takes focus on its Retry when it appears", async () => {
+    await signedIn();
+    const alert = await failSignOut();
+    expect(alert).toHaveClass("fixed", "top-0", "z-40");
+    expect(screen.getByRole("button", { name: /retry sign-out/i })).toHaveFocus();
+  });
+
+  it("treats a 403 as not confirmed: the user stays signed in under the alert", async () => {
+    await signedIn();
+    const alert = await failSignOut(() =>
+      fetchMock.mockResolvedValueOnce(jsonResponse({ error: "csrf token missing" }, 403)),
+    );
+    expect(alert).toHaveTextContent(SIGN_OUT_NOT_CONFIRMED_TITLE);
+    expect(alert).toHaveTextContent("HTTP 403");
+    expect(screen.getByTestId("who")).toHaveTextContent("user:a@x.com");
+  });
+
+  it("never shows a JSON body's error, message or detail word for word", async () => {
+    await signedIn();
+    const alert = await failSignOut(() =>
+      fetchMock.mockResolvedValueOnce(jsonResponse({ error: "upstream proxy said boom" }, 400)),
+    );
+    expect(alert).not.toHaveTextContent("upstream proxy said boom");
+    expect(alert).toHaveTextContent("HTTP 400");
+    for (const data of [{ error: "raw-e" }, { message: "raw-m" }, { detail: "raw-d" }]) {
+      for (const status of [400, 403, 404, 409, 500]) {
+        expect(signOutFailureReason(new ApiHttpError(status, data))).not.toMatch(/raw-/);
+      }
+    }
+  });
+
+  it("clears the alert when /api/auth/me later answers 401 (the session is gone)", async () => {
+    await signedIn();
+    await failSignOut();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));
+    fireEvent.click(screen.getByRole("button", { name: "refresh" }));
+
+    await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("Dismiss hides the alert, keeps the user signed in and returns focus to the page", async () => {
+    await signedIn();
+    await failSignOut();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("who")).toHaveTextContent("user:a@x.com");
+    expect(screen.getByRole("main")).toHaveFocus();
+  });
+
+  it("marks Retry aria-busy, not disabled, while the retry is in flight", async () => {
+    await signedIn();
+    await failSignOut();
+    let answer: (r: Response) => void = () => {};
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => (answer = resolve)));
+    const retry = screen.getByTestId("sign-out-retry");
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(retry).toHaveAttribute("aria-busy", "true"));
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry); // a repeat click sends nothing more
+    expect(logoutCalls()).toHaveLength(2);
+
+    answer(new Response(null, { status: 204 }));
+    await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"));
   });
 });

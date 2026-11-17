@@ -1,25 +1,24 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { apiFailureMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
+import { classifyApiFailure } from "@/api/client";
+import { SIGN_OUT_NOT_CONFIRMED_TEXT, SIGN_OUT_NOT_CONFIRMED_TITLE, signOutFailureReason } from "./signOutFailure";
 import { useAuth } from "@/contexts/useAuth";
 
-export const SIGN_OUT_NOT_CONFIRMED_TITLE = "Sign-out not confirmed";
-export const SIGN_OUT_NOT_CONFIRMED_TEXT =
-  "Paceday didn't confirm that you're signed out, so you are still signed in on this device. If this is a shared computer, don't leave it until sign-out is confirmed.";
-const SERVER_PROBLEM = "The server had a problem. Try again shortly.";
-
-/**
- * Why the sign-out was not confirmed, in the PAC-83 wording. Retrying a
- * sign-out is safe (it only expires this browser's cookie), so a lost answer
- * gets the read wording, which offers a retry, not the write one.
- */
-function reasonFor(error: unknown): string {
-  // A JSON 5xx carries the server's terse detail ("internal error"); say it plainly.
-  if (isApiHttpError(error) && error.status >= 500 && classifyApiFailure(error) === "http") return SERVER_PROBLEM;
-  return apiFailureMessage(error, "read").message;
+/** Where focus goes when the alert is dismissed: the account menu, else the main content. */
+function returnFocus() {
+  const trigger = document.querySelector<HTMLElement>('[aria-label="Account menu"]');
+  if (trigger) {
+    trigger.focus();
+    return;
+  }
+  const main = document.querySelector<HTMLElement>("main");
+  if (main) {
+    if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+    main.focus();
+  }
 }
 
 /**
@@ -30,24 +29,45 @@ export function SignOutFailedAlert() {
   const { signOutFailure, logout, dismissSignOutFailure } = useAuth();
   const navigate = useNavigate();
   const [retrying, setRetrying] = useState(false);
+  const retryRef = useRef<HTMLButtonElement>(null);
+  // aria-busy, not disabled, keeps Retry focusable; this ref drops repeat clicks.
+  const inFlight = useRef(false);
+
+  // Move focus to Retry whenever a (new) failure is shown, so keyboard and
+  // screen-reader users land on the way out of it. A layout effect, so the
+  // focus moves in the same commit that shows the alert, never later.
+  useLayoutEffect(() => {
+    if (signOutFailure) retryRef.current?.focus();
+  }, [signOutFailure]);
+
   if (!signOutFailure) return null;
 
   const retry = async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setRetrying(true);
     try {
       if (await logout()) navigate("/", { replace: true });
     } finally {
+      inFlight.current = false;
       setRetrying(false);
     }
   };
 
-  const reason = reasonFor(signOutFailure.error);
+  const dismiss = () => {
+    if (inFlight.current) return;
+    dismissSignOutFailure();
+    returnFocus();
+  };
+
+  const reason = signOutFailureReason(signOutFailure.error);
   return (
     <div
       role="alert"
       data-testid="sign-out-failed"
       data-error-kind={classifyApiFailure(signOutFailure.error)}
-      className="flex flex-wrap items-start justify-center gap-3 border-b border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-foreground"
+      // Fixed above the sticky navbar (z-30) so it is seen however far the page is scrolled.
+      className="fixed inset-x-0 top-0 z-40 flex flex-wrap items-start justify-center gap-3 border-b border-destructive/30 bg-background px-4 py-3 text-sm text-foreground shadow-md"
     >
       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
       <div className="min-w-0 max-w-2xl flex-1">
@@ -63,13 +83,14 @@ export function SignOutFailedAlert() {
           size="sm"
           variant="outline"
           data-testid="sign-out-retry"
+          ref={retryRef}
           onClick={() => void retry()}
-          disabled={retrying}
+          aria-busy={retrying}
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
           {retrying ? "Signing out…" : "Retry sign-out"}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={dismissSignOutFailure} disabled={retrying}>
+        <Button type="button" size="sm" variant="ghost" data-testid="sign-out-dismiss" onClick={dismiss}>
           Dismiss
         </Button>
       </div>
