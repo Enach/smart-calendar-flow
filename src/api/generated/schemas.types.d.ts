@@ -2106,7 +2106,7 @@ export type PublicBookingConflict = (BookingSlotUnavailableError | BookingIdempo
  */
 export type PublicBookingSlot = { start: string, end: string }
 /**
- * How many accepted hosts had a STORED Google calendar token when the page was rendered. `total` counts accepted hosts whose user record resolved; `checked` counts those among them for whom a Google token row loads, whether or not that token still works. Nothing is renewed or tested to compute it. A host whose Google credential is dead, including one whose loss Paceday has recorded (PAC-67), still counts as checked, while the host's calendar cannot be read, so that host is busy and no slot is offered (owner decision PAC-72 D-6; before 2026-11-01 the slots were computed without that host's calendar); a host with no Google token row at all (for example one on Outlook) is not counted as checked. This is deliberate: counting only usable tokens would tell every visitor with the link that a host's connection is dead (spec PAC-67 D-14, AC-28). Before PAC-67 this description said "a usable OAuth token", which was not what the server counted (factory section 7.2). Always present, even as {0,0}.
+ * How many accepted hosts had a STORED Google calendar token when the page was rendered. `total` counts every accepted host (a host whose user record cannot be read is the operation's 500, never left out; PAC-122 SF-027); `checked` counts those among them for whom a Google token row loads, whether or not that token still works. Nothing is renewed or tested to compute it. A host whose Google credential is dead, including one whose loss Paceday has recorded (PAC-67), still counts as checked, while the host's calendar cannot be read, so that host is busy and no slot is offered (owner decision PAC-72 D-6; before 2026-11-01 the slots were computed without that host's calendar); a host with no Google token row at all (for example one on Outlook) is not counted as checked. This is deliberate: counting only usable tokens would tell every visitor with the link that a host's connection is dead (spec PAC-67 D-14, AC-28). Before PAC-67 this description said "a usable OAuth token", which was not what the server counted (factory section 7.2). Always present, even as {0,0}.
  */
 export type PublicLinkCoverage = { total: number, checked: number }
 /**
@@ -2533,7 +2533,7 @@ export type SchedulingLinkListResponse = {
   shared: Array<SchedulingLink>;
 }
 /**
- * PAC-112. The answer to `createSchedulingLink` (201) and `updateSchedulingLink` (200): every property of `SchedulingLink` (shared through a YAML anchor, so the two cannot drift) plus the optional `co_host_changes`. The roster in `hosts` is built like the list's, not like `getSchedulingLink`'s, and is never a co-host baseline (spec D-3). `required` is shared through a second anchor, so neither the property map nor the required list can drift.
+ * PAC-112. The answer to `createSchedulingLink` (201) and `updateSchedulingLink` (200): every property of `SchedulingLink` (shared through a YAML anchor, so the two cannot drift) plus the optional `co_host_changes`. The roster in `hosts` is built without the strict read's guarantee (a failed roster read can empty it or blank a host's email; PAC-122 SF-029 leaves this open), unlike `getSchedulingLink`'s and, since PAC-122, the list's, and is never a co-host baseline (spec D-3). `required` is shared through a second anchor, so neither the property map nor the required list can drift.
  */
 export type SchedulingLinkSaved = {
   id: string;
@@ -5802,7 +5802,7 @@ export type get_GetIntegrationAvailability = {
       
     }
 /**
- * Idempotent. The storage error is discarded, so this is always 204.
+ * Idempotent. PAC-122 (SF-003): a failed delete is the 500 {"error":"internal error"} and the connection stays stored.
  */
 export type delete_DisconnectNotion = {
       method: "DELETE",
@@ -5878,8 +5878,9 @@ export type get_GetNotionStatus = {
       
     }
 /**
- * Deletes the `workspace_connections` row for (user, "slack"). The storage error is
- * explicitly discarded, so a failed delete is still reported as 204. Deleting a
+ * Deletes the `workspace_connections` row for (user, "slack"). PAC-122 (SF-003): a
+ * failed delete is the 500 {"error":"internal error"} and the connection stays
+ * stored. Deleting a
  * connection that does not exist is also 204 — this endpoint is idempotent and
  * never reports 404.
  */
@@ -6266,7 +6267,7 @@ export type post_AddManagerTeamMember = {
       
     }
 /**
- * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. Every storage error on this path is swallowed, so a failed delete still returns 204.
+ * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. PAC-122 (SF-001): every storage error on this path is the 500 {"error":"internal error"}; with `team_id` the membership, assignment and pending-invite deletes run in one transaction, so a failed delete removes nothing.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
  */
 export type delete_RemoveManagerTeamMember = {
@@ -7066,7 +7067,7 @@ export type get_GetArchivedSchedulingLink = {
       
     }
 /**
- * Invites whose link or owner can no longer be loaded are silently dropped from the list, and so are invites to a deleted link (PAC-40 AC-5). Invites to a paused link (`active=false`) are still listed (PAC-30 D-5). Returns `[]` (never null) when there are none.
+ * Invites to a deleted link are omitted (PAC-40 AC-5), and so are invites whose link or owner no longer exists. A storage error while reading an invite's link or its owner is the 500, never a shorter list (PAC-122 SF-030; before it such an invite was silently dropped). Invites to a paused link (`active=false`) are still listed (PAC-30 D-5). Returns `[]` (never null) when there are none.
  */
 export type get_ListSchedulingLinkHostInvites = {
       method: "GET",
@@ -7127,7 +7128,7 @@ export type post_DeclineSchedulingLinkHostInvite = {
       
     }
 /**
- * routes.go:157-158 registers `slh.listHostInvites` at BOTH `/host-invites` and `/invites`. Byte-for-byte identical behaviour and response; neither is deprecated in code. The frontend only ever calls `/host-invites`. Invites to a deleted link are omitted, as there (PAC-40).
+ * routes.go:157-158 registers `slh.listHostInvites` at BOTH `/host-invites` and `/invites`. Byte-for-byte identical behaviour and response; neither is deprecated in code. The frontend only ever calls `/host-invites`. Invites to a deleted link are omitted, and a failed read of an invite's link or owner is the 500, as there (PAC-40, PAC-122 SF-030).
  */
 export type get_ListSchedulingLinkInvitesAlias = {
       method: "GET",
@@ -7144,7 +7145,7 @@ export type get_ListSchedulingLinkInvitesAlias = {
 /**
  * Readable only by the link's owner and by co-hosts whose host row on the link is `accepted` (PAC-25, API-006), and only while the link is not deleted: a deleted link answers every caller, owner and accepted co-hosts included, the same `404 {"error":"not found"}` as an id that matches no link (PAC-40 AC-2, D-9); the owner reads it through `getArchivedSchedulingLink` instead. A paused link (`active=false`) is still returned to its owner and accepted co-hosts. That is the same set of callers who receive the link from `GET /api/scheduling-links`, so this read discloses nothing the list does not. Every other authenticated caller (no host row, a `pending` or `declined` invitation, a co-host who left or was removed) receives the same `404 {"error":"not found"}` as for an id that matches no link, with no part of the link in the body, so the answer does not reveal whether a link exists. A refused read is never `403` (PAC-25 D-1; contrast the owner-only siblings PATCH, DELETE, `/bookings` and `/hosts`, which still answer `403` and are out of scope). Check order: `400` malformed id; then the link lookup, which does not find a deleted link; then the caller's own host-status lookup on that link; then `404` for no link (never existed or deleted) or a caller who may not read it; then `200`. A storage error on either lookup answers `500` `{"error":"internal error"}`, never `404` (an outage is not reported as "not found") and never `200` (the reader check does not fail open). An allowed reader receives the full record including every host row (accepted, pending and declined) with each host's email, name and avatar; `is_owner` is computed against the caller and `my_status` is the caller's own host status. Building that record reads the roster (the link's host rows and each host's user record); a storage error on that read also answers `500` `{"error":"internal error"}`, never `200` with `hosts: []` or with a host's email missing (PAC-25 C-2). An accepted co-host therefore still sees pending and declined invitees' emails, as through the list (PAC-25 D-2).
  * 
- * PAC-112 (spec D-3, §6): this is the ONLY read from which a client may take a link's co-host list as the baseline for a co-host edit (the list sent in `co_host_emails` is the complete list, so a baseline missing someone removes them). The answers of `listSchedulingLinks`, `createSchedulingLink` and `updateSchedulingLink` build the roster without this guarantee and must not be used as a baseline. The strictness above (500, never a degraded roster) is therefore load-bearing and must not be relaxed; it is pinned by TestPAC25GetLinkRosterFailureIs500.
+ * PAC-112 (spec D-3, §6): this is the ONLY read from which a client may take a link's co-host list as the baseline for a co-host edit (the list sent in `co_host_emails` is the complete list, so a baseline missing someone removes them). The answers of `listSchedulingLinks`, `createSchedulingLink` and `updateSchedulingLink` must not be used as a baseline: create and PATCH build the roster without this guarantee, and the list, although it reads the roster strictly since PAC-122 (SF-029: a failed roster read is its 500), is not the baseline read either. The strictness above (500, never a degraded roster) is therefore load-bearing and must not be relaxed; it is pinned by TestPAC25GetLinkRosterFailureIs500.
  */
 export type get_GetSchedulingLink = {
       method: "GET",
