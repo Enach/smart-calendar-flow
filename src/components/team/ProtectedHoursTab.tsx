@@ -34,6 +34,7 @@ import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { effectOf } from "@/api/effects";
 import type { Attendee } from "@/api/types";
 import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
+import { keepDialogOpenForOpenCombobox } from "@/lib/comboboxEscape";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -580,7 +581,12 @@ export function InviteDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   teamId: string;
-  /** Members and pending invitees: never suggested again. */
+  /**
+   * The team's current members: never suggested again. Pending invitees are
+   * not covered on the server-backed team: the contract has no endpoint that
+   * lists pending invites, so they cannot be excluded yet (PAC-129 makes an
+   * invited person a member, which will cover them).
+   */
   existingEmails: readonly string[];
   onInvited: () => void;
 }) {
@@ -588,6 +594,9 @@ export function InviteDialog({
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const nameSource = useRef<"empty" | "auto" | "manual">("empty");
+  // Set synchronously on submit: a second Enter can arrive before the
+  // mutation's pending state has rendered.
+  const inFlight = useRef(false);
 
   const handleEmailChange = useCallback((value: string) => {
     setEmail(value);
@@ -607,6 +616,9 @@ export function InviteDialog({
     mutationFn: () => teamsApi.remote.inviteMember(teamId, email, name),
     // Typed values are preserved on failure.
     onError: (e) => setError(apiErrorMessage(e, effectOf("teams.inviteMember"))),
+    onSettled: () => {
+      inFlight.current = false;
+    },
     onSuccess: () => {
       toast.success(`Invite sent to ${email}.`);
       setEmail("");
@@ -619,18 +631,20 @@ export function InviteDialog({
   });
 
   const submit = () => {
+    if (inFlight.current) return;
     const invalid = validateTeamEmail(email);
     if (invalid) {
       setError(invalid);
       return;
     }
     setError(null);
+    inFlight.current = true;
     inviteMut.mutate();
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-sm" onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
         <DialogHeader>
           <DialogTitle className="font-serif text-lg">Invite to team</DialogTitle>
           <DialogDescription>

@@ -52,6 +52,7 @@ export function ContactEmailAutocomplete({
     if (query.length < 2) {
       setResults([]);
       setSearchFailed(false);
+      setLoading(false);
       return;
     }
 
@@ -181,11 +182,10 @@ export function ContactEmailAutocomplete({
         </ul>
       )}
 
-      {searchFailed && (
-        <p role="status" className="mt-1 text-xs font-normal text-[#B91C1C]">
-          Couldn't search your calendar contacts. You can still type the full email address.
-        </p>
-      )}
+      {/* Always mounted, so screen readers announce the failure when it appears. */}
+      <p role="status" aria-live="polite" className={searchFailed ? "mt-1 text-xs font-normal text-[#B91C1C]" : "sr-only"}>
+        {searchFailed ? "Couldn't search your calendar contacts. You can still type the full email address." : ""}
+      </p>
     </div>
   );
 }

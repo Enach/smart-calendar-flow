@@ -8,10 +8,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, ApiUnreachableError, api } from "@/api/client";
-import { teamsApi, type FormalTeam } from "@/api/teams";
+import { ApiGatewayError, ApiHttpError, ApiUnreachableError, api } from "@/api/client";
+import { teamsApi, type FormalTeam, type FormalTeamMember } from "@/api/teams";
 import { InviteDialog } from "@/components/team/ProtectedHoursTab";
-import { CreateTeamDialog } from "./Team";
+import { AddPersonDialog, CreateTeamDialog } from "./Team";
 
 function renderWithClient(ui: ReactElement) {
   const client = new QueryClient({
@@ -29,15 +29,31 @@ const TEAM: FormalTeam = {
   no_meeting_zones: [],
 };
 
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
+async function openSuggestions(name: string, query: string) {
+  const input = screen.getByRole("combobox", { name });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: query } });
+  await screen.findByRole("listbox");
+  return input;
+}
+
 describe("team InviteDialog suggestions", () => {
-  it("suggests calendar contacts except members and pending invitees, selectable by keyboard", async () => {
+  it("suggests calendar contacts except current members, selectable by keyboard", async () => {
     const suggest = vi.spyOn(api, "suggestAttendees").mockResolvedValue([
       { email: "member@example.com", name: "Mia Member" },
-      { email: "Pending@Example.com", name: "Pat Pending" },
+      { email: "Other.Member@Example.com", name: "Otto Member" },
       { email: "newbie@example.com", name: "Nina Newbie" },
     ]);
     const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(null);
@@ -48,21 +64,19 @@ describe("team InviteDialog suggestions", () => {
         open
         onOpenChange={() => {}}
         teamId="team-9"
-        existingEmails={["member@example.com", "pending@example.com"]}
+        existingEmails={["member@example.com", "other.member@example.com"]}
         onInvited={onInvited}
       />,
     );
 
-    const input = screen.getByRole("combobox", { name: "Email" });
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "example" } });
-    await waitFor(() => expect(suggest).toHaveBeenCalledWith("example"));
+    const input = await openSuggestions("Email", "example");
+    expect(suggest).toHaveBeenCalledWith("example");
 
-    const options = await screen.findAllByRole("option");
+    const options = screen.getAllByRole("option");
     expect(options).toHaveLength(1);
     expect(options[0]).toHaveTextContent("Nina Newbie");
     expect(screen.queryByText("Mia Member")).not.toBeInTheDocument();
-    expect(screen.queryByText("Pat Pending")).not.toBeInTheDocument();
+    expect(screen.queryByText("Otto Member")).not.toBeInTheDocument();
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "Enter" });
@@ -77,6 +91,40 @@ describe("team InviteDialog suggestions", () => {
     await waitFor(() => expect(onInvited).toHaveBeenCalled());
   });
 
+  it("Escape on an open suggestion list closes the list, not the dialog", async () => {
+    vi.spyOn(api, "suggestAttendees").mockResolvedValue([{ email: "nina@example.com", name: "Nina" }]);
+    const onOpenChange = vi.fn();
+    renderWithClient(
+      <InviteDialog open onOpenChange={onOpenChange} teamId="team-9" existingEmails={[]} onInvited={() => {}} />,
+    );
+
+    const input = await openSuggestions("Email", "nina");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("nina");
+
+    // With the list closed, Escape closes the dialog as usual.
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("sends one invite for a double Enter", async () => {
+    vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
+    const pending = deferred<FormalTeamMember | null>();
+    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockReturnValue(pending.promise);
+    renderWithClient(
+      <InviteDialog open onOpenChange={() => {}} teamId="team-9" existingEmails={[]} onInvited={() => {}} />,
+    );
+
+    const input = screen.getByRole("combobox", { name: "Email" });
+    fireEvent.change(input, { target: { value: "sam@example.com" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    pending.resolve(null);
+    await waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
+  });
+
   it("says when the contact search failed and still lets an address be typed", async () => {
     vi.spyOn(api, "suggestAttendees").mockRejectedValue(new ApiUnreachableError("network"));
     renderWithClient(
@@ -86,8 +134,23 @@ describe("team InviteDialog suggestions", () => {
     const input = screen.getByRole("combobox", { name: "Email" });
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "sam" } });
-    expect(await screen.findByRole("status")).toHaveTextContent(/search your calendar contacts/);
+    const notice = await screen.findByText(/search your calendar contacts/);
+    expect(notice).toHaveAttribute("role", "status");
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+});
+
+describe("AddPersonDialog", () => {
+  it("Escape on an open suggestion list closes the list, not the dialog", async () => {
+    vi.spyOn(api, "suggestAttendees").mockResolvedValue([{ email: "nina@example.com", name: "Nina" }]);
+    const onOpenChange = vi.fn();
+    renderWithClient(<AddPersonDialog open teamId="team-1" onOpenChange={onOpenChange} onAdded={() => {}} />);
+
+    const input = await openSuggestions("Email", "nina");
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(input).toHaveValue("nina");
   });
 });
 
@@ -98,6 +161,10 @@ describe("CreateTeamDialog initial invitees", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
   }
 
+  function typeTeamName() {
+    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+  }
+
   it("invites each person after the team is created and closes when all succeed", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     const create = vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
@@ -106,7 +173,7 @@ describe("CreateTeamDialog initial invitees", () => {
     const onOpenChange = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={onOpenChange} onCreated={onCreated} />);
-    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+    typeTeamName();
     addInvitee("a@example.com");
     addInvitee("B@example.com");
     addInvitee("a@example.com"); // de-duplicated
@@ -123,6 +190,31 @@ describe("CreateTeamDialog initial invitees", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("includes an address that was typed but not added", async () => {
+    vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
+    vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
+    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(null);
+    const onCreated = vi.fn();
+
+    renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={onCreated} />);
+    typeTeamName();
+    fireEvent.change(screen.getByRole("combobox", { name: "Invite by email" }), { target: { value: "Late@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(TEAM));
+    expect(invite.mock.calls).toEqual([["team-9", "late@example.com"]]);
+  });
+
+  it("does not create the team while a typed address is invalid", () => {
+    const create = vi.spyOn(teamsApi.remote, "createTeam");
+    renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={() => {}} />);
+    typeTeamName();
+    fireEvent.change(screen.getByRole("combobox", { name: "Invite by email" }), { target: { value: "not-an-email" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid email address.");
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid address before it is added", () => {
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={() => {}} />);
     addInvitee("not-an-email");
@@ -130,39 +222,75 @@ describe("CreateTeamDialog initial invitees", () => {
     expect(screen.queryByRole("list", { name: "People to invite" })).not.toBeInTheDocument();
   });
 
-  it("reports every address whose invite failed and claims only the invites that were sent", async () => {
+  it("separates refused invites from invites with an unknown outcome, and claims only those sent", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
     vi.spyOn(teamsApi.remote, "inviteMember").mockImplementation(async (_teamId, email) => {
       if (email === "ok@example.com") return null;
       if (email === "gone@example.com") throw new ApiUnreachableError("network");
+      if (email === "proxy@example.com") throw new ApiGatewayError(502);
+      if (email === "boom@example.com") throw new ApiHttpError(500, { error: "internal" }, "internal");
       throw new ApiHttpError(409, { error: "already invited" }, "already invited");
     });
     const onCreated = vi.fn();
     const onOpenChange = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={onOpenChange} onCreated={onCreated} />);
-    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
-    addInvitee("ok@example.com");
-    addInvitee("gone@example.com");
-    addInvitee("dup@example.com");
+    typeTeamName();
+    for (const email of ["ok@example.com", "gone@example.com", "proxy@example.com", "boom@example.com", "dup@example.com"]) {
+      addInvitee(email);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
 
     const result = await screen.findByTestId("create-team-invite-result");
     expect(result).toHaveTextContent("Invites sent to 1 person.");
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("These 2 invites were not sent:");
-    expect(alert).toHaveTextContent("gone@example.com");
-    expect(alert).toHaveTextContent("dup@example.com");
-    expect(alert).not.toHaveTextContent("ok@example.com");
-    // A lost answer to a write is not claimed either way (PAC-83).
-    expect(alert).toHaveTextContent(/may or may not/i);
+
+    const refused = screen.getByRole("alert");
+    expect(refused).toHaveTextContent("This invite was not sent:");
+    expect(refused).toHaveTextContent("dup@example.com");
+    for (const email of ["ok@example.com", "gone@example.com", "proxy@example.com", "boom@example.com"]) {
+      expect(refused).not.toHaveTextContent(email);
+    }
+
+    const unknown = screen.getByTestId("create-team-invite-unknown");
+    expect(unknown).toHaveTextContent("No answer for these 3 invites. They may not have been sent — check the team page:");
+    for (const email of ["gone@example.com", "proxy@example.com", "boom@example.com"]) {
+      expect(unknown).toHaveTextContent(email);
+    }
+    expect(unknown).not.toHaveTextContent("dup@example.com");
+    expect(unknown).not.toHaveTextContent("not sent:");
 
     // The team exists, but the dialog stays until the user has read the result.
     expect(onCreated).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(onCreated).toHaveBeenCalledWith(TEAM);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("refuses every close path while the team and its invites are being sent", async () => {
+    vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
+    vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
+    const pending = deferred<FormalTeamMember | null>();
+    vi.spyOn(teamsApi.remote, "inviteMember").mockReturnValue(pending.promise);
+    const onCreated = vi.fn();
+    const onOpenChange = vi.fn();
+
+    renderWithClient(<CreateTeamDialog open onOpenChange={onOpenChange} onCreated={onCreated} />);
+    typeTeamName();
+    addInvitee("a@example.com");
+    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    await screen.findByRole("button", { name: "Creating…" });
+
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    fireEvent.pointerDown(document.body);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    pending.resolve(null);
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(TEAM));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -173,7 +301,7 @@ describe("CreateTeamDialog initial invitees", () => {
     const onCreated = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={onCreated} />);
-    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+    typeTeamName();
     addInvitee("a@example.com");
     fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
 
