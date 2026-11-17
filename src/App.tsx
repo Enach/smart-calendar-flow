@@ -17,6 +17,7 @@ import PublicBooking from "./pages/PublicBooking";
 import NotFound from "./pages/NotFound";
 import Logout from "./pages/Logout";
 import { ToastViewport } from "./components/Toast";
+import { SignOutFailedAlert } from "./components/SignOutFailedAlert";
 import { AuthProvider } from "./contexts/AuthContext";
 import { RequireAuth } from "./components/RequireAuth";
 import { FrameGuard } from "./components/FrameGuard";
@@ -39,6 +40,8 @@ const App = () => (
       {/* PAC-91: above AuthProvider, so a framed non-booking route sends no session probe. */}
       <FrameGuard>
         <AuthProvider>
+          {/* SF-004: a sign-out the server did not confirm, on whichever page the user is on. */}
+          <SignOutFailedAlert />
           <Routes>
             <Route path="/" element={<Index />} />
             <Route path="/signin" element={<SignIn />} />
