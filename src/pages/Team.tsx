@@ -66,8 +66,9 @@ import {
 } from "@/api/manager";
 import { failedManagerTeam, loadingManagerTeam, managerTeamFromRoster } from "@/business/managerTeam";
 import type { ScanPreview } from "@/contracts/managerTeam";
-import { teamsApi, validateTeamName } from "@/api/teams";
-import { apiErrorMessage } from "@/api/client";
+import { TeamValidationError, teamsApi, validateTeamEmail, validateTeamName } from "@/api/teams";
+import { apiErrorMessage, isAnswerLost, isApiHttpError, isBudgetExpired } from "@/api/client";
+import { keepDialogOpenForOpenCombobox } from "@/lib/comboboxEscape";
 import { ProtectedHoursTab } from "@/components/team/ProtectedHoursTab";
 import { FindATimeTab } from "@/components/team/FindATimeTab";
 import { AnalyticsTab } from "@/components/team/AnalyticsTab";
@@ -1211,7 +1212,7 @@ export function AddPersonDialog({
         if (!o) reset();
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
         <DialogHeader>
           <DialogTitle className="font-serif text-xl">Add a team member</DialogTitle>
           <DialogDescription>
@@ -1280,90 +1281,302 @@ export function AddPersonDialog({
   );
 }
 
-function CreateTeamDialog({
+type CreatedTeam = ReturnType<typeof teamsApi.list>[number];
+
+interface CreateTeamResult {
+  team: CreatedTeam;
+  /** The server accepted the invite. */
+  sent: string[];
+  /** The server refused the invite (a 4xx), or it was never sent. */
+  rejected: { email: string; message: string }[];
+  /** No usable answer (network, timeout, 5xx): the invite may or may not exist. */
+  unknown: string[];
+}
+
+/** A definite refusal: a 4xx answer, or a check that stopped the request before it left. */
+function inviteDefinitelyNotSent(e: unknown): boolean {
+  if (e instanceof TeamValidationError) return true;
+  return isApiHttpError(e) && e.status >= 400 && e.status < 500 && !isAnswerLost(e) && !isBudgetExpired(e);
+}
+
+export function CreateTeamDialog({
   open,
   onOpenChange,
   onCreated,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreated: (t: ReturnType<typeof teamsApi.list>[number]) => void;
+  onCreated: (t: CreatedTeam) => void;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitees, setInvitees] = useState<string[]>([]);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  // Set only when some invites were refused or have an unknown outcome: the
+  // team exists, and the dialog stays open to say which addresses.
+  const [result, setResult] = useState<CreateTeamResult | null>(null);
+  // Set synchronously on submit: a second Enter can arrive before the
+  // mutation's pending state has rendered.
+  const inFlight = useRef(false);
+
+  const reset = () => {
+    setName("");
+    setError(null);
+    setInviteEmail("");
+    setInvitees([]);
+    setInviteError(null);
+    setResult(null);
+  };
+
+  const noopResolved = useCallback(() => {}, []);
+
+  /** Adds the typed address to the list; returns the new list, or null if it is invalid. */
+  const addInvitee = (): string[] | null => {
+    const invalid = validateTeamEmail(inviteEmail);
+    if (invalid) {
+      setInviteError(invalid);
+      return null;
+    }
+    const norm = inviteEmail.trim().toLowerCase();
+    const next = invitees.includes(norm) ? invitees : [...invitees, norm];
+    setInvitees(next);
+    setInviteEmail("");
+    setInviteError(null);
+    return next;
+  };
 
   const createMut = useMutation({
-    mutationFn: () => teamsApi.remote.createTeam(name),
-    // Keep the typed name on error.
+    mutationFn: async (emails: string[]): Promise<CreateTeamResult> => {
+      const team = await teamsApi.remote.createTeam(name);
+      const out: CreateTeamResult = { team, sent: [], rejected: [], unknown: [] };
+      // One at a time, through the same path as the team's Invite dialog.
+      for (const email of emails) {
+        try {
+          await teamsApi.remote.inviteMember(team.id, email);
+          out.sent.push(email);
+        } catch (e) {
+          if (inviteDefinitelyNotSent(e)) {
+            out.rejected.push({ email, message: apiErrorMessage(e, effectOf("teams.inviteMember")) });
+          } else {
+            out.unknown.push(email);
+          }
+        }
+      }
+      return out;
+    },
+    // Keep the typed name and invitees on error: the team was not created.
     onError: (e) => setError(apiErrorMessage(e, effectOf("teams.createTeam"))),
-    onSuccess: (t) => {
-      toast.success(`Team "${t.name}" created.`);
-      setName("");
-      setError(null);
+    onSettled: () => {
+      inFlight.current = false;
+    },
+    onSuccess: (r) => {
+      if (r.rejected.length > 0 || r.unknown.length > 0) {
+        setError(null);
+        setResult(r);
+        return;
+      }
+      toast.success(
+        r.sent.length > 0
+          ? `Team "${r.team.name}" created. Invites sent to ${peopleCount(r.sent.length)}.`
+          : `Team "${r.team.name}" created.`,
+      );
+      reset();
       onOpenChange(false);
-      onCreated(t);
+      onCreated(r.team);
     },
   });
+  const busy = createMut.isPending;
+
+  const finish = () => {
+    const team = result?.team;
+    reset();
+    onOpenChange(false);
+    if (team) onCreated(team);
+  };
 
   const submit = () => {
+    if (inFlight.current) return;
     const invalid = validateTeamName(name);
     if (invalid) {
       setError(invalid);
       return;
     }
+    // An address typed but not added yet is part of the request.
+    let emails = invitees;
+    if (inviteEmail.trim()) {
+      const next = addInvitee();
+      if (!next) return;
+      emails = next;
+    }
     setError(null);
-    createMut.mutate();
+    inFlight.current = true;
+    createMut.mutate(emails);
   };
 
   return (
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        onOpenChange(o);
-        if (!o) {
-          setName("");
-          setError(null);
+        // While the team and its invites are being sent, no close path (X,
+        // Escape, outside click, Cancel) may drop the outcome.
+        if (!o && (busy || inFlight.current)) return;
+        if (!o && result) {
+          finish();
+          return;
         }
+        onOpenChange(o);
+        if (!o) reset();
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" closeDisabled={busy} onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
         <DialogHeader>
           <DialogTitle className="font-serif text-xl">Create a Paceday team</DialogTitle>
           <DialogDescription>
             Coordinate protected hours, find meeting times, and see team analytics together.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <label className="block text-xs font-medium text-foreground">
-            Team name <span className="text-[#EF4444]">*</span>
-            <input
-              type="text"
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              className={inputCls + " mt-1"}
-              placeholder="Platform team"
-            />
-          </label>
-          {error && (
-            <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
-              {error}
+        {result ? (
+          <div className="space-y-3" data-testid="create-team-invite-result">
+            <p className="text-sm text-foreground">
+              Team &ldquo;{result.team.name}&rdquo; was created.
+              {result.sent.length > 0 && ` Invites sent to ${peopleCount(result.sent.length)}.`}
+            </p>
+            {result.rejected.length > 0 && (
+              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                <p className="font-medium">
+                  {result.rejected.length === 1
+                    ? "This invite was not sent:"
+                    : `These ${result.rejected.length} invites were not sent:`}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {result.rejected.map((f) => (
+                    <li key={f.email}>
+                      <span className="font-medium">{f.email}</span> — {f.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {result.unknown.length > 0 && (
+              <div className="rounded-lg bg-muted px-3 py-2 text-xs text-foreground" data-testid="create-team-invite-unknown">
+                <p className="font-medium">
+                  {result.unknown.length === 1
+                    ? "No answer for this invite. It may not have been sent — check the team page:"
+                    : `No answer for these ${result.unknown.length} invites. They may not have been sent — check the team page:`}
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {result.unknown.map((email) => (
+                    <li key={email} className="font-medium">
+                      {email}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              You can invite people again with the Invite button on the team page.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <label className="block text-xs font-medium text-foreground">
+              Team name <span className="text-[#EF4444]">*</span>
+              <input
+                type="text"
+                autoFocus
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && submit()}
+                className={inputCls + " mt-1"}
+                placeholder="Platform team"
+              />
+            </label>
+            <div className="text-xs font-medium text-foreground">
+              Invite people <span className="text-muted-foreground">(optional)</span>
+              <div className="mt-1 flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <ContactEmailAutocomplete
+                    label="Invite by email"
+                    value={inviteEmail}
+                    onValueChange={(v) => {
+                      setInviteEmail(v);
+                      setInviteError(null);
+                    }}
+                    onContactResolved={noopResolved}
+                    exclude={invitees}
+                    onSubmit={() => {
+                      addInvitee();
+                    }}
+                    inputClassName={inputCls}
+                  />
+                </div>
+                <Button type="button" variant="outline" onClick={() => addInvitee()} disabled={busy} className="h-10 shrink-0">
+                  Add
+                </Button>
+              </div>
             </div>
-          )}
-          <p className="text-[11px] text-muted-foreground">
-            You will be the team owner. Invite teammates after creation.
-          </p>
-        </div>
+            {inviteError && (
+              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                {inviteError}
+              </div>
+            )}
+            {invitees.length > 0 && (
+              <ul aria-label="People to invite" className="flex flex-wrap gap-1.5">
+                {invitees.map((email) => (
+                  <li
+                    key={email}
+                    className="inline-flex items-center gap-1 rounded-full bg-muted py-1 pl-2.5 pr-1 text-xs text-foreground"
+                  >
+                    {email}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${email}`}
+                      disabled={busy}
+                      onClick={() => setInvitees((list) => list.filter((x) => x !== email))}
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {error && (
+              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                {error}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              You will be the team owner. Invites are sent once the team is created.
+            </p>
+          </div>
+        )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={createMut.isPending} className="bg-primary text-white hover:bg-primary/90">
-            {createMut.isPending ? "Creating…" : "Create team"}
-          </Button>
+          {result ? (
+            <Button onClick={finish} className="bg-primary text-white hover:bg-primary/90">
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+                Cancel
+              </Button>
+              <Button onClick={submit} disabled={busy} className="bg-primary text-white hover:bg-primary/90">
+                {busy
+                  ? "Creating…"
+                  : invitees.length > 0 || inviteEmail.trim()
+                    ? "Create and invite"
+                    : "Create team"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+function peopleCount(n: number): string {
+  return `${n} ${n === 1 ? "person" : "people"}`;
 }
