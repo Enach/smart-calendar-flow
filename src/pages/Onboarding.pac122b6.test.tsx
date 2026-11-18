@@ -46,7 +46,8 @@ describe("PAC-122 SF-091: onboarding on a failed status read", () => {
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    fireEvent.click(await screen.findByRole("button", { name: /Google Calendar/ }));
+    // A longer wait: the availability read can be slow under a loaded full suite.
+    fireEvent.click(await screen.findByRole("button", { name: /Google Calendar/ }, { timeout: 5000 }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Could not check your calendar connection: internal error"),

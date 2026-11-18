@@ -203,7 +203,8 @@ describe("OrgAIConsentDialog when the choice write fails after the confirmation 
     fetchMock.mockImplementation(async (input, init) => {
       if (String(input) === `${API}/settings` && init?.method === "PATCH") {
         calls.push({ method: "PATCH", url: String(input), body: JSON.parse(String(init.body)) });
-        return json({ error: "internal error" }, 500);
+        // A 4xx refusal: the choice was definitely not saved.
+        return json({ error: "personal keys are not allowed" }, 422);
       }
       return base(input, init);
     });
@@ -252,9 +253,19 @@ describe("OrgAIConsentDialog when the choice write's outcome is unknown (PAC-122
     expect(choiceProblemText(new ApiUnreachableError("network"))).toMatch(unknown);
     expect(choiceProblemText(new ApiUnreachableError("timeout"))).toMatch(unknown);
     expect(choiceProblemText(new ApiRequestCancelledError())).toMatch(unknown);
-    const definite = choiceProblemText(new ApiHttpError(500, { error: "internal error" }, "internal error"));
-    expect(definite).toBe(
-      "Your confirmation was recorded, but \"Use my organisation's AI\" was not saved (internal error). Try again, or choose it in Settings.",
+    // The request budget's 503 (contract RequestBudgetExpiredError).
+    expect(choiceProblemText(new ApiHttpError(503, { error: "request timed out" }, "request timed out"))).toMatch(unknown);
+    // Any 5xx may follow a committed save (PATCH /api/settings answers 500
+    // when the re-read after the save fails), so it is never "not saved".
+    for (const status of [500, 502, 503, 504]) {
+      const text = choiceProblemText(new ApiHttpError(status, { error: "internal error" }, "internal error"));
+      expect(text).toMatch(unknown);
+      expect(text).not.toMatch(/not saved/);
+    }
+    // Only a 4xx refusal is a definite "not saved".
+    expect(choiceProblemText(new ApiHttpError(400, { error: "invalid llmProvider" }, "invalid llmProvider"))).toBe(
+      "Your confirmation was recorded, but \"Use my organisation's AI\" was not saved (invalid llmProvider). Try again, or choose it in Settings.",
     );
+    expect(choiceProblemText(new ApiHttpError(403, { error: "forbidden" }, "forbidden"))).toMatch(/was not saved \(/);
   });
 });

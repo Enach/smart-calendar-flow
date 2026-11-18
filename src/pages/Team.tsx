@@ -1457,15 +1457,18 @@ export function CreateTeamDialog({
       }
       return out;
     },
-    onError: (e) => {
-      // PAC-122 SF-024: the team was created and only its re-read failed. The
-      // dialog closes, so nothing can create it a second time; the people
-      // typed were not added (the team's id was not read back).
+    onError: (e, emails) => {
+      // PAC-122 SF-024: reached only when the create succeeded but the error
+      // carries no team id (`savedId`); with an id, mutationFn already added
+      // the people and answered a result. The dialog closes, so nothing can
+      // create the team a second time; the people given were not added.
       if (isSavedButNotRead(e)) {
-        const notAdded = invitees.length + (inviteEmail.trim() ? 1 : 0);
+        const notAdded = emails.length;
         toast.info(
           `Team "${name.trim()}" was created, but it could not be loaded yet.` +
-            (notAdded > 0 ? ` Add the ${notAdded === 1 ? "person" : `${notAdded} people`} from the team once it appears.` : ""),
+            (notAdded > 0
+              ? ` ${notAdded === 1 ? "1 person was" : `${notAdded} people were`} not added: add them from the team once it appears.`
+              : ""),
         );
         void qcCreate.invalidateQueries({ queryKey: ["formal-teams"] });
         reset();

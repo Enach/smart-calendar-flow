@@ -212,6 +212,26 @@ describe("PAC-122 SF-024: a write that succeeded, whose re-read failed", () => {
     expect(create).toHaveBeenCalledOnce();
   });
 
+  it("Create team without the created team's id says the people given were not added", async () => {
+    toast.info.mockReset();
+    vi.spyOn(teamsApi.remote, "createTeam").mockRejectedValue(new SavedButNotReadError(new Error("x")));
+    const addPerson = vi.spyOn(teamsApi.remote, "addPerson");
+    const onOpenChange = vi.fn();
+    render(
+      <QueryClientProvider client={client()}>
+        <CreateTeamDialog open onOpenChange={onOpenChange} onCreated={() => {}} />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Add by email" }), { target: { value: "bo@co.example" } });
+    fireEvent.click(screen.getByRole("button", { name: /^create and add$/i }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(addPerson).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      'Team "Platform" was created, but it could not be loaded yet. 1 person was not added: add them from the team once it appears.',
+    );
+  });
+
   it("Create team still adds the people typed, using the created team's id, and says so truthfully", async () => {
     toast.info.mockReset();
     vi.spyOn(teamsApi.remote, "createTeam").mockRejectedValue(new SavedButNotReadError(new Error("x"), TEAM_ID));

@@ -5,6 +5,10 @@
  *
  * SF-058 (batch 6b): the Today agenda filtered the displayed range's events
  * for today. The Dashboard now tells it whether today is on screen.
+ *
+ * SF-057 (batch 6b review): the event drawer is told when the settings read
+ * is still pending, so reschedule suggestions say the working hours are
+ * loading, not that they could not be loaded.
  */
 import { act, render, waitFor } from "@testing-library/react";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,15 +18,27 @@ import { MemoryRouter } from "react-router-dom";
 const bar = vi.hoisted(() => ({ onSubmit: null as null | ((text: string) => Promise<void> | void) }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 const agenda = vi.hoisted(() => ({ todayShown: undefined as boolean | undefined }));
-const cal = vi.hoisted(() => ({ range: null as null | { start: Date; end: Date }, fired: false }));
+const cal = vi.hoisted(() => ({
+  range: null as null | { start: Date; end: Date },
+  fired: false,
+  click: null as null | Record<string, unknown>,
+}));
+const drawer = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
+const settingsState = vi.hoisted(() => ({ data: undefined as unknown, isLoading: false }));
 
 vi.mock("@/hooks/useToast", () => ({ toast }));
 vi.mock("@fullcalendar/react", async () => {
   const { useEffect } = await import("react");
-  function FullCalendarStub(props: { datesSet?: (arg: unknown) => void }) {
-    // Fires once, as a navigation to `cal.range` would.
+  function FullCalendarStub(props: { datesSet?: (arg: unknown) => void; eventClick?: (arg: unknown) => void }) {
+    // Fires once, as a navigation to `cal.range` (or a click on `cal.click`) would.
     useEffect(() => {
-      if (!cal.range || cal.fired) return;
+      if (cal.fired) return;
+      if (cal.click) {
+        cal.fired = true;
+        props.eventClick?.({ event: { extendedProps: { raw: cal.click } } });
+        return;
+      }
+      if (!cal.range) return;
       cal.fired = true;
       const { start, end } = cal.range;
       props.datesSet?.({ start, end, view: { currentStart: start, title: "Elsewhere", type: "timeGridWeek" } });
@@ -49,11 +65,16 @@ vi.mock("@/components/TodayAgenda", () => ({
 }));
 vi.mock("@/components/FocusStats", () => ({ FocusStats: () => null }));
 vi.mock("@/components/QuickActions", () => ({ QuickActions: () => null }));
-vi.mock("@/components/EventDrawer", () => ({ EventDrawer: () => null }));
+vi.mock("@/components/EventDrawer", () => ({
+  EventDrawer: (props: Record<string, unknown>) => {
+    drawer.props = props;
+    return null;
+  },
+}));
 vi.mock("@/components/ServerStatusBanner", () => ({ ServerStatusBanner: () => null }));
 vi.mock("@/components/QuickCreatePopover", () => ({ QuickCreatePopover: () => null }));
 vi.mock("@/contexts/useAuth", () => ({ useAuth: () => ({ isDemo: false }) }));
-vi.mock("@/hooks/useSettings", () => ({ useSettings: () => ({ data: undefined }) }));
+vi.mock("@/hooks/useSettings", () => ({ useSettings: () => settingsState }));
 
 import Dashboard from "./Dashboard";
 
@@ -159,5 +180,41 @@ describe("PAC-122 SF-058: the Dashboard tells the Today agenda whether today is 
     cal.fired = false;
     renderDashboard();
     await waitFor(() => expect(agenda.todayShown).toBe(false));
+  });
+});
+
+describe("PAC-122 SF-057: the event drawer is told when the working hours are still loading", () => {
+  const EVENT = { id: "ev", title: "Sync", start: "2026-11-16T10:00:00Z", end: "2026-11-16T10:30:00Z" };
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (u) => {
+      const path = new URL(String(u), window.location.origin).pathname;
+      if (path === "/api/auth/status") return json({ connected: true, provider: "google" });
+      return json([]);
+    });
+    drawer.props = null;
+    cal.range = null;
+    cal.click = EVENT;
+    cal.fired = false;
+  });
+  afterAll(() => {
+    cal.click = null;
+    settingsState.isLoading = false;
+    vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])("settings loading = %s is passed as hoursLoading", async (loading) => {
+    settingsState.isLoading = loading;
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <Dashboard />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(drawer.props).not.toBeNull());
+    expect(drawer.props?.hoursLoading).toBe(loading);
+    expect(drawer.props?.workStart).toBeUndefined();
   });
 });
