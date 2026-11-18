@@ -711,7 +711,10 @@ export interface paths {
          * Force a background recompute of the current week
          * @description Spawns `AnalyticsEngine.ForceCompute` for the week containing `time.Now()` on a
          *     detached context and returns immediately. The request body is never read, and no
-         *     parameters select the week. Errors from the background job are swallowed.
+         *     parameters select the week. Errors from the background job are not observable
+         *     through this endpoint; they are logged and reported to error monitoring with the
+         *     user id (PAC-122 SF-096), and a week computed from a failed read is not stored
+         *     (SF-017).
          *
          */
         post: operations["recomputeAnalytics"];
@@ -2078,7 +2081,11 @@ export interface paths {
          * Kick off background re-scheduling of all active habits
          * @description Spawns `HabitsEngine.ReoptimizeAll` on a detached context (14-day horizon) and
          *     returns immediately. The request body is never read. Errors from the background
-         *     job are swallowed and are not observable through this endpoint.
+         *     job are not observable through this endpoint; they are logged and reported to
+         *     error monitoring with the user id (PAC-122 SF-096), including every day the job
+         *     could not schedule (SF-015): a day whose calendar read fails gets no new
+         *     occurrence (SF-013), and an occurrence that moves or is missed has its old
+         *     calendar event deleted first (SF-014).
          *
          */
         post: operations["reoptimizeHabits"];
@@ -3838,7 +3845,7 @@ export interface paths {
         put?: never;
         /**
          * Render today's recap without sending it
-         * @description Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
+         * @description Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required. A failed read of the day's content (meeting briefs, focus blocks, habits) is the 500, never a recap that reads as "a clear calendar today" (PAC-122 SF-046); the scheduled recap is then not sent, and the failure is reported (SF-082).
          *     Before PAC-24 the day's content was the caller's but the recap configuration driving it (which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002), and it was built in the server's zone. Both now come from the caller's row.
          *
          */
@@ -3860,7 +3867,7 @@ export interface paths {
         put?: never;
         /**
          * Send a test recap to Slack
-         * @description Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout.
+         * @description Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout. A failed read of the day's content is the 500 and nothing is sent (PAC-122 SF-046).
          *     Before PAC-24 the destination came from the singleton row, so a test send could be addressed to a channel another user had configured (API-002).
          *
          */
@@ -4400,7 +4407,7 @@ export interface components {
              */
             habit_completion_rate: number;
             largest_focus_block_minutes: number;
-            /** @description `[]` when the week has no titles, including when the JSONB column holds `null` or fails to unmarshal (PAC-28). */
+            /** @description `[]` when the week has no titles, including when the JSONB column holds `null` (PAC-28). A stored value that does not decode is the operation's 500, not `[]` (PAC-122 SF-080). */
             top_meeting_titles: components["schemas"]["MeetingTitle"][];
             /** @description A percentage where 100 means all focus and meeting time was focus; same computation and range as AnalyticsWeekWithBreakdown.focus_score. */
             focus_score: number;
@@ -5290,8 +5297,9 @@ export interface components {
              * Format: date-time
              * @description The DB column is a DATE, but the Go field is `time.Time`, so it serialises as a
              *     full RFC3339 timestamp at midnight UTC (e.g. "2026-03-04T00:00:00Z"), NOT as
-             *     "2026-03-04". Parsed from the DB with a failure-swallowing `time.Parse`, so a
-             *     malformed stored value would surface as the zero time "0001-01-01T00:00:00Z".
+             *     "2026-03-04". Before PAC-122 (SF-080) the column was read through a
+             *     failure-swallowing `time.Parse` that always failed, so every occurrence
+             *     surfaced as the zero time "0001-01-01T00:00:00Z"; it is now the stored date.
              *
              */
             scheduled_date: string;
@@ -5302,13 +5310,15 @@ export interface components {
             /**
              * @description Written by the engine as well as by the API. "scheduled" (placed), "completed"
              *     (user-confirmed; survives reoptimization), "displaced" (its slot was taken and
-             *     rescheduling is being attempted), "missed" (no slot fit in the window).
+             *     rescheduling is being attempted; also left by a run that could not delete its
+             *     old calendar event, which then keeps its `calendar_event_id`, or could not
+             *     create the new one, PAC-122 SF-014/SF-015), "missed" (no slot fit in the window).
              *     Only "scheduled" and "completed" are settable via the API.
              *
              * @enum {string}
              */
             status: "scheduled" | "completed" | "displaced" | "missed";
-            /** @description Google Calendar event id for the mirrored event. Empty string when no calendar is connected or event creation failed. Never null. */
+            /** @description Google Calendar event id for the mirrored event. Empty string when no calendar is connected, and on a "missed" or "displaced" occurrence whose event was deleted. A "scheduled" occurrence of a user with a connected calendar always carries its event (PAC-122 SF-015; before, a failed event creation was stored as "scheduled" with an empty id). Never null. */
             calendar_event_id: string;
             /** Format: date-time */
             created_at: string;
@@ -8591,7 +8601,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["CalendarNotConnected"];
-            /** @description The calendar read failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`). Before PAC-21 was finished a user with no credential got this 500 (API-054). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description The calendar read failed for a user who HAS a stored Google credential (a user with none gets the 401 `calendar not connected`), or the user's focus blocks or habit occurrences could not be read (PAC-122 SF-017). Before PAC-21 was finished a user with no credential got this 500 (API-054). Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -8677,7 +8687,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            /** @description Compute failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). There is no 404 (PAC-42, audit U-01): the week is either served from a stored row or computed and upserted, and the upsert's `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` yields a row on both the insert and the conflict path (observed, contracts/features/PAC-42.md section 4). The former `{"error":"not found"}` branch for a nil result is removed; should an implementation keep a guard for it, that guard answers this 500. */
+            /** @description Compute failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). A failed read of the calendar (for a user who has a calendar credential), of the focus blocks or of the habit occurrences is this 500, and nothing is stored: before PAC-122 (SF-017) it was stored as a week with no meetings and served from the cache for 24h. A user with no connected calendar still gets a week with no meetings. There is no 404 (PAC-42, audit U-01): the week is either served from a stored row or computed and upserted, and the upsert's `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` yields a row on both the insert and the conflict path (observed, contracts/features/PAC-42.md section 4). The former `{"error":"not found"}` branch for a nil result is removed; should an implementation keep a guard for it, that guard answers this 500. */
             500: {
                 headers: {
                     [name: string]: unknown;

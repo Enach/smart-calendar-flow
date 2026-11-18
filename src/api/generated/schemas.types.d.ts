@@ -223,7 +223,7 @@ export type AnalyticsWeekRow = {
   habit_completion_rate: number;
   largest_focus_block_minutes: number;
   /**
-   * `[]` when the week has no titles, including when the JSONB column holds `null` or fails to unmarshal (PAC-28).
+   * `[]` when the week has no titles, including when the JSONB column holds `null` (PAC-28). A stored value that does not decode is the operation's 500, not `[]` (PAC-122 SF-080).
    */
   top_meeting_titles: Array<MeetingTitle>;
   /**
@@ -1251,8 +1251,9 @@ export type HabitOccurrence = {
   /**
    * The DB column is a DATE, but the Go field is `time.Time`, so it serialises as a
    * full RFC3339 timestamp at midnight UTC (e.g. "2026-03-04T00:00:00Z"), NOT as
-   * "2026-03-04". Parsed from the DB with a failure-swallowing `time.Parse`, so a
-   * malformed stored value would surface as the zero time "0001-01-01T00:00:00Z".
+   * "2026-03-04". Before PAC-122 (SF-080) the column was read through a
+   * failure-swallowing `time.Parse` that always failed, so every occurrence
+   * surfaced as the zero time "0001-01-01T00:00:00Z"; it is now the stored date.
    */
   scheduled_date: string;
   start_time: string;
@@ -1260,12 +1261,14 @@ export type HabitOccurrence = {
   /**
    * Written by the engine as well as by the API. "scheduled" (placed), "completed"
    * (user-confirmed; survives reoptimization), "displaced" (its slot was taken and
-   * rescheduling is being attempted), "missed" (no slot fit in the window).
+   * rescheduling is being attempted; also left by a run that could not delete its
+   * old calendar event, which then keeps its `calendar_event_id`, or could not
+   * create the new one, PAC-122 SF-014/SF-015), "missed" (no slot fit in the window).
    * Only "scheduled" and "completed" are settable via the API.
    */
   status: ("scheduled" | "completed" | "displaced" | "missed");
   /**
-   * Google Calendar event id for the mirrored event. Empty string when no calendar is connected or event creation failed. Never null.
+   * Google Calendar event id for the mirrored event. Empty string when no calendar is connected, and on a "missed" or "displaced" occurrence whose event was deleted. A "scheduled" occurrence of a user with a connected calendar always carries its event (PAC-122 SF-015; before, a failed event creation was stored as "scheduled" with an empty id). Never null.
    */
   calendar_event_id: string;
   created_at: string;
@@ -4434,7 +4437,10 @@ export type get_ListAnalyticsMeetings = {
 /**
  * Spawns `AnalyticsEngine.ForceCompute` for the week containing `time.Now()` on a
  * detached context and returns immediately. The request body is never read, and no
- * parameters select the week. Errors from the background job are swallowed.
+ * parameters select the week. Errors from the background job are not observable
+ * through this endpoint; they are logged and reported to error monitoring with the
+ * user id (PAC-122 SF-096), and a week computed from a failed read is not stored
+ * (SF-017).
  */
 export type post_RecomputeAnalytics = {
       method: "POST",
@@ -5864,7 +5870,11 @@ export type post_CreateHabit = {
 /**
  * Spawns `HabitsEngine.ReoptimizeAll` on a detached context (14-day horizon) and
  * returns immediately. The request body is never read. Errors from the background
- * job are swallowed and are not observable through this endpoint.
+ * job are not observable through this endpoint; they are logged and reported to
+ * error monitoring with the user id (PAC-122 SF-096), including every day the job
+ * could not schedule (SF-015): a day whose calendar read fails gets no new
+ * occurrence (SF-013), and an occurrence that moves or is missed has its old
+ * calendar event deleted first (SF-014).
  */
 export type post_ReoptimizeHabits = {
       method: "POST",
@@ -7764,7 +7774,7 @@ export type patch_PatchDailyRecapSettings = {
       
     }
 /**
- * Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required.
+ * Builds the Slack Block Kit payload for the authenticated user at the current time IN THE CALLER'S TIMEZONE (`settings.timezone`, UTC when it cannot be resolved) - the same rule the scheduled recap uses - and returns it; the header names that zone and every time in the recap is rendered in it. No request body is read. Nothing is sent to Slack and no Slack connection is required. A failed read of the day's content (meeting briefs, focus blocks, habits) is the 500, never a recap that reads as "a clear calendar today" (PAC-122 SF-046); the scheduled recap is then not sent, and the failure is reported (SF-082).
  * Before PAC-24 the day's content was the caller's but the recap configuration driving it (which sections to include) came from the singleton row, so a preview could omit sections the caller had enabled (API-002), and it was built in the server's zone. Both now come from the caller's row.
  */
 export type post_PreviewDailyRecap = {
@@ -7780,7 +7790,7 @@ export type post_PreviewDailyRecap = {
       
     }
 /**
- * Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout.
+ * Requires a stored `slack` workspace connection for the authenticated user. Destination comes from the CALLER'S OWN stored settings (`recapSendTo`, `recapChannelId`), not from the request - no request body is read. The message is built at the current time in the caller's timezone, as for the preview. The Slack call is bounded by a 10s context timeout. A failed read of the day's content is the 500 and nothing is sent (PAC-122 SF-046).
  * Before PAC-24 the destination came from the singleton row, so a test send could be addressed to a channel another user had configured (API-002).
  */
 export type post_SendDailyRecapTest = {
