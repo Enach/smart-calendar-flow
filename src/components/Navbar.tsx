@@ -61,8 +61,8 @@ export function Navbar({
     .join("")
     .toUpperCase();
   const handleLogout = async () => {
-    await logout();
-    navigate("/", { replace: true });
+    // SF-004: an unconfirmed sign-out keeps the user here, under the alert.
+    if (await logout()) navigate("/", { replace: true });
   };
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-background/85 backdrop-blur-md">

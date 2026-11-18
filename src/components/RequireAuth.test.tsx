@@ -13,10 +13,12 @@ const authValue: AuthContextValue = {
   isDemo: false,
   loading: false,
   sessionStale: false,
+  signOutFailure: null,
   refresh: async () => {},
   enterDemo: () => {},
   exitDemo: () => {},
-  logout: async () => {},
+  logout: async () => true,
+  dismissSignOutFailure: () => {},
 };
 
 function renderGate() {
