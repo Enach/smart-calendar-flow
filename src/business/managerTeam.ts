@@ -32,7 +32,9 @@ export function managerTeamFromRoster(
   }
   if (roster.members.length === 0) return { status: "empty", team_id: requestedTeamId, members: [] };
   const members = roster.members.map(normalize);
-  return members.some((member) => !member.data_available)
+  // An added person (PAC-129) is never measured on the Manager path: that is
+  // what they are, not a degraded read.
+  return members.some((member) => member.source !== "added" && !member.data_available)
     ? { status: "degraded", team_id: requestedTeamId, members }
     : { status: "ready", team_id: requestedTeamId, members };
 }

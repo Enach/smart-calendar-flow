@@ -4,13 +4,23 @@ import { useMutation } from "@tanstack/react-query";
 import { Sparkles, CalendarPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
+import { teamsApi, teamKeys, teamMembersExcept, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { StillWorking } from "@/components/StillWorking";
 import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
+import { slotCountsText } from "@/components/team/teamTexts";
+import { useTeamViewerEmail } from "@/components/team/useTeamViewerEmail";
+
+/**
+ * PAC-129 (AC-36): the attendees of a slot travel to the scheduling page in
+ * application state, never in the page address.
+ */
+export interface ScheduleFromTeamState {
+  attendees: string[];
+}
 
 interface Props {
   team: FormalTeam;
@@ -32,6 +42,7 @@ function fmtSlot(iso: string, endIso: string, tf: TimeFormat) {
 export function FindATimeTab({ team }: Props) {
   const tf = useTimeFormat();
   const navigate = useNavigate();
+  const me = useTeamViewerEmail();
   const [date, setDate] = useState(todayISO());
   const [duration, setDuration] = useState(30);
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
@@ -65,17 +76,14 @@ export function FindATimeTab({ team }: Props) {
   };
 
   const onSchedule = (slot: AvailabilitySlot) => {
-    const attendees = team.members
-      .filter((m) => m.status === "active" && m.email !== teamsApi.currentUserEmail())
-      .map((m) => m.email)
-      .join(",");
+    // Every member of both kinds except the user (PAC-129 §3.5).
+    const state: ScheduleFromTeamState = { attendees: teamMembersExcept(team, me) };
     const params = new URLSearchParams({
       title: `${team.name} sync`,
-      attendees,
       duration: String(duration),
       start: slot.start,
     });
-    navigate(`/app?${params.toString()}`);
+    navigate(`/app?${params.toString()}`, { state });
   };
 
   return (
@@ -162,8 +170,8 @@ export function FindATimeTab({ team }: Props) {
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: dot }} />
                   <div>
                     <div className="text-sm font-medium text-foreground">{fmtSlot(s.start, s.end, tf)}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {s.free_count} of {s.total_count} free
+                    <div className="text-[11px] text-muted-foreground" data-testid="team-slot-counts">
+                      {slotCountsText(s)}
                     </div>
                   </div>
                   {i === 0 && (

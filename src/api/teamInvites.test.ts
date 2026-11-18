@@ -84,17 +84,29 @@ describe("team invite endpoints", () => {
 
 describe("multiple formal teams", () => {
   it("keeps every team returned by GET /api/teams/ and only switches the active one", async () => {
-    fetchMock.mockImplementation(async () =>
-      jsonResponse([
-        { id: "t1", name: "Team A", members: [] },
-        { id: "t2", name: "Team B", members: [] },
-      ]),
-    );
+    const ids: Record<string, string> = { t1: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1", t2: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2" };
+    const detail = (key: string, name: string) => ({
+      team: { id: ids[key], name, createdBy: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", createdAt: "2026-01-01T00:00:00Z" },
+      members: [],
+      people: [],
+    });
+    fetchMock.mockImplementation(async (input: unknown) => {
+      const path = new URL(String(input), "http://localhost").pathname;
+      if (path === "/api/teams/") {
+        return jsonResponse([
+          { id: ids.t1, name: "Team A" },
+          { id: ids.t2, name: "Team B" },
+        ]);
+      }
+      if (path.endsWith("/no-meeting-zones")) return jsonResponse([]);
+      if (path === "/api/teams/" + ids.t1) return jsonResponse(detail("t1", "Team A"));
+      return jsonResponse(detail("t2", "Team B"));
+    });
     const teams = await teamsApi.remote.list();
-    expect(teams.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(teams.map((t) => t.id)).toEqual([ids.t1, ids.t2]);
 
-    teamsApi.setActiveTeam("t2");
-    expect(teamsApi.activeTeamId()).toBe("t2");
+    teamsApi.setActiveTeam(ids.t2);
+    expect(teamsApi.activeTeamId()).toBe(ids.t2);
     const again = await teamsApi.remote.list();
     expect(again).toHaveLength(2);
   });

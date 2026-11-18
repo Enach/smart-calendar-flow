@@ -78,6 +78,7 @@ import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { DATE_TIME, formatDateTime } from "@/lib/timeFormat";
+import { ADD_TO_TEAM_NOTICE, ADDED_PERSON_LABEL, MANAGER_ADDED_HINT, MANAGER_ANALYTICS_ADDED_HINT } from "@/components/team/teamTexts";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { effectOf } from "@/api/effects";
 
@@ -345,7 +346,7 @@ function PageHeader({
                 >
                   <span className="truncate">{t.name}</span>
                   <span className="text-[10px] text-muted-foreground">
-                    {t.members.filter((m) => m.status === "active").length} active
+                    {t.members.length} member{t.members.length === 1 ? "" : "s"}
                   </span>
                 </button>
               ))}
@@ -909,7 +910,7 @@ function GapsSection({
   );
 }
 
-function MemberRow({
+export function MemberRow({
   member,
   analytics,
   analyticsLoading,
@@ -928,6 +929,9 @@ function MemberRow({
   onRemove: () => void;
   onSchedule: () => void;
 }) {
+  // PAC-129 (contract §9.8): a person added to the team without Paceday
+  // access is read-only here: no cadence, no 1:1, no account signal.
+  const added = member.source === "added";
   const overdue = computeDaysOverdue(member);
   const status = (() => {
     if (overdue == null) return { kind: "none" as const, label: "No cadence set" };
@@ -954,11 +958,21 @@ function MemberRow({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-sm font-semibold text-foreground">{member.display_name}</span>
-              {member.is_paceday_user && (
+              {member.is_paceday_user && !added && (
                 <span className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary">On Paceday</span>
               )}
             </div>
             <div className="truncate text-[11px] text-muted-foreground">{member.email}</div>
+            {added ? (
+              <div className="mt-0.5">
+                <span
+                  className="inline-block rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                  data-testid="manager-added-label"
+                >
+                  {ADDED_PERSON_LABEL}
+                </span>
+              </div>
+            ) : (
             <div className="mt-0.5">
               <span
                 className={
@@ -973,9 +987,15 @@ function MemberRow({
                     : "Added manually"}
               </span>
             </div>
+            )}
           </div>
         </div>
 
+        {added ? (
+          <p className="min-w-0 text-[11px] text-muted-foreground md:w-[35%]" data-testid="manager-added-hint">
+            {MANAGER_ADDED_HINT}
+          </p>
+        ) : (
         <div className="flex min-w-0 flex-col gap-1.5 md:w-[35%]">
           <div className="flex items-center gap-2">
             <label htmlFor={`cadence-${member.email}`} className="text-[11px] text-muted-foreground">
@@ -1027,10 +1047,15 @@ function MemberRow({
             </span>
           </div>
         </div>
+        )}
 
         <div className="flex items-center justify-between gap-3 md:w-[35%] md:justify-end">
           <div className="text-right">
-            {analyticsLoading && !analytics ? (
+            {added ? (
+              <p className="max-w-[16rem] text-[11px] text-muted-foreground" data-testid="manager-analytics-added-hint">
+                {MANAGER_ANALYTICS_ADDED_HINT}
+              </p>
+            ) : analyticsLoading && !analytics ? (
               <div className="h-7 w-20 animate-pulse rounded bg-muted" />
             ) : member.data_available && analytics ? (
               <>
@@ -1046,20 +1071,24 @@ function MemberRow({
           </div>
 
           <div className="flex items-center gap-1">
-            <button onClick={onSchedule} className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Schedule 1:1">
-              <CalendarDays className="h-3.5 w-3.5" />
-            </button>
+            {!added && (
+              <button onClick={onSchedule} className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Schedule 1:1">
+                <CalendarDays className="h-3.5 w-3.5" />
+              </button>
+            )}
             <button onClick={onRemove} className="rounded-full p-1.5 text-muted-foreground hover:bg-[#EF4444]/10 hover:text-[#EF4444]" title="Remove">
               <Trash2 className="h-3.5 w-3.5" />
             </button>
-            <button onClick={onToggle} className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={expanded ? "Collapse" : "Expand"}>
-              {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            </button>
+            {!added && (
+              <button onClick={onToggle} className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={expanded ? "Collapse" : "Expand"}>
+                {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {expanded && analytics && <InlineAnalytics data={analytics} />}
+      {expanded && analytics && !added && <InlineAnalytics data={analytics} />}
     </li>
   );
 }
@@ -1273,7 +1302,7 @@ export function AddPersonDialog({
             Cancel
           </Button>
           <Button onClick={submit} disabled={addMut.isPending} className="bg-primary text-white hover:bg-primary/90">
-            {addMut.isPending ? "Adding…" : "Add to team"}
+            {addMut.isPending ? "Adding…" : "Add person"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1285,16 +1314,16 @@ type CreatedTeam = ReturnType<typeof teamsApi.list>[number];
 
 interface CreateTeamResult {
   team: CreatedTeam;
-  /** The server accepted the invite. */
-  sent: string[];
-  /** The server refused the invite (a 4xx), or it was never sent. */
+  /** The server added the person (201 or 200). */
+  added: string[];
+  /** The server refused the add (a 4xx), or it was never sent. */
   rejected: { email: string; message: string }[];
-  /** No usable answer (network, timeout, 5xx): the invite may or may not exist. */
+  /** No usable answer (network, timeout, 5xx): the person may or may not have been added. */
   unknown: string[];
 }
 
 /** A definite refusal: a 4xx answer, or a check that stopped the request before it left. */
-function inviteDefinitelyNotSent(e: unknown): boolean {
+function addDefinitelyRefused(e: unknown): boolean {
   if (e instanceof TeamValidationError) return true;
   return isApiHttpError(e) && e.status >= 400 && e.status < 500 && !isAnswerLost(e) && !isBudgetExpired(e);
 }
@@ -1349,15 +1378,16 @@ export function CreateTeamDialog({
   const createMut = useMutation({
     mutationFn: async (emails: string[]): Promise<CreateTeamResult> => {
       const team = await teamsApi.remote.createTeam(name);
-      const out: CreateTeamResult = { team, sent: [], rejected: [], unknown: [] };
-      // One at a time, through the same path as the team's Invite dialog.
+      const out: CreateTeamResult = { team, added: [], rejected: [], unknown: [] };
+      // PAC-129 (AC-33): each person is ADDED (no invitation, no email), one
+      // at a time, through the same path as the team's "Add to team".
       for (const email of emails) {
         try {
-          await teamsApi.remote.inviteMember(team.id, email);
-          out.sent.push(email);
+          await teamsApi.remote.addPerson(team.id, email);
+          out.added.push(email);
         } catch (e) {
-          if (inviteDefinitelyNotSent(e)) {
-            out.rejected.push({ email, message: apiErrorMessage(e, effectOf("teams.inviteMember")) });
+          if (addDefinitelyRefused(e)) {
+            out.rejected.push({ email, message: apiErrorMessage(e, effectOf("teams.addPerson")) });
           } else {
             out.unknown.push(email);
           }
@@ -1377,9 +1407,7 @@ export function CreateTeamDialog({
         return;
       }
       toast.success(
-        r.sent.length > 0
-          ? `Team "${r.team.name}" created. Invites sent to ${peopleCount(r.sent.length)}.`
-          : `Team "${r.team.name}" created.`,
+        r.added.length > 0 ? `Team "${r.team.name}" created. ${r.added.length} added.` : `Team "${r.team.name}" created.`,
       );
       reset();
       onOpenChange(false);
@@ -1418,7 +1446,7 @@ export function CreateTeamDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => {
-        // While the team and its invites are being sent, no close path (X,
+        // While the team is created and its people added, no close path (X,
         // Escape, outside click, Cancel) may drop the outcome.
         if (!o && (busy || inFlight.current)) return;
         if (!o && result) {
@@ -1437,45 +1465,43 @@ export function CreateTeamDialog({
           </DialogDescription>
         </DialogHeader>
         {result ? (
-          <div className="space-y-3" data-testid="create-team-invite-result">
+          <div className="space-y-3" data-testid="create-team-add-result">
             <p className="text-sm text-foreground">
-              Team &ldquo;{result.team.name}&rdquo; was created.
-              {result.sent.length > 0 && ` Invites sent to ${peopleCount(result.sent.length)}.`}
+              Team &ldquo;{result.team.name}&rdquo; was created. {result.added.length} added.
             </p>
+            {/* Per address, honestly (contract §9.5): added, refused with the reason, or unknown. */}
+            {result.added.length > 0 && (
+              <ul className="space-y-1 text-xs text-foreground" aria-label="People added">
+                {result.added.map((email) => (
+                  <li key={email} data-testid="create-team-add-outcome">
+                    <span className="font-medium">{email}</span>: added
+                  </li>
+                ))}
+              </ul>
+            )}
             {result.rejected.length > 0 && (
-              <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
-                <p className="font-medium">
-                  {result.rejected.length === 1
-                    ? "This invite was not sent:"
-                    : `These ${result.rejected.length} invites were not sent:`}
-                </p>
-                <ul className="mt-1 space-y-1">
-                  {result.rejected.map((f) => (
-                    <li key={f.email}>
-                      <span className="font-medium">{f.email}</span> — {f.message}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <ul className="space-y-1 rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+                {result.rejected.map((f) => (
+                  <li key={f.email} data-testid="create-team-add-outcome">
+                    <span className="font-medium">{f.email}</span>: refused: {f.message}
+                  </li>
+                ))}
+              </ul>
             )}
             {result.unknown.length > 0 && (
-              <div className="rounded-lg bg-muted px-3 py-2 text-xs text-foreground" data-testid="create-team-invite-unknown">
-                <p className="font-medium">
-                  {result.unknown.length === 1
-                    ? "No answer for this invite. It may not have been sent — check the team page:"
-                    : `No answer for these ${result.unknown.length} invites. They may not have been sent — check the team page:`}
-                </p>
-                <ul className="mt-1 space-y-1">
+              <div className="rounded-lg bg-muted px-3 py-2 text-xs text-foreground" data-testid="create-team-add-unknown">
+                <ul className="space-y-1">
                   {result.unknown.map((email) => (
-                    <li key={email} className="font-medium">
-                      {email}
+                    <li key={email} data-testid="create-team-add-outcome">
+                      <span className="font-medium">{email}</span>: unknown
                     </li>
                   ))}
                 </ul>
+                <p className="mt-1">No answer came back for these; check the team page.</p>
               </div>
             )}
             <p className="text-[11px] text-muted-foreground">
-              You can invite people again with the Invite button on the team page.
+              You can add people again with Add to team on the team page.
             </p>
           </div>
         ) : (
@@ -1493,11 +1519,11 @@ export function CreateTeamDialog({
               />
             </label>
             <div className="text-xs font-medium text-foreground">
-              Invite people <span className="text-muted-foreground">(optional)</span>
+              Add people <span className="text-muted-foreground">(optional)</span>
               <div className="mt-1 flex items-start gap-2">
                 <div className="min-w-0 flex-1">
                   <ContactEmailAutocomplete
-                    label="Invite by email"
+                    label="Add by email"
                     value={inviteEmail}
                     onValueChange={(v) => {
                       setInviteEmail(v);
@@ -1522,7 +1548,7 @@ export function CreateTeamDialog({
               </div>
             )}
             {invitees.length > 0 && (
-              <ul aria-label="People to invite" className="flex flex-wrap gap-1.5">
+              <ul aria-label="People to add" className="flex flex-wrap gap-1.5">
                 {invitees.map((email) => (
                   <li
                     key={email}
@@ -1547,8 +1573,13 @@ export function CreateTeamDialog({
                 {error}
               </div>
             )}
+            {(invitees.length > 0 || inviteEmail.trim()) && (
+              <p className="text-[11px] text-muted-foreground" data-testid="create-team-add-notice">
+                {ADD_TO_TEAM_NOTICE}
+              </p>
+            )}
             <p className="text-[11px] text-muted-foreground">
-              You will be the team owner. Invites are sent once the team is created.
+              You will be the team owner. People are added once the team is created, without Paceday access.
             </p>
           </div>
         )}
@@ -1566,7 +1597,7 @@ export function CreateTeamDialog({
                 {busy
                   ? "Creating…"
                   : invitees.length > 0 || inviteEmail.trim()
-                    ? "Create and invite"
+                    ? "Create and add"
                     : "Create team"}
               </Button>
             </>
@@ -1575,8 +1606,4 @@ export function CreateTeamDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function peopleCount(n: number): string {
-  return `${n} ${n === 1 ? "person" : "people"}`;
 }

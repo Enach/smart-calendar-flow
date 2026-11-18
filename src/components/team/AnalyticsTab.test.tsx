@@ -6,7 +6,7 @@ import { AnalyticsTab } from "./AnalyticsTab";
 import { managerApi } from "@/api/manager";
 import { teamsApi, type FormalTeam } from "@/api/teams";
 
-const team = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Alpha" } as FormalTeam;
+const team = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "Alpha", owner_email: "owner@co.com", members: [] } as unknown as FormalTeam;
 
 function renderTab(activeTeam: FormalTeam | null) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -20,14 +20,22 @@ function renderTab(activeTeam: FormalTeam | null) {
 describe("AnalyticsTab", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(teamsApi.remote, "teamAnalytics").mockResolvedValue([
-      {
-        email: "report@co.com",
-        display_name: "Riley Report",
-        is_paceday_user: true,
-        weeks: [{ week_start: "2026-10-05", meeting_minutes: 240, focus_minutes: 615, free_minutes: 1545 }],
-      },
-    ]);
+    vi.spyOn(teamsApi.remote, "teamAnalytics").mockResolvedValue({
+      week_start: "2026-10-05",
+      avg_meeting_minutes: 240,
+      avg_focus_minutes: 615,
+      rows: [
+        {
+          email: "report@co.com",
+          display_name: "Riley Report",
+          kind: "paceday",
+          figures: "measured",
+          meeting_minutes: 240,
+          focus_minutes: 615,
+          focus_score: 72,
+        },
+      ],
+    });
   });
 
   it("shows members' real weekly analytics from the backend, never generated ones", async () => {

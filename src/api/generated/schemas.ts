@@ -19,6 +19,12 @@ export const Cadence = z.enum(["weekly", "biweekly", "monthly", "custom", "none"
 export type AddManagerMemberRequest = __TypedOpenapi.Schemas.AddManagerMemberRequest;
 export const AddManagerMemberRequest = z.object({ email: z.email(), display_name: z.string().optional(), cadence: Cadence.optional(), cadence_custom_days: z.number().int().min(1).max(365).nullable().optional() }).catchall(z.unknown());
 
+export type AddTeamPersonError = __TypedOpenapi.Schemas.AddTeamPersonError;
+export const AddTeamPersonError = z.strictObject({ error: z.enum(["email must be a valid email address", "you cannot add your own address", "this address belongs to a Paceday member of this team", "this team has reached its limit of 50 members; remove someone before adding another"]) });
+
+export type AddTeamPersonRequest = __TypedOpenapi.Schemas.AddTeamPersonRequest;
+export const AddTeamPersonRequest = z.object({ email: z.string(), name: z.string().optional() }).catchall(z.unknown());
+
 export type AnalyticsBreakdownEntry = __TypedOpenapi.Schemas.AnalyticsBreakdownEntry;
 export const AnalyticsBreakdownEntry = z.strictObject({ category: z.enum(["meeting", "focus", "habit", "personal", "free"]), minutes: z.number().int(), percentage: z.number(), color: z.string() });
 
@@ -238,8 +244,11 @@ export const IntegrationAvailabilityResponse = z.strictObject({ google: Integrat
 export type IntegrationStatus = __TypedOpenapi.Schemas.IntegrationStatus;
 export const IntegrationStatus = z.strictObject({ connected: z.boolean(), workspace_name: z.string().optional() });
 
+export type InvalidEmailError = __TypedOpenapi.Schemas.InvalidEmailError;
+export const InvalidEmailError = z.strictObject({ error: z.literal("email must be a valid email address") });
+
 export type InviteEmailRequest = __TypedOpenapi.Schemas.InviteEmailRequest;
-export const InviteEmailRequest = z.object({ email: z.email() }).catchall(z.unknown());
+export const InviteEmailRequest = z.object({ email: z.email(), name: z.string().optional() }).catchall(z.unknown());
 
 export type InviteSchedulingLinkHostRequest = __TypedOpenapi.Schemas.InviteSchedulingLinkHostRequest;
 export const InviteSchedulingLinkHostRequest = z.strictObject({ email: z.email() });
@@ -272,7 +281,7 @@ export type ManagerAnalytics = __TypedOpenapi.Schemas.ManagerAnalytics;
 export const ManagerAnalytics = z.strictObject({ members: z.array(ManagerAnalyticsMember) });
 
 export type ManagerMemberSource = __TypedOpenapi.Schemas.ManagerMemberSource;
-export const ManagerMemberSource = z.enum(["auto", "manual", "formal"]);
+export const ManagerMemberSource = z.enum(["auto", "manual", "formal", "added"]);
 
 export type ManagerProfileSummary = __TypedOpenapi.Schemas.ManagerProfileSummary;
 export const ManagerProfileSummary = z.strictObject({ is_manager: z.boolean(), detected_at: z.iso.datetime().nullable(), team_member_count: z.number().int() });
@@ -586,26 +595,59 @@ export const SsoWriteForbiddenResponse = z.union([SsoWriteMembershipRequired, Ss
 export type Team = __TypedOpenapi.Schemas.Team;
 export const Team = z.strictObject({ id: z.uuid(), orgId: z.uuid().optional(), name: z.string(), createdBy: z.uuid(), createdAt: z.iso.datetime() });
 
+export type TeamPersonKind = __TypedOpenapi.Schemas.TeamPersonKind;
+export const TeamPersonKind = z.enum(["paceday", "added"]);
+
+export type TeamAnalyticsFigures = __TypedOpenapi.Schemas.TeamAnalyticsFigures;
+export const TeamAnalyticsFigures = z.enum(["measured", "no_data", "withheld"]);
+
+export type TeamAnalyticsPerson = __TypedOpenapi.Schemas.TeamAnalyticsPerson;
+export const TeamAnalyticsPerson = z.strictObject({ email: z.string(), name: z.string(), kind: TeamPersonKind, userId: z.uuid().nullable(), figures: TeamAnalyticsFigures, meeting_minutes: z.number().int().min(0).nullable(), focus_minutes: z.number().int().min(0).nullable(), focus_score: z.number().int().nullable() });
+
 export type TeamAnalytics = __TypedOpenapi.Schemas.TeamAnalytics;
-export const TeamAnalytics = z.strictObject({ avg_meeting_minutes: z.number().int(), avg_focus_minutes: z.number().int(), member_breakdown: z.array(MemberAnalyticsSummary) });
+export const TeamAnalytics = z.strictObject({ week_start: z.iso.date(), avg_meeting_minutes: z.number().int(), avg_focus_minutes: z.number().int(), member_breakdown: z.array(MemberAnalyticsSummary), people: z.array(TeamAnalyticsPerson) });
 
 export type TeamMember = __TypedOpenapi.Schemas.TeamMember;
 export const TeamMember = z.strictObject({ teamId: z.uuid(), userId: z.uuid(), role: z.enum(["owner", "member"]), joinedAt: z.iso.datetime(), name: z.string().optional(), email: z.email().optional() });
 
+export type TeamPersonRole = __TypedOpenapi.Schemas.TeamPersonRole;
+export const TeamPersonRole = z.enum(["owner", "member"]);
+
+export type TeamPersonInvitation = __TypedOpenapi.Schemas.TeamPersonInvitation;
+export const TeamPersonInvitation = z.strictObject({ expiresAt: z.iso.datetime() });
+
+export type TeamPerson = __TypedOpenapi.Schemas.TeamPerson;
+export const TeamPerson = z.strictObject({ email: z.string(), name: z.string(), kind: TeamPersonKind, userId: z.uuid().nullable(), role: TeamPersonRole.nullable(), invitation: TeamPersonInvitation.nullable() });
+
 export type TeamDetail = __TypedOpenapi.Schemas.TeamDetail;
-export const TeamDetail = z.strictObject({ team: Team, members: z.array(TeamMember) });
+export const TeamDetail = z.strictObject({ team: Team, members: z.array(TeamMember), people: z.array(TeamPerson) });
+
+export type TeamFullError = __TypedOpenapi.Schemas.TeamFullError;
+export const TeamFullError = z.strictObject({ error: z.literal("this team is full; ask its owner to remove someone before you accept") });
 
 export type TeamInvite = __TypedOpenapi.Schemas.TeamInvite;
 export const TeamInvite = z.strictObject({ id: z.uuid(), teamId: z.uuid(), inviteeEmail: z.email(), invitedBy: z.uuid(), token: z.string(), status: z.enum(["pending", "accepted", "declined", "expired"]), createdAt: z.iso.datetime(), expiresAt: z.iso.datetime() });
 
+export type TeamInviteOutcome = __TypedOpenapi.Schemas.TeamInviteOutcome;
+export const TeamInviteOutcome = z.enum(["added_and_invited", "invited", "already_pending", "already_member"]);
+
 export type TeamInvitePreview = __TypedOpenapi.Schemas.TeamInvitePreview;
 export const TeamInvitePreview = z.strictObject({ teamName: z.string(), inviterName: z.string(), email: z.email(), team_id: z.uuid(), expires_at: z.iso.datetime(), inviter_email: z.email().nullable() });
+
+export type TeamInviteResult = __TypedOpenapi.Schemas.TeamInviteResult;
+export const TeamInviteResult = z.strictObject({ outcome: TeamInviteOutcome, invitation: TeamInvite.nullable(), person: TeamPerson });
+
+export type TeamMemberLimitError = __TypedOpenapi.Schemas.TeamMemberLimitError;
+export const TeamMemberLimitError = z.strictObject({ error: z.literal("this team has reached its limit of 50 members; remove someone before adding another") });
 
 export type TeamNameRequest = __TypedOpenapi.Schemas.TeamNameRequest;
 export const TeamNameRequest = z.object({ name: z.string().min(1) }).catchall(z.unknown());
 
+export type TeamPersonNotFoundError = __TypedOpenapi.Schemas.TeamPersonNotFoundError;
+export const TeamPersonNotFoundError = z.strictObject({ error: z.literal("person not found") });
+
 export type TeamSlot = __TypedOpenapi.Schemas.TeamSlot;
-export const TeamSlot = z.strictObject({ start: z.iso.datetime(), end: z.iso.datetime(), quality_score: z.number().int().min(0).max(100) });
+export const TeamSlot = z.strictObject({ start: z.iso.datetime(), end: z.iso.datetime(), quality_score: z.number().int().min(0).max(100), free_count: z.number().int().min(0), unknown_count: z.number().int().min(0), total_count: z.number().int().min(1) });
 
 export type TeamSlotList = __TypedOpenapi.Schemas.TeamSlotList;
 export const TeamSlotList = z.strictObject({ slots: z.array(TeamSlot) });
