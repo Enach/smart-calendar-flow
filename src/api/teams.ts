@@ -355,8 +355,16 @@ const teamsRemote = {
     demoOrReal<FormalTeamMember | null>("teams.inviteMember", [teamId, email, displayName], async () => {
         assertTeams(validateTeamEmail(email));
         await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
-        const team = await remoteTeam(teamId);
-        return team.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
+        // The POST succeeded: the invite exists. A failed re-read afterwards
+        // must not turn that into a failure; the caller refreshes the team on
+        // its own, so fall back to the row the server just accepted.
+        let team: FormalTeam | null = null;
+        try {
+          team = await remoteTeam(teamId);
+        } catch {
+          team = null;
+        }
+        return team?.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
           email: email.trim().toLowerCase(),
           display_name: displayName?.trim() || deriveName(email),
           role: "member",

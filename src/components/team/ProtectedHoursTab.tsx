@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, X, UserPlus, ShieldCheck } from "lucide-react";
 
@@ -32,6 +32,9 @@ import {
 import { apiErrorMessage } from "@/api/client";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { effectOf } from "@/api/effects";
+import type { Attendee } from "@/api/types";
+import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
+import { keepDialogOpenForOpenCombobox } from "@/lib/comboboxEscape";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -292,6 +295,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
         open={inviteOpen}
         onOpenChange={setInviteOpen}
         teamId={team.id}
+        existingEmails={team.members.map((m) => m.email)}
         onInvited={refresh}
       />
 
@@ -567,48 +571,80 @@ function MobileAddForm({
 // Invite + Manage members
 // ============================================================================
 
-function InviteDialog({
+export function InviteDialog({
   open,
   onOpenChange,
   teamId,
+  existingEmails,
   onInvited,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   teamId: string;
+  /**
+   * The team's current members: never suggested again. Pending invitees are
+   * not covered on the server-backed team: the contract has no endpoint that
+   * lists pending invites, so they cannot be excluded yet (PAC-129 makes an
+   * invited person a member, which will cover them).
+   */
+  existingEmails: readonly string[];
   onInvited: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const nameSource = useRef<"empty" | "auto" | "manual">("empty");
+  // Set synchronously on submit: a second Enter can arrive before the
+  // mutation's pending state has rendered.
+  const inFlight = useRef(false);
+
+  const handleEmailChange = useCallback((value: string) => {
+    setEmail(value);
+    if (nameSource.current === "auto") {
+      setName("");
+      nameSource.current = "empty";
+    }
+  }, []);
+
+  const handleContactResolved = useCallback((contact: Attendee) => {
+    if (!contact.name || nameSource.current === "manual") return;
+    setName(contact.name);
+    nameSource.current = "auto";
+  }, []);
 
   const inviteMut = useMutation({
     mutationFn: () => teamsApi.remote.inviteMember(teamId, email, name),
     // Typed values are preserved on failure.
     onError: (e) => setError(apiErrorMessage(e, effectOf("teams.inviteMember"))),
+    onSettled: () => {
+      inFlight.current = false;
+    },
     onSuccess: () => {
       toast.success(`Invite sent to ${email}.`);
       setEmail("");
       setName("");
       setError(null);
+      nameSource.current = "empty";
       onOpenChange(false);
       onInvited();
     },
   });
 
   const submit = () => {
+    if (inFlight.current) return;
     const invalid = validateTeamEmail(email);
     if (invalid) {
       setError(invalid);
       return;
     }
     setError(null);
+    inFlight.current = true;
     inviteMut.mutate();
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent className="sm:max-w-sm" onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
         <DialogHeader>
           <DialogTitle className="font-serif text-lg">Invite to team</DialogTitle>
           <DialogDescription>
@@ -618,19 +654,28 @@ function InviteDialog({
         <div className="space-y-3">
           <label className="block text-xs font-medium text-foreground">
             Email <span className="text-[#EF4444]">*</span>
-            <input
-              type="email"
-              autoFocus
+            <ContactEmailAutocomplete
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submit()}
-              className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-              placeholder="alex@team.com"
+              onValueChange={handleEmailChange}
+              onContactResolved={handleContactResolved}
+              exclude={existingEmails}
+              onSubmit={submit}
+              autoFocus
+              inputClassName="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
           </label>
           <label className="block text-xs font-medium text-foreground">
             Display name <span className="text-muted-foreground">(optional)</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Alex Carter" />
+            <input
+              value={name}
+              onChange={(e) => {
+                const value = e.target.value;
+                setName(value);
+                nameSource.current = value.trim() ? "manual" : "empty";
+              }}
+              className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              placeholder="Alex Carter"
+            />
           </label>
           {error && (
             <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">

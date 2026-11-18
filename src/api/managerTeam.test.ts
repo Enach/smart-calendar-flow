@@ -296,6 +296,22 @@ describe("team request bodies", () => {
     expect(slots[0].score).toBe(88);
   });
 
+  it("keeps an accepted invite as sent when the re-read of the team fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ ok: true }, 201))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const member = await teamsApi.remote.inviteMember("t1", "New@Example.com");
+    expect(urlOf(0).pathname).toBe("/api/teams/t1/members/invite");
+    expect(bodyOf(0)).toEqual({ email: "new@example.com" });
+    expect(member).toMatchObject({ email: "new@example.com", status: "pending" });
+  });
+
+  it("still rejects an invite the server refused", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "already a member" }, 409));
+    await expect(teamsApi.remote.inviteMember("t1", "a@example.com")).rejects.toBeInstanceOf(ApiHttpError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces team HTTP errors rather than falling back", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "conflict" }, 409));
     await expect(teamsApi.remote.createTeam("Platform")).rejects.toBeInstanceOf(ApiHttpError);
