@@ -8,7 +8,7 @@
  * scan answers in this session, then shows that answer's `scanned_at`.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -32,13 +32,15 @@ const WEEK = { focus_minutes: 120, meeting_minutes: 60, free_minutes: 0, data_av
 
 function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  render(
+  const tree = (team: FormalTeam) => (
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <TeamTab activeTeam={TEAM} />
+        <TeamTab activeTeam={team} />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree(TEAM));
+  return { switchTo: (team: FormalTeam) => view.rerender(tree(team)) };
 }
 
 describe("PAC-122 batch 6, manager tab", () => {
@@ -81,5 +83,30 @@ describe("PAC-122 batch 6, manager tab", () => {
     expect(screen.queryByText(/last scan/i)).not.toBeInTheDocument();
     fireEvent.click(rescan);
     expect(await screen.findByText(/^Last scan: /)).toHaveTextContent(/Nov 16/);
+  });
+
+  it("SF-059: the scan time stays with the team it scanned, never shown for another team", async () => {
+    const OTHER_ID = "7a2d3c4e-5f60-4718-9a2b-3c4d5e6f7a8b";
+    const OTHER: FormalTeam = { ...TEAM, id: OTHER_ID, name: "Mobile" };
+    const listTeam = vi.mocked(managerApi.remote.listTeam);
+    const roster = await listTeam(TEAM_ID);
+    listTeam.mockImplementation(async (teamId: string) => ({ ...roster, team_id: teamId }));
+    vi.spyOn(managerApi.remote, "detect").mockResolvedValue({
+      team_id: TEAM_ID,
+      scanned_at: "2026-11-16T10:30:00Z",
+      detected: 0,
+      eligible: 0,
+      assigned: 0,
+      skipped: 0,
+      candidates: [],
+    });
+    const { switchTo } = renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /re-scan calendar for team members/i }));
+    expect(await screen.findByText(/^Last scan: /)).toBeInTheDocument();
+    switchTo(OTHER);
+    await waitFor(() => expect(managerApi.remote.listTeam).toHaveBeenCalledWith(OTHER_ID));
+    expect(screen.queryByText(/^Last scan: /)).not.toBeInTheDocument();
+    switchTo(TEAM);
+    expect(await screen.findByText(/^Last scan: /)).toBeInTheDocument();
   });
 });

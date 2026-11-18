@@ -793,14 +793,24 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
 
           <div className="space-y-2">
             <Label>Public URL</Label>
-            <p className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
-              {publicBookingUrl(slug || "your-link")}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {isEdit
-                ? "The address is fixed once the link exists."
-                : "The address is generated from the title when the link is created."}
-            </p>
+            {/* PAC-122 SF-052: only an address the server assigned is shown.
+                The create sends no slug (slugs are global and a taken one is
+                a 409 the drawer cannot recover from), so a new link's address
+                is unknown until the server answers. */}
+            {isEdit && slug ? (
+              <>
+                <p className="rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-muted-foreground">
+                  {publicBookingUrl(slug)}
+                </p>
+                <p className="text-xs text-muted-foreground">The address is fixed once the link exists.</p>
+              </>
+            ) : (
+              <p data-testid="link-address-pending" className="text-xs text-muted-foreground">
+                {isEdit
+                  ? "The address is shown once the link is loaded."
+                  : "Your address is assigned when the link is created."}
+              </p>
+            )}
           </div>
 
 

@@ -51,7 +51,7 @@ const surfaces: Array<[string, () => ReactElement]> = [
   ["settings section", () => <WorkCalendarConnection settings={{} as Settings} onPatch={() => {}} />],
 ];
 
-describe.each(surfaces)("PAC-122 SF-055: a failed status read on the %s", (name, renderSurface) => {
+describe.each(surfaces)("PAC-122 SF-055: a failed status read on the %s", (_name, renderSurface) => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
@@ -66,9 +66,9 @@ describe.each(surfaces)("PAC-122 SF-055: a failed status read on the %s", (name,
     expect(alert).toHaveTextContent(/could not check your calendar connection/i);
     expect(within(alert).getByTestId("api-error")).toHaveTextContent("internal error");
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
-    if (name === "dashboard card") {
-      expect(screen.queryByRole("button", { name: /^connect$/i })).not.toBeInTheDocument();
-    }
+    // No connect is offered for a state that is not known (the card's
+    // Connect, the settings section's "Connect <provider>").
+    expect(screen.queryByRole("button", { name: /^connect/i })).not.toBeInTheDocument();
   });
 
   it("retries the read and shows the real status once it answers", async () => {
