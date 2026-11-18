@@ -204,7 +204,7 @@ const patchPayload = {
 // PAC-24: PATCH /api/settings merges, so the body carries only what changed,
 // only contract properties, and the key only when the user typed or cleared it.
 describe("PATCH body", () => {
-  const read = { ...normalizeSettings({ ...patchPayload, llmApiKeySet: true, updatedAt: "2026-10-12T10:00:00Z" }), calendar_id: "primary" } as Settings;
+  const read = { ...normalizeSettings({ ...patchPayload, llmApiKeySet: true, updatedAt: "2026-10-12T10:00:00Z" }) } as Settings;
 
   it("is empty when nothing changed", () => {
     expect(settingsPatchBody({ ...read }, read)).toEqual({});
@@ -218,7 +218,10 @@ describe("PATCH body", () => {
   });
 
   it("never sends properties the contract does not have, or read-only ones", () => {
-    const body = settingsPatchBody({ ...read, calendar_id: "work", teams_enabled: true, llm_api_key_set: false }, read);
+    // calendar_id and teams_enabled were UI-only fields with no contract
+    // property (PAC-122 SF-047, SF-048); they are gone from Settings, and a
+    // stray one still never reaches the body.
+    const body = settingsPatchBody({ ...read, calendar_id: "work", teams_enabled: true, llm_api_key_set: false } as Settings, read);
     expect(body).toEqual({});
   });
 
@@ -268,7 +271,6 @@ describe("provider switch and the draft key", () => {
       llmApiKeySet: true,
       llmApiKeysSet: { openai: true, anthropic: true, azure_openai: false, bedrock: false, vertex: false },
     }),
-    calendar_id: "primary",
   } as Settings;
   const switchTo = (d: Settings, next: string): Settings => ({ ...d, ...providerSwitch(next, saved) });
 
@@ -318,7 +320,6 @@ describe("PAC-74 the key field", () => {
       llmApiKeySet: true,
       llmApiKeysSet: { openai: true, anthropic: false, azure_openai: false, bedrock: false, vertex: false },
     }),
-    calendar_id: "primary",
   } as Settings;
   const type = (d: Settings, text: string, from: Settings = saved): Settings => ({ ...d, ...editKey(d, text, from) });
   const typeAndErase = (d: Settings, from: Settings = saved): Settings => type(type(type(d, "s", from), "sk", from), "", from);

@@ -67,3 +67,47 @@ describe("QuickActions run focus engine (PAC-32)", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["events"] });
   });
 });
+
+// PAC-122 batch 6, SF-050: the count was shown but `errors[]` dropped, so a
+// run where days failed read as a plain success.
+describe("QuickActions run focus engine with failed days (PAC-122 SF-050)", () => {
+  beforeEach(() => {
+    toast.success.mockReset();
+    toast.error.mockReset();
+    toast.info.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the failed days as an error, not as a success", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/focus/run") {
+        return jsonResponse({
+          weekStart: "2026-11-02T00:00:00Z",
+          createdBlocks: [],
+          skippedDays: [],
+          totalMinutes: 0,
+          errors: ["2026-11-03: read existing focus minutes: boom"],
+        });
+      }
+      return jsonResponse({ error: "not here" }, 404);
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <QuickActions weekISO="2026-11-02" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /run focus engine/i }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("No focus block was created. 1 day could not be scheduled: 2026-11-03."),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+});

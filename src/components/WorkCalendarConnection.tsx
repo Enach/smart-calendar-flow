@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, LogIn, LogOut, Calendar, Mail, Link as LinkIcon } from "lucide-react";
+import { AlertCircle, Loader2, LogIn, LogOut, Calendar, Mail, RotateCcw, Link as LinkIcon } from "lucide-react";
 import {
   api,
   apiErrorMessage,
@@ -37,10 +37,19 @@ export function WorkCalendarConnection({
   onPatch: (patch: Partial<Settings>) => void;
 }) {
   const qc = useQueryClient();
-  const { data: status, isLoading: authLoading } = useQuery({
+  const {
+    data: status,
+    isLoading: authLoading,
+    isError: authFailed,
+    error: authError,
+    isFetching: authFetching,
+    refetch: refetchAuth,
+  } = useQuery({
     queryKey: ["auth"],
     queryFn: () => api.authStatus(),
   });
+  // PAC-122 SF-055: an unread status is not "Not connected".
+  const statusUnknown = authFailed && !status;
   const {
     data: availability,
     isLoading: availabilityLoading,
@@ -120,6 +129,28 @@ export function WorkCalendarConnection({
   return (
     <div className="space-y-4">
       {/* Current connection */}
+      {statusUnknown ? (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3">
+          <div role="alert" data-testid="calendar-status-error" className="flex min-w-0 items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">Could not check your calendar connection.</p>
+              <p className="text-[11px] text-muted-foreground">
+                <ApiErrorText error={authError} effect={effectOf("api.authStatus")} />
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refetchAuth()}
+            disabled={authFetching}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            {authFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Try again
+          </button>
+        </div>
+      ) : (
       <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/30 p-3">
         <div className="flex min-w-0 items-center gap-2">
           {authLoading ? (
@@ -158,6 +189,7 @@ export function WorkCalendarConnection({
           </button>
         )}
       </div>
+      )}
 
       {/* Provider picker */}
       <div role="radiogroup" aria-label="Calendar provider" className="grid grid-cols-1 gap-2 sm:grid-cols-3">

@@ -396,11 +396,16 @@ export const schedulingLinksApi = {
     assertValidLinkBody(input);
     return demoOrReal<SchedulingLinkSaveResult>("schedulingLinksApi.createLink", [input], async () => {
         const listSent = input.co_host_emails !== undefined;
+        // PAC-122 SF-052: the slug the drawer previews is the one requested
+        // (CreateSchedulingLinkRequest.slug); an empty one is left out so the
+        // server generates it, as the contract says.
+        const slug = input.slug.trim();
         const raw = await requestApi<BackendSchedulingLink>(
           "POST",
           "/scheduling-links/",
           {
             ...backendLinkBody(input),
+            ...(slug ? { slug } : {}),
             ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
           },
           undefined,

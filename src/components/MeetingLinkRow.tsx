@@ -5,6 +5,7 @@ import { api, apiErrorMessage, isValidConferenceUrl } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import type { ConferenceLink, ConferenceProvider } from "@/api/types";
 import { effectOf } from "@/api/effects";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 const PROVIDER_META: Record<ConferenceProvider, { label: string; emoji: string; cls: string }> = {
   google_meet: { label: "Google Meet", emoji: "🟢", cls: "text-success" },
@@ -24,11 +25,20 @@ interface MeetingLinkRowProps {
 
 export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRowProps) {
   const qc = useQueryClient();
-  const { data: providers = [] } = useQuery({
+  const {
+    data: providersRead,
+    isError: providersFailed,
+    error: providersError,
+    isFetching: providersFetching,
+    refetch: refetchProviders,
+  } = useQuery({
     queryKey: ["conferenceProviders"],
     queryFn: () => api.conferenceProviders(),
     staleTime: 60_000,
   });
+  const providers = providersRead ?? [];
+  // PAC-122 SF-056: an unread provider list is not "nothing is connected".
+  const providersUnknown = providersFailed && !providersRead;
 
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<ConferenceProvider | null>(null);
@@ -44,6 +54,10 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
   const add = async (provider: ConferenceProvider, url?: string) => {
     // Concurrent-toggle guard
     if (busy !== null) return;
+    if (provider !== "custom" && providersUnknown) {
+      toast.error("Could not load your meeting providers. Try again.");
+      return;
+    }
     if (!isConnected(provider)) {
       toast.error(`${PROVIDER_META[provider].label} isn't connected — open Settings → Conferencing to link it.`);
       return;
@@ -167,6 +181,28 @@ export function MeetingLinkRow({ eventId, conference, onChange }: MeetingLinkRow
 
       {open && (
         <div className="absolute z-10 mt-1 w-full rounded-lg border border-border bg-card p-1 shadow-lg">
+          {providersUnknown && (
+            <div
+              role="alert"
+              data-testid="conference-providers-error"
+              className="flex items-start gap-2 rounded-md px-2 py-1.5 text-xs"
+            >
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" aria-hidden="true" />
+              <p className="min-w-0 flex-1 text-foreground">
+                Could not load your meeting providers.{" "}
+                <ApiErrorText error={providersError} effect={effectOf("api.conferenceProviders")} className="text-muted-foreground" />
+              </p>
+              <button
+                type="button"
+                onClick={() => void refetchProviders()}
+                disabled={providersFetching}
+                className="flex shrink-0 items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+              >
+                {providersFetching ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : <RotateCcw className="h-2.5 w-2.5" />}
+                Try again
+              </button>
+            </div>
+          )}
           {providers.filter((p) => p.provider !== "custom").map((entry) => {
             const p = entry.provider;
             const meta = PROVIDER_META[p];

@@ -128,7 +128,6 @@ export const NOT_OPERATIONS: Record<string, string> = {
   "managerApi.addMember": STORE,
   "managerApi.updateMember": STORE,
   "managerApi.removeMember": STORE,
-  "managerApi.lastScanAt": STORE,
   "managerApi.gaps": STORE,
   "managerApi.schedulePrefillUrl": STORE,
   "managerApi.resetAll": STORE,

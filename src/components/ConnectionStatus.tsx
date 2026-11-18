@@ -6,15 +6,21 @@ import {
   canDisconnectCalendar,
   isCalendarDisconnectUnsupported,
 } from "@/api/client";
-import { Loader2, LogIn, LogOut, Link2 } from "lucide-react";
+import { AlertCircle, Loader2, LogIn, LogOut, Link2, RotateCcw } from "lucide-react";
 import { toast } from "@/hooks/useToast";
 import { useState } from "react";
 import { useCalendarConnect } from "@/hooks/useCalendarConnect";
 import { effectOf } from "@/api/effects";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({ queryKey: ["auth"], queryFn: () => api.authStatus() });
+  const { data, isLoading, isError, error, isFetching, refetch } = useQuery({
+    queryKey: ["auth"],
+    queryFn: () => api.authStatus(),
+  });
+  // PAC-122 SF-055: an unread status is not "Not connected".
+  const statusUnknown = isError && !data;
   const [busy, setBusy] = useState(false);
   // PAC-71: a connect is a signed-in POST, never the sign-in start.
   const { connect, connecting } = useCalendarConnect();
@@ -52,6 +58,28 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
           </h3>
         </div>
       )}
+      {statusUnknown ? (
+        <div className="flex items-start justify-between gap-3">
+          <div role="alert" data-testid="calendar-status-error" className="flex min-w-0 items-start gap-2.5">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">Could not check your calendar connection.</p>
+              <p className="text-[11px] text-muted-foreground">
+                <ApiErrorText error={error} effect={effectOf("api.authStatus")} />
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-50"
+          >
+            {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+            Try again
+          </button>
+        </div>
+      ) : (
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           {isLoading ? (
@@ -101,6 +129,7 @@ export function ConnectionStatus({ compact = false }: { compact?: boolean }) {
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }

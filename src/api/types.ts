@@ -104,7 +104,6 @@ export interface Settings {
   ai_status?: AIStatus;
   /** Optional OpenAI/Anthropic gateway base URL (backend: llmBaseUrl). */
   llm_base_url?: string;
-  calendar_id?: string;
   // Work calendar provider
   calendar_provider?: CalendarProvider;
   webcal_url?: string;
@@ -120,7 +119,6 @@ export interface Settings {
   // Conferencing
   /** Backend conferencingProvider (meet|zoom|teams), mapped to the app's names. */
   default_conference_provider?: ConferenceProvider;
-  teams_enabled?: boolean;
   /** 12- or 24-hour clock for every time of day in the app (backend: timeFormat, PAC-55). */
   time_format?: "12h" | "24h";
   /** Per-day working hours (backend field: workingHours). Absent until the backend ships it. */

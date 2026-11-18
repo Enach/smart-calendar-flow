@@ -422,7 +422,7 @@ function RequireFormalTeam({
 // Tab 1 — Team (T-44 content)
 // ============================================================================
 
-function TeamTab({
+export function TeamTab({
   activeTeam,
 }: {
   activeTeam: ReturnType<typeof teamsApi.list>[number];
@@ -439,6 +439,9 @@ function TeamTab({
   const [autoBannerDismissed, setAutoBannerDismissed] = useState(false);
   const [scanPreview, setScanPreview] = useState<ScanPreview | null>(null);
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
+  // PAC-122 SF-059: no read returns the last scan time, so only a scan
+  // answered in this session (its `scanned_at`) is shown.
+  const [lastScanAt, setLastScanAt] = useState<string | null>(null);
 
   const teamQ = useQuery({
     queryKey: managerKeys.team(activeTeam.id),
@@ -481,6 +484,7 @@ function TeamTab({
     mutationFn: () => managerApi.remote.detect(activeTeam.id),
     onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.detect"))),
     onSuccess: (preview) => {
+      setLastScanAt(preview.scanned_at);
       setScanPreview(preview);
       setSelectedCandidates(preview.candidates.filter((candidate) => !candidate.already_assigned).map((candidate) => candidate.email));
     },
@@ -645,11 +649,7 @@ function TeamTab({
           </ul>
 
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-            <span>
-              {managerApi.lastScanAt()
-                ? `Last scan: ${formatDateTime(managerApi.lastScanAt()!, tf, DATE_TIME.short)}`
-                : "Calendar has not been scanned yet."}
-            </span>
+            <span>{lastScanAt ? `Last scan: ${formatDateTime(lastScanAt, tf, DATE_TIME.short)}` : null}</span>
             <button
               onClick={() => detectMut.mutate()}
               disabled={detectMut.isPending}

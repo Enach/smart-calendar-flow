@@ -57,7 +57,6 @@ const DEFAULT_SETTINGS: Settings = {
   llm_model: "gpt-4o-mini",
   llm_api_key: "",
   llm_base_url: "",
-  calendar_id: "primary",
   calendar_provider: "google",
   webcal_url: "",
   aws_region: "us-east-1",
@@ -65,7 +64,6 @@ const DEFAULT_SETTINGS: Settings = {
   azure_deployment: "",
   azure_api_version: "2024-02-01",
   default_conference_provider: "google_meet",
-  teams_enabled: false,
   // Preview-only defaults so the day-by-day editor is explorable offline.
   working_hours: {
     mode: "all_days",
@@ -757,7 +755,8 @@ export const demoClientOps = {
           {
             provider: "teams",
             connected: calProvider === "outlook",
-            enabled: !!mockState.settings.teams_enabled,
+            // Contract: `enabled` follows `connected` and is omitted when false.
+            ...(calProvider === "outlook" ? { enabled: true } : {}),
             auto_with: "outlook",
           },
         ] as ConferenceProviderStatus[];
