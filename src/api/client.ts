@@ -1,4 +1,4 @@
-import type { ApiPort, CalendarEventDTO, CompressionApplyResponse } from "./contract";
+import type { ApiPort, CalendarEventDTO, CompressionApplyResponse, ScheduleSuggestResponse } from "./contract";
 import {
   AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
@@ -54,7 +54,6 @@ import type {
   OrganizationAIConfigurationUpdate,
   AIStatus,
   Settings,
-  SuggestedSlot,
 } from "./types";
 import { isKeyProvider, runsOnOrganizationAIInsteadOfOwnChoice } from "@/lib/aiProviders";
 
@@ -1141,7 +1140,7 @@ export const api = {
     range_end: string;
     title: string;
   }) =>
-    demoOrReal("api.scheduleSuggest", [body], () => requestApi<{ slots: SuggestedSlot[] }>("POST", "/schedule/suggest", body)),
+    demoOrReal("api.scheduleSuggest", [body], () => requestApi<ScheduleSuggestResponse>("POST", "/schedule/suggest", body)),
 
   scheduleCreate: (body: {
     title: string;
