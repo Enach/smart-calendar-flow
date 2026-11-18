@@ -2575,6 +2575,7 @@ export interface paths {
         /**
          * Twelve weeks of per-member focus/meeting/free minutes.
          * @description Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy). PAC-34 (API-022): each member also carries is_paceday_user (same derivation as the roster's) and a member-level data_available that is true iff at least one of its 12 buckets has data_available=true. A client must render a bucket with data_available=false, and a member with data_available=false, as "no data", never as zero minutes. Neither field widens visibility: is_paceday_user is already on the roster for the same caller and members, and data_available is derived only from the buckets this response already returns.
+         *     PAC-122 SF-040: a failed read of any member's week (the PAC-60 ownership check, the cached figures, the consent or analytics read, the FreeBusy query, or the cache write) is the 500, never a bucket of zeroes with data_available=false. An external member whose FreeBusy coverage is unknown (a provider failure, PAC-67 D-6) is data_available=false for this answer and is not cached, so a later request asks again.
          *     PAC-129 (spec §3.6, §3.9, AC-31): with `team_id` and `include_added=true`, the members gain every person added to the team who has no assignment of the caller on it and is not a formal member, with is_paceday_user false, data_available false and 12 zero buckets. No calendar is read for such a member and no figure is stored (team_analytics_cache is never written for them). Owners see an added person's availability figures through getFormalTeamAnalytics instead. Without the flag the answer is exactly today's. A roster entry the manager created explicitly (add, or detection confirm) keeps today's stored figures.
          *
          */
@@ -2667,7 +2668,7 @@ export interface paths {
         put?: never;
         /**
          * Set the caller's is_manager flag; may trigger background detection.
-         * @description When `is_manager` is true and the profile has no `detected_at` yet, the handler spawns a background goroutine running DetectTeam with a 30s timeout. That background run persists detected members into the GLOBAL manager_team_members table only; it never creates team assignments. The response is written before the goroutine completes.
+         * @description When `is_manager` is true and the profile has no `detected_at` yet, the handler spawns a background goroutine running DetectTeam with a 30s timeout. That background run persists detected members into the GLOBAL manager_team_members table only; it never creates team assignments. The response is written before the goroutine completes. A failed profile write is the 500 (PAC-122 SF-009): the 200 echoes only a stored value.
          *
          */
         post: operations["setManagerProfile"];
@@ -2686,7 +2687,7 @@ export interface paths {
         };
         /**
          * Team-scoped manager roster with this-week / last-week stats.
-         * @description `team_id` is REQUIRED (unlike the member-mutation routes below), and membership — not ownership — suffices. The roster is the union of (a) manager assignments for this team and (b) formal team_members of this team that have no assignment yet, synthesised with source="formal" and cadence="none". The caller is always excluded from (b). Sorted case-insensitively by display_name. `members` is always an array, never null.
+         * @description `team_id` is REQUIRED (unlike the member-mutation routes below), and membership — not ownership — suffices. The roster is the union of (a) manager assignments for this team and (b) formal team_members of this team that have no assignment yet, synthesised with source="formal" and cadence="none". The caller is always excluded from (b). Sorted case-insensitively by display_name. `members` is always an array, never null. A failed read of a member's week (this week or last week) is the 500, never a member shown with zeroes (PAC-122 SF-040).
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): merging formal members with roster entries is a keeping site: a roster entry represents a formal member whose stored address equals the entry's address case-insensitively, at ANY standing. Nothing is granted here.
          *     PAC-129 (spec §3.9, AC-31; contract PAC-129 §5.1): with `include_added=true` the union gains (c): every person ADDED to this team (no Paceday access) for whom the caller has no assignment on this team and who is not a formal member, as a read-only entry with source="added", cadence="none", cadence_custom_days null, last_one_on_one_at null, is_paceday_user false (never an account signal, whatever account holds the address), this_week and last_week zero-valued with data_available=false, and focus_trend_pct 0. Nothing is read from any calendar and nothing is stored for such an entry. Precedence for one address is: an assignment (today's entry, unchanged), then a formal member, then an added person. Without `include_added`, or with `false`, the answer is exactly today's: a client built before PAC-129 (whose strict schema knows only auto, manual and formal) never receives source="added".
          *
@@ -2713,7 +2714,7 @@ export interface paths {
          * Add or upsert a roster member, optionally scoped to a team.
          * @description `team_id` is OPTIONAL here. Without it the member is written to the global manager_team_members table only. With it the write is transactional across manager_team_members plus manager_team_member_assignments, and the caller must be the team OWNER. Adding a member never creates a team_invites row (asserted by TestManagerTeam_AddMemberCreatesOnlySelectedTeamAssignment).
          *     PAC-129 (spec §3.9, D-13, AC-31): unchanged. This explicit manager action creates a roster entry with today's behaviour even when the address is also a person added to the team without Paceday access; that person stays an added person of the team (team membership and the manager's roster are separate). It never adds anyone to the team.
-         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): `member_user_id` is resolved to an account only when exactly one account holds `email` DOMAIN-CONFIRMED (compared case-insensitively; before PAC-71 an exact-case match on any account). An address that is carried only unconfirmed, by several accounts (a letter-case collision), or by none resolves to nobody: the roster row is stored with `member_user_id` null, as for a non-Paceday address today.
+         *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): `member_user_id` is resolved to an account only when exactly one account holds `email` DOMAIN-CONFIRMED (compared case-insensitively; before PAC-71 an exact-case match on any account). An address that is carried only unconfirmed, by several accounts (a letter-case collision), or by none resolves to nobody: the roster row is stored with `member_user_id` null, as for a non-Paceday address today. A failed holder lookup is the 500 and nothing is stored (PAC-122 SF-010); before PAC-122 it was read as "nobody", storing the member as external.
          *
          */
         post: operations["addManagerTeamMember"];
@@ -2741,7 +2742,7 @@ export interface paths {
          * Remove a member globally, or unassign them from one team.
          * @description Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. PAC-122 (SF-001): every storage error on this path is the 500 {"error":"internal error"}; with `team_id` the membership, assignment and pending-invite deletes run in one transaction, so a failed delete removes nothing.
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
-         *     PAC-129 (spec §3.8, D-5, D-8, AC-16b, AC-30, AC-37; contract PAC-129 §4): with `team_id` the whole decision moves inside ONE storage-owned transaction, in this order: the PAC-71 re-check (a stale session is the 401 and nothing is written); the team row locked FOR NO KEY UPDATE (the PAC-25 lock; no row is the 403); the owner check (not an owner is the 403); the carrier lookup and the membership reads (an owner among the carriers is the 422, nothing removed); then, in addition to today's deletes, the team's ADDED entry for the address and EVERY team_invites row of the team for the address, whatever its status (before PAC-129 only `pending` rows). Acceptance and the team removal take the same lock first, so an acceptance that committed before this removal is removed by it, and one that waits for it finds no invitation (404). The manager's global roster row and its 1:1 history are kept; only this team's assignment goes, as before. Cached manager figures (team_analytics_cache) are the manager's data and are kept. The answer is still 204 whatever was found. A storage error in the owner check inside the transaction is still the 403 (SF-074 is fixed for PAC-129's new operations only, spec OQ-12). Without `team_id` (the global delete) nothing about team membership changes: a person added to a team stays on it.
+         *     PAC-129 (spec §3.8, D-5, D-8, AC-16b, AC-30, AC-37; contract PAC-129 §4): with `team_id` the whole decision moves inside ONE storage-owned transaction, in this order: the PAC-71 re-check (a stale session is the 401 and nothing is written); the team row locked FOR NO KEY UPDATE (the PAC-25 lock; no row is the 403); the owner check (not an owner is the 403); the carrier lookup and the membership reads (an owner among the carriers is the 422, nothing removed); then, in addition to today's deletes, the team's ADDED entry for the address and EVERY team_invites row of the team for the address, whatever its status (before PAC-129 only `pending` rows). Acceptance and the team removal take the same lock first, so an acceptance that committed before this removal is removed by it, and one that waits for it finds no invitation (404). The manager's global roster row and its 1:1 history are kept; only this team's assignment goes, as before. Cached manager figures (team_analytics_cache) are the manager's data and are kept. The answer is still 204 whatever was found. A storage error in the owner check inside the transaction is the 500 (PAC-122 SF-074; before it, the 403, spec OQ-12). Without `team_id` (the global delete) nothing about team membership changes: a person added to a team stays on it.
          *
          */
         delete: operations["removeManagerTeamMember"];
@@ -3894,7 +3895,7 @@ export interface paths {
         put?: never;
         /**
          * Create a formal team; the caller becomes its owner.
-         * @description Registered via chi `r.Route("/api/teams")` + `r.Post("/")`, so both `/api/teams` and `/api/teams/` route here. The owner team_members row is inserted with its error discarded, so a failed AddTeamMember still returns 201 with an ownerless team.
+         * @description Registered via chi `r.Route("/api/teams")` + `r.Post("/")`, so both `/api/teams` and `/api/teams/` route here. The team row and the caller's owner team_members row are written in one transaction (PAC-122 SF-008): a failed owner insert is the 500 and leaves no team. Before PAC-122 the owner row was inserted after the team with its error discarded, so a failed insert still returned 201 with an ownerless team.
          *
          */
         post: operations["createTeam"];
@@ -4041,7 +4042,7 @@ export interface paths {
         put?: never;
         /**
          * Invite an address to Paceday on this team; an address not on the team is also added. Owner only.
-         * @description PAC-129 (spec §3.7, §3.10, D-4, D-8, D-12, AC-18, AC-20, AC-23, AC-25; contract PAC-129 §3.0, §3.3, §4). The address is normalised by the one address normaliser of AddTeamPersonRequest.email (trim set of contract §2.2, which since revision 1.2 includes U+FEFF; lowercase; ParseAddress), and every check below compares that form. The write is ONE storage-owned transaction: the PAC-71 re-check (stale session: 401, nothing written); the team row locked FOR NO KEY UPDATE (no row: 403); the owner check (not an owner: 403; a storage error there is still the 403, SF-074 left open on this existing operation, spec OQ-12). Then, judged under the lock, with "pending" meaning stored status `pending` AND expires_at after the database's now() (spec D-12):
+         * @description PAC-129 (spec §3.7, §3.10, D-4, D-8, D-12, AC-18, AC-20, AC-23, AC-25; contract PAC-129 §3.0, §3.3, §4). The address is normalised by the one address normaliser of AddTeamPersonRequest.email (trim set of contract §2.2, which since revision 1.2 includes U+FEFF; lowercase; ParseAddress), and every check below compares that form. The write is ONE storage-owned transaction: the PAC-71 re-check (stale session: 401, nothing written); the team row locked FOR NO KEY UPDATE (no row: 403); the owner check (not an owner: 403; a storage error there is the 500 since PAC-122 SF-074, which closed spec OQ-12 for this operation). Then, judged under the lock, with "pending" meaning stored status `pending` AND expires_at after the database's now() (spec D-12):
          *     1. the address is held by a Paceday member of the team (compared on the account's single address, lowercased): 200, outcome `already_member`, no invitation, no email;
          *     2. the address is not on the team (neither kind) and the team holds 50 or more members of both kinds, owner included: the 422 TeamMemberLimitError, nothing written;
          *     3. the address is not on the team: it is ADDED (an added person, named by `name`, trimmed, or "" when absent, `added_by` the caller). If it already is an added person whose adder is no longer an owner of the team (or whose account is gone), `added_by` becomes the caller, exactly as in addTeamPerson (contract 1.1, m-9); nothing else of the entry changes;
@@ -5551,7 +5552,7 @@ export interface components {
              * @description RFC3339 UTC timestamp of the last successful detection, or null.
              */
             detected_at: string | null;
-            /** @description COUNT(*) over manager_team_members for this manager — the GLOBAL roster size, not the size of any one team. The query's error is discarded, so a failed count is reported as 0.
+            /** @description COUNT(*) over manager_team_members for this manager — the GLOBAL roster size, not the size of any one team. A failed count is the 500 (PAC-122 SF-076); before PAC-122 it was reported as 0.
              *      */
             team_member_count: number;
         };
@@ -5582,10 +5583,10 @@ export interface components {
             last_one_on_one_at: string | null;
             /** @description True iff member_user_id resolved to a Paceday user row. */
             is_paceday_user: boolean;
-            /** @description Never null — the handler substitutes a zero-valued MemberWeekStats when the engine returns nil or errors (the engine error is discarded).
+            /** @description Never null — the handler substitutes a zero-valued MemberWeekStats when the engine returns nil (a person added to the team: no calendar read). A failed engine read is the 500, never zeroes (PAC-122 SF-040).
              *      */
             this_week: components["schemas"]["MemberWeekStats"];
-            /** @description Same nil-substitution as this_week; the week 7 days before `week`. */
+            /** @description Same nil-substitution and failure rule as this_week; the week 7 days before `week`. */
             last_week: components["schemas"]["MemberWeekStats"];
             /** @description engine.TrendPct(this_week.focus, last_week.focus). Clamped to [-200, 200], rounded to one decimal. Returns exactly 200 when prior is 0 and current is non-zero, and 0 when both are 0. Never NaN or Inf.
              *      */
@@ -7783,7 +7784,7 @@ export interface components {
                 "application/json": components["schemas"]["ErrorResponse"];
             };
         };
-        /** @description JSON error "forbidden". Emitted when the caller is not a member of `team_id`, when the route requires ownership and the caller's role is not "owner", AND when the team simply does not exist — the membership lookup error is not distinguished from a role mismatch.
+        /** @description JSON error "forbidden". Emitted when the caller is not a member of `team_id`, when the route requires ownership and the caller's role is not "owner", AND when the team simply does not exist (no membership row either way). A failed membership read is not a 403 on the manager routes' `team_id` scope or on any owner check: it is the 500 (PAC-122 SF-074). The formal-team member checks (team detail, zone list, availability, analytics) still answer a failed read with this 403.
          *      */
         JsonForbidden: {
             headers: {
