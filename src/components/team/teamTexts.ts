@@ -65,5 +65,8 @@ export const ANALYTICS_AVAILABILITY_ONLY = "Availability only";
 
 /** §9.8 */
 export const MANAGER_ADDED_HINT = "Added to the team without Paceday access. Add them with Add person to track 1:1s.";
+/** The team Analytics tab's Members panel, for an added person (one sentence, review minor 9). */
+export const TEAM_ANALYTICS_ADDED_HINT = "Added without Paceday access: their availability is under This week.";
+
 export const MANAGER_ANALYTICS_ADDED_HINT =
   "Added to the team without Paceday access. Team owners see their availability in the team's Analytics tab.";

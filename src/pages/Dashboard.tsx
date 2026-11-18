@@ -6,7 +6,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { useLocation } from "react-router-dom";
-import { schedulePrefillText } from "@/lib/schedulePrefill";
+import { schedulePrefill, schedulePrefillNotice } from "@/lib/schedulePrefill";
 
 import { Navbar } from "@/components/Navbar";
 import { NLPBar } from "@/components/NLPBar";
@@ -76,13 +76,13 @@ export default function Dashboard() {
   // the Manager dashboard's "Schedule" buttons, and the attendees team Find a
   // time passes in navigation state (PAC-129 AC-36). We surface a toast and
   // prefill the NLP bar — the user confirms the suggested slot from there.
-  const arrivalState = useLocation().state as unknown;
-  const arrivalStateRef = useRef(arrivalState);
+  const arrival = useLocation();
+  const arrivalRef = useRef(arrival);
   useEffect(() => {
-    const text = schedulePrefillText(window.location.search, arrivalStateRef.current);
-    if (text) {
-      setNlpInitial(text);
-      toast.info("Prefilled from manager dashboard — review and confirm a slot.");
+    const prefill = schedulePrefill(arrivalRef.current.search, arrivalRef.current.state);
+    if (prefill) {
+      setNlpInitial(prefill.text);
+      toast.info(schedulePrefillNotice(prefill.source));
       window.history.replaceState({}, "", "/app");
     }
   }, []);

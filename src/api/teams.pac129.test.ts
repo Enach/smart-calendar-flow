@@ -233,7 +233,7 @@ describe("getFormalTeamAnalytics (AC-16, AC-17, SF-053, SF-041)", () => {
   it("the owner-excluding filter drops only the owner's row", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(raw));
     const view = await teamsApi.remote.teamAnalytics(TEAM_ID, "2026-10-07");
-    const rows = analyticsRowsWithoutOwner(view.rows, "Owner@Co.Example");
+    const rows = analyticsRowsWithoutOwner(view.rows, ["Owner@Co.Example"]);
     expect(rows.map((r) => r.email)).toEqual(["alex@co.example", "alex@ext.example", "p2@co.example", "x@ext.example"]);
   });
 });
@@ -274,5 +274,70 @@ describe("Manager roster with added people (contract §5.1, §9.8)", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: text }, 422));
     const err = await managerApi.remote.updateMember("pat@ext.example", { cadence: "weekly" }, TEAM_ID).catch((e) => e);
     expect((err as ApiHttpError).data).toEqual({ error: text });
+  });
+});
+
+describe("review minor 2: response parsing accepts every address the server accepted", () => {
+  // Valid for the server's normaliser (net/mail), refused by zod's email check.
+  const ODD = "a&b@x.example";
+  const SHORT_TLD = "pat@x.y";
+
+  it("the invite result with such an invitee is read, not thrown", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          outcome: "added_and_invited",
+          invitation: {
+            id: "44444444-4444-4444-8444-444444444444",
+            teamId: TEAM_ID,
+            inviteeEmail: ODD,
+            invitedBy: OWNER_ID,
+            token: "tok",
+            status: "pending",
+            createdAt: "2026-11-24T00:00:00Z",
+            expiresAt: "2026-12-01T00:00:00Z",
+          },
+          person: { email: ODD, name: "", kind: "added", userId: null, role: null, invitation: { expiresAt: "2026-12-01T00:00:00Z" } },
+        },
+        201,
+      ),
+    );
+    const out = await teamsApi.remote.inviteMember(TEAM_ID, ODD);
+    expect(out.person.email).toBe(ODD);
+  });
+
+  it("a team whose Paceday member has such an address is read", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      if (new URL(String(input)).pathname.endsWith("/no-meeting-zones")) return jsonResponse([]);
+      return jsonResponse({
+        team: TEAM,
+        members: [{ teamId: TEAM_ID, userId: OWNER_ID, role: "owner", joinedAt: "2026-01-01T00:00:00Z", name: "Olive", email: SHORT_TLD }],
+        people: [{ ...OWNER_PERSON, email: SHORT_TLD }],
+      });
+    });
+    expect((await teamsApi.remote.get(TEAM_ID))!.members[0].email).toBe(SHORT_TLD);
+  });
+
+  it("the Manager roster with such an entry is read for the whole team", async () => {
+    const entry = (email: string) => ({
+      email,
+      display_name: email,
+      source: "added",
+      cadence: "none",
+      cadence_custom_days: null,
+      last_one_on_one_at: null,
+      is_paceday_user: false,
+      this_week: { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false },
+      last_week: { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false },
+      focus_trend_pct: 0,
+    });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ team_id: TEAM_ID, members: [entry(ODD), entry(SHORT_TLD), entry("ok@co.example")] }));
+    const roster = await managerApi.remote.listTeam(TEAM_ID);
+    expect(roster.members.map((m) => m.email)).toEqual([ODD, SHORT_TLD, "ok@co.example"]);
+  });
+
+  it("request validation is unchanged: the client still refuses a malformed address before sending", async () => {
+    await expect(teamsApi.remote.addPerson(TEAM_ID, "no-at-sign")).rejects.toThrow(/valid email/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

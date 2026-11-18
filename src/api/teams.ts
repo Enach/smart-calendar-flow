@@ -9,14 +9,16 @@
  *               coordination (Protected Hours, Find a Time, Analytics)
  */
 
-import type { z } from "zod";
 import { requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
 import type { components } from "./generated/types";
+import { z as zod } from "zod";
 import {
   TeamAnalytics as TeamAnalyticsSchema,
-  TeamDetail as TeamDetailSchema,
-  TeamInviteResult as TeamInviteResultSchema,
+  TeamDetail as GeneratedTeamDetailSchema,
+  TeamInvite as GeneratedTeamInviteSchema,
+  TeamInviteResult as GeneratedTeamInviteResultSchema,
+  TeamMember as GeneratedTeamMemberSchema,
   TeamPerson as TeamPersonSchema,
   TeamSlotList as TeamSlotListSchema,
 } from "./generated/schemas";
@@ -164,7 +166,24 @@ function timeFromMinutes(value: number): string {
   return hours + ":" + minutes;
 }
 
-type TeamPersonWire = z.infer<typeof TeamPersonSchema>;
+/**
+ * Response parsing must never refuse an address the server accepted. The
+ * contract still marks `TeamInvite.inviteeEmail` and `TeamMember.email`
+ * `format: email`, which zod's email check reads more strictly than the
+ * server's normaliser (net/mail): `a&b@x.example` and `pat@x.y` are valid
+ * there and refused here, after the write committed. These two derived
+ * schemas keep every other rule of the generated ones (strict objects, all
+ * keys) and read those two addresses as strings. Request validation is
+ * unchanged (validateTeamEmail).
+ */
+const TeamDetailSchema = GeneratedTeamDetailSchema.extend({
+  members: zod.array(GeneratedTeamMemberSchema.extend({ email: zod.string().optional() })),
+});
+const TeamInviteResultSchema = GeneratedTeamInviteResultSchema.extend({
+  invitation: GeneratedTeamInviteSchema.extend({ inviteeEmail: zod.string() }).nullable(),
+});
+
+type TeamPersonWire = zod.infer<typeof TeamPersonSchema>;
 
 /** PAC-129: one entry of `people`, both kinds. The web reads `people`, never `members` (contract §9.1). */
 export function normalizeTeamPerson(raw: TeamPersonWire): FormalTeamMember {
@@ -202,7 +221,7 @@ async function remoteTeam(id: string): Promise<FormalTeam> {
     id: detail.team.id,
     name: detail.team.name,
     created_at: detail.team.createdAt,
-    owner_email: owner?.email ?? load().current_user_email,
+    owner_email: owner?.email ?? "",
     members,
     no_meeting_zones: normalizeZones(zones ?? []),
   };
@@ -344,8 +363,8 @@ const teamsRemote = {
           state.active_team_id = teams[0]?.id ?? null;
         }
         if (!state.active_team_id && teams[0]) state.active_team_id = teams[0].id;
-        const ownerEmail = teams[0]?.owner_email;
-        if (ownerEmail) state.current_user_email = ownerEmail;
+        // The signed-in user is never derived from a team (PAC-129 review):
+        // owner checks use the session's address (useTeamViewerEmail).
         save(state);
         return teams.slice().sort((a, b) => a.name.localeCompare(b.name));
       }),
@@ -495,7 +514,7 @@ const teamsRemote = {
  * nothing is computed here, no free time is invented, and the week is the
  * server's `week_start` (the week asked for).
  */
-export function normalizeTeamAnalytics(raw: z.infer<typeof TeamAnalyticsSchema>): TeamAnalyticsView {
+export function normalizeTeamAnalytics(raw: zod.infer<typeof TeamAnalyticsSchema>): TeamAnalyticsView {
   return {
     week_start: raw.week_start,
     avg_meeting_minutes: raw.avg_meeting_minutes,
@@ -512,10 +531,27 @@ export function normalizeTeamAnalytics(raw: z.infer<typeof TeamAnalyticsSchema>)
   };
 }
 
-/** The analytics rows without the team's owner: the view shows the people the owner coordinates. */
-export function analyticsRowsWithoutOwner(rows: readonly TeamAnalyticsRow[], ownerEmail: string): TeamAnalyticsRow[] {
-  const owner = ownerEmail.trim().toLowerCase();
-  return rows.filter((row) => row.email.toLowerCase() !== owner);
+/** The addresses of the team's owners (lowercase). A team may have several. */
+export function teamOwnerEmails(team: Pick<FormalTeam, "members">): string[] {
+  return team.members.filter((m) => m.role === "owner").map((m) => m.email.toLowerCase());
+}
+
+/** True when `me` (the signed-in user's address) is an owner of the team. */
+export function isTeamOwner(team: Pick<FormalTeam, "members">, me: string | null | undefined): boolean {
+  const self = (me ?? "").trim().toLowerCase();
+  return self !== "" && teamOwnerEmails(team).includes(self);
+}
+
+/** Every member of both kinds except `me`: the attendees of a team meeting (AC-36). */
+export function teamMembersExcept(team: Pick<FormalTeam, "members">, me: string | null | undefined): string[] {
+  const self = (me ?? "").trim().toLowerCase();
+  return team.members.filter((m) => m.email.toLowerCase() !== self).map((m) => m.email);
+}
+
+/** The analytics rows without the team's owners: the view shows the people the owners coordinate. */
+export function analyticsRowsWithoutOwner(rows: readonly TeamAnalyticsRow[], ownerEmails: readonly string[]): TeamAnalyticsRow[] {
+  const owners = new Set(ownerEmails.map((e) => e.trim().toLowerCase()));
+  return rows.filter((row) => !owners.has(row.email.toLowerCase()));
 }
 
 /** What inviteTeamMember did (contract §3.3) and the entry after it. */

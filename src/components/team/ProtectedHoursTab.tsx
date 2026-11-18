@@ -26,6 +26,7 @@ import {
   validateZoneInput,
   DAY_LABELS,
   fmtTime,
+  isTeamOwner,
   type FormalTeam,
   type FormalTeamMember,
   type NoMeetingZone,
@@ -36,6 +37,7 @@ import { effectOf } from "@/api/effects";
 import type { Attendee } from "@/api/types";
 import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
 import { keepDialogOpenForOpenCombobox } from "@/lib/comboboxEscape";
+import { useTeamViewerEmail } from "@/components/team/useTeamViewerEmail";
 import {
   ADD_TO_TEAM_BUTTON,
   ADD_TO_TEAM_NOTICE,
@@ -66,6 +68,9 @@ interface DraftZone {
 
 export function ProtectedHoursTab({ team, onChanged }: Props) {
   const tf = useTimeFormat();
+  // The signed-in user's address: owner controls follow the session, not a cache.
+  const me = useTeamViewerEmail();
+  const isOwner = isTeamOwner(team, me);
   const qc = useQueryClient();
   const [draft, setDraft] = useState<DraftZone | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -160,23 +165,27 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
           >
             Manage members
           </button>
-          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5" data-testid="team-add-person-open">
-            <UserPlus className="h-3.5 w-3.5" />
-            {ADD_TO_TEAM_BUTTON}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setInviteTarget(null);
-              setInviteOpen(true);
-            }}
-            className="gap-1.5"
-            data-testid="team-invite-open"
-          >
-            <Mail className="h-3.5 w-3.5" />
-            {INVITE_TO_PACEDAY}
-          </Button>
+          {isOwner && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5" data-testid="team-add-person-open">
+                <UserPlus className="h-3.5 w-3.5" />
+                {ADD_TO_TEAM_BUTTON}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setInviteTarget(null);
+                  setInviteOpen(true);
+                }}
+                className="gap-1.5"
+                data-testid="team-invite-open"
+              >
+                <Mail className="h-3.5 w-3.5" />
+                {INVITE_TO_PACEDAY}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -344,6 +353,7 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
       />
 
       <ManageMembersSheet
+        me={me}
         open={manageOpen}
         onOpenChange={setManageOpen}
         team={team}
@@ -739,7 +749,14 @@ export function AddToTeamDialog({
           )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // Cancel resets the form exactly as closing does: address, name and the refusal text.
+              reset();
+              onOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button
@@ -903,15 +920,22 @@ export function ManageMembersSheet({
   team,
   onChanged,
   onInvite,
+  me,
 }: {
+  /** The signed-in user's address, lowercase (useTeamViewerEmail). */
+  me: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   team: FormalTeam;
   onChanged: () => void;
   onInvite: (member: FormalTeamMember) => void;
 }) {
-  const me = teamsApi.currentUserEmail();
-  const isOwner = team.owner_email === me;
+  const isOwner = isTeamOwner(team, me);
+  // Two people may share a name: their controls then carry the address too.
+  const nameCounts = new Map<string, number>();
+  for (const m of team.members) nameCounts.set(m.display_name, (nameCounts.get(m.display_name) ?? 0) + 1);
+  const label = (m: FormalTeamMember) =>
+    (nameCounts.get(m.display_name) ?? 0) > 1 && m.display_name !== m.email ? `${m.display_name} (${m.email})` : m.display_name;
   const removeMemberMut = useMutation({
     mutationFn: (member: FormalTeamMember) => teamsApi.remote.removeMember(team.id, member.email),
     onError: (e, member) => toast.error(removalErrorText(e, member.email)),
@@ -965,17 +989,23 @@ export function ManageMembersSheet({
                 )}
               </div>
               {isOwner && m.kind === "added" && !m.invitation && (
-                <Button size="sm" variant="ghost" onClick={() => onInvite(m)} className="h-10 px-2 text-xs">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onInvite(m)}
+                  className="h-10 px-2 text-xs"
+                  aria-label={`Invite ${label(m)} to Paceday`}
+                >
                   {INVITE_TO_PACEDAY}
                 </Button>
               )}
-              {isOwner && m.email !== me && (
+              {isOwner && m.email.toLowerCase() !== me && (
                 <button
                   onClick={() => removeMemberMut.mutate(m)}
                   disabled={removeMemberMut.isPending}
                   className="rounded p-1.5 text-muted-foreground hover:bg-[#EF4444]/10 hover:text-[#EF4444]"
                   title="Remove"
-                  aria-label={`Remove ${m.display_name}`}
+                  aria-label={`Remove ${label(m)}`}
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

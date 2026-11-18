@@ -9,6 +9,23 @@ export interface SchedulePrefillState {
   attendees?: unknown;
 }
 
+/** Where a prefill came from, for the notice the calendar shows. */
+export type SchedulePrefillSource = "find-a-time" | "link";
+
+export function schedulePrefillNotice(source: SchedulePrefillSource): string {
+  return source === "find-a-time"
+    ? "Prefilled from your team's Find a time — review and confirm a slot."
+    : "Prefilled from the Manager dashboard — review and confirm a slot.";
+}
+
+/** The prefill an arrival carries, or null when it carries none. */
+export function schedulePrefill(search: string, state: unknown): { text: string; source: SchedulePrefillSource } | null {
+  const text = schedulePrefillText(search, state);
+  if (!text) return null;
+  const fromState = (state as SchedulePrefillState | null | undefined)?.attendees;
+  return { text, source: Array.isArray(fromState) && fromState.length > 0 ? "find-a-time" : "link" };
+}
+
 /** The NLP bar text for a prefill, or null when the arrival carries none. */
 export function schedulePrefillText(search: string, state: unknown): string | null {
   const sp = new URLSearchParams(search);

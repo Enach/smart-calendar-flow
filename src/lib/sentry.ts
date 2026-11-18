@@ -99,6 +99,9 @@ export function initSentry(
       sendDefaultPii: false,
       // errors-only for v1 (no tracing spans), mirrors backend TracesSampleRate 0.0.
       tracesSampleRate: 0.0,
+      // PAC-129 review: team and Manager paths carry addresses
+      // (/api/teams/{id}/people/{email}, /api/manager/team/members/{email}).
+      beforeBreadcrumb: redactBreadcrumb,
     });
     status = "active";
   } catch (err) {
@@ -116,4 +119,32 @@ export function initSentry(
  */
 export function __resetMonitoringStatusForTests(): void {
   status = "uninitialized";
+}
+
+// An email-shaped run of characters inside a URL path or query segment, raw
+// or with "@" percent-encoded. Segment boundaries are / ? # & = so the rest of
+// the URL (route shape, team id) stays readable.
+const EMAIL_IN_URL = /[^/?#&=\s]+(?:@|%40)[^/?#&=\s]+/gi;
+
+/** Replaces every email-shaped segment of a URL with "[email]". */
+export function redactEmailsInUrl(url: string): string {
+  return url.replace(EMAIL_IN_URL, "[email]");
+}
+
+/**
+ * PAC-129 review: fetch, xhr and navigation breadcrumbs record request and
+ * page URLs, and team and Manager routes put an address in the path. Every
+ * URL-bearing field of a breadcrumb is redacted before it is kept.
+ */
+export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb {
+  const data = breadcrumb.data;
+  if (data) {
+    const next: Record<string, unknown> = { ...data };
+    for (const key of ["url", "from", "to"]) {
+      if (typeof next[key] === "string") next[key] = redactEmailsInUrl(next[key] as string);
+    }
+    breadcrumb = { ...breadcrumb, data: next };
+  }
+  if (typeof breadcrumb.message === "string") breadcrumb = { ...breadcrumb, message: redactEmailsInUrl(breadcrumb.message) };
+  return breadcrumb;
 }

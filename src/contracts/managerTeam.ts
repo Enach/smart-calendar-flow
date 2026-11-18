@@ -9,8 +9,11 @@ export const memberWeekSchema = z.object({
   data_available: z.boolean(),
 }).strict();
 
+// Response addresses are read as strings: the server's normaliser accepts
+// addresses (`a&b@x.example`, `pat@x.y`) that zod's email check refuses, and
+// one such roster entry must not make the whole team unreadable (PAC-129 review).
 export const managerMemberSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),
   display_name: z.string(),
   // "added" (PAC-129, contract §5.1): a person added to the team without
   // Paceday access, read-only. Sent only because listTeam asks include_added.
@@ -30,7 +33,7 @@ export const managerRosterSchema = z.object({
 }).strict();
 
 export const scanCandidateSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),
   display_name: z.string(),
   already_assigned: z.boolean(),
 }).strict();

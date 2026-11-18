@@ -5,6 +5,7 @@ import { Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   analyticsRowsWithoutOwner,
+  teamOwnerEmails,
   teamsApi,
   teamKeys,
   type FormalTeam,
@@ -19,7 +20,7 @@ import {
   ANALYTICS_AVAILABILITY_ONLY,
   ANALYTICS_NO_DATA,
   ANALYTICS_WITHHELD,
-  MANAGER_ANALYTICS_ADDED_HINT,
+  TEAM_ANALYTICS_ADDED_HINT,
 } from "@/components/team/teamTexts";
 
 interface Props {
@@ -75,7 +76,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
   // rows are the server's, each matched by its own email (SF-053); the owner
   // is left out of the per-person view.
   const rows = useMemo(
-    () => (view && activeTeam ? analyticsRowsWithoutOwner(view.rows, activeTeam.owner_email) : []),
+    () => (view && activeTeam ? analyticsRowsWithoutOwner(view.rows, teamOwnerEmails(activeTeam)) : []),
     [view, activeTeam],
   );
 
@@ -412,9 +413,9 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
         <div className="mb-4 text-xs text-muted-foreground">Weekly breakdown</div>
 
         {member.kind === "added" ? (
-          // PAC-129 (contract §9.8, m-7): an added person has no Manager figures.
-          <p className="text-sm text-muted-foreground" data-testid="manager-analytics-added-hint">
-            {ADDED_PERSON_LABEL}. {MANAGER_ANALYTICS_ADDED_HINT}
+          // PAC-129: an added person has no Paceday figures; their availability is under This week.
+          <p className="text-sm text-muted-foreground" data-testid="team-analytics-added-hint">
+            {TEAM_ANALYTICS_ADDED_HINT}
           </p>
         ) : analyticsQ.isLoading ? (
           <div className="h-40 animate-pulse rounded-lg bg-muted" />

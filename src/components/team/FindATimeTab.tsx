@@ -4,7 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { Sparkles, CalendarPlus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { teamsApi, teamKeys, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
+import { teamsApi, teamKeys, teamMembersExcept, validateAvailabilityQuery, type FormalTeam, type AvailabilitySlot } from "@/api/teams";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { StillWorking } from "@/components/StillWorking";
 import { localISODate } from "@/lib/localDate";
@@ -12,6 +12,7 @@ import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 import { slotCountsText } from "@/components/team/teamTexts";
+import { useTeamViewerEmail } from "@/components/team/useTeamViewerEmail";
 
 /**
  * PAC-129 (AC-36): the attendees of a slot travel to the scheduling page in
@@ -41,6 +42,7 @@ function fmtSlot(iso: string, endIso: string, tf: TimeFormat) {
 export function FindATimeTab({ team }: Props) {
   const tf = useTimeFormat();
   const navigate = useNavigate();
+  const me = useTeamViewerEmail();
   const [date, setDate] = useState(todayISO());
   const [duration, setDuration] = useState(30);
   const [slots, setSlots] = useState<AvailabilitySlot[] | null>(null);
@@ -75,10 +77,7 @@ export function FindATimeTab({ team }: Props) {
 
   const onSchedule = (slot: AvailabilitySlot) => {
     // Every member of both kinds except the user (PAC-129 §3.5).
-    const me = teamsApi.currentUserEmail().toLowerCase();
-    const state: ScheduleFromTeamState = {
-      attendees: team.members.filter((m) => m.email.toLowerCase() !== me).map((m) => m.email),
-    };
+    const state: ScheduleFromTeamState = { attendees: teamMembersExcept(team, me) };
     const params = new URLSearchParams({
       title: `${team.name} sync`,
       duration: String(duration),
