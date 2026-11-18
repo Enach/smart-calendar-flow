@@ -103,12 +103,11 @@ describe("scheduling links contract", () => {
       min_notice_minutes: 60,
       usage_type: "reusable",
       co_host_emails: ["mate@co.com"],
-      // PAC-122 SF-052: the previewed slug is requested
-      // (CreateSchedulingLinkRequest.slug); it used to be dropped.
-      slug: "intro",
     });
     expect(body).not.toHaveProperty("durations");
     expect(body).not.toHaveProperty("days");
+    // PAC-122 SF-052: the server assigns the address; no slug is requested.
+    expect(body).not.toHaveProperty("slug");
 
     // PAC-112 D-1: no per-address invitation request any more.
     expect(fetchMock.mock.calls.some(([input]) => requestPath(input).endsWith("/hosts"))).toBe(false);

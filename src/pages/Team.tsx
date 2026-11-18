@@ -446,8 +446,10 @@ export function TeamTab({
   const [scanPreview, setScanPreview] = useState<ScanPreview | null>(null);
   const [selectedCandidates, setSelectedCandidates] = useState<string[]>([]);
   // PAC-122 SF-059: no read returns the last scan time, so only a scan
-  // answered in this session (its `scanned_at`) is shown.
-  const [lastScanAt, setLastScanAt] = useState<string | null>(null);
+  // answered in this session (its `scanned_at`) is shown, and only for the
+  // team it scanned.
+  const [lastScanByTeam, setLastScanByTeam] = useState<Record<string, string>>({});
+  const lastScanAt = lastScanByTeam[activeTeam.id] ?? null;
 
   const teamQ = useQuery({
     queryKey: managerKeys.team(activeTeam.id),
@@ -490,7 +492,7 @@ export function TeamTab({
     mutationFn: () => managerApi.remote.detect(activeTeam.id),
     onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.detect"))),
     onSuccess: (preview) => {
-      setLastScanAt(preview.scanned_at);
+      setLastScanByTeam((m) => ({ ...m, [preview.team_id]: preview.scanned_at }));
       setScanPreview(preview);
       setSelectedCandidates(preview.candidates.filter((candidate) => !candidate.already_assigned).map((candidate) => candidate.email));
     },

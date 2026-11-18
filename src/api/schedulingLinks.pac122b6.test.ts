@@ -1,11 +1,11 @@
 /**
- * PAC-122 batch 6, SF-052: the new-link drawer previews `/book/<slug from the
- * title>` and says the address comes from the title, but the create never
- * sent `slug`, so the server generated one from the owner's name and the
- * first duration. CreateSchedulingLinkRequest already has `slug` ("normalised
- * to lowercase alphanumerics and dashes; when it normalises to the empty
- * string a slug is generated"), so the create now sends the previewed slug.
- * An edit still never sends it: the address is fixed once the link exists.
+ * PAC-122 batch 6, SF-052: the new-link drawer previewed `/book/<slug from
+ * the title>`, but the create sent no slug and the server generated another
+ * one. Sending the previewed slug is not the fix: slugs are global (deleted
+ * links keep theirs), so a common title would fail with a 409 the drawer has
+ * no field to recover from. The create keeps sending no slug, the server
+ * assigns the address, and the drawer claims no address before that
+ * (pinned in src/components/links/LinkEditDrawer.sf052.test.tsx).
  */
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,7 +17,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 const BACKEND_LINK = {
-  id: "l1", owner_id: "u1", slug: "intro-call", title: "Intro call", duration_options: [30], days_of_week: [1],
+  id: "l1", owner_id: "u1", slug: "ana-30", title: "Intro call", duration_options: [30], days_of_week: [1],
   window_start_time: "09:00", window_end_time: "17:00", buffer_before: 0, buffer_after: 0, min_notice_minutes: 0,
   usage_type: "reusable" as const, uses_count: 0, active: true,
   hosts: [{ user_id: "u1", email: "owner@co.com", is_owner: true, status: "accepted" }],
@@ -36,7 +36,7 @@ function bodyOf(method: string, path: string): Record<string, unknown> {
   return JSON.parse(String(call![1]?.body));
 }
 
-describe("PAC-122 SF-052: the create sends the previewed slug", () => {
+describe("PAC-122 SF-052: the server assigns a new link's address", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
@@ -49,14 +49,11 @@ describe("PAC-122 SF-052: the create sends the previewed slug", () => {
   });
   afterAll(() => vi.unstubAllGlobals());
 
-  it("POST /scheduling-links/ carries the slug the drawer shows", async () => {
-    await schedulingLinksApi.createLink(INPUT);
-    expect(bodyOf("POST", "/api/scheduling-links/").slug).toBe("intro-call");
-  });
-
-  it("an empty slug is not sent, so the server generates one as the contract says", async () => {
-    await schedulingLinksApi.createLink({ ...INPUT, slug: "  " });
+  it("the create sends no slug, so a common title never meets a taken slug", async () => {
+    const res = await schedulingLinksApi.createLink(INPUT);
     expect(bodyOf("POST", "/api/scheduling-links/")).not.toHaveProperty("slug");
+    // The address is the one the server assigned.
+    expect(res.link.slug).toBe("ana-30");
   });
 
   it("an edit never sends a slug", async () => {

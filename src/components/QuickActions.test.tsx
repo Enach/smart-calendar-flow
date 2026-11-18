@@ -106,7 +106,7 @@ describe("QuickActions run focus engine with failed days (PAC-122 SF-050)", () =
     );
     fireEvent.click(screen.getByRole("button", { name: /run focus engine/i }));
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("No focus block was created. 1 day could not be scheduled: 2026-11-03."),
+      expect(toast.error).toHaveBeenCalledWith("No focus block was created. Problems on 1 day: 2026-11-03."),
     );
     expect(toast.success).not.toHaveBeenCalled();
   });

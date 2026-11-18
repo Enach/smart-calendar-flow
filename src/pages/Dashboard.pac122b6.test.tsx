@@ -102,7 +102,7 @@ describe("PAC-122 SF-050: the Dashboard reports what a typed focus request did",
       totalMinutes: 0,
       errors: ["2026-11-18: read existing focus minutes: boom"],
     });
-    expect(toast.error).toHaveBeenCalledWith("No focus block was created. 1 day could not be scheduled: 2026-11-18.");
+    expect(toast.error).toHaveBeenCalledWith("No focus block was created. Problems on 1 day: 2026-11-18.");
     expect(toast.success).not.toHaveBeenCalledWith("Focus time scheduled");
   });
 

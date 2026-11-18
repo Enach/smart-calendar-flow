@@ -247,6 +247,8 @@ export function WorkCalendarConnection({
         </label>
       )}
 
+      {/* PAC-122 SF-055: no connect while the current connection is unknown. */}
+      {!statusUnknown && (
       <button
         onClick={handleConnect}
         disabled={connecting || availabilityLoading || !!availabilityError || availableProviders.length === 0}
@@ -255,6 +257,7 @@ export function WorkCalendarConnection({
         {connecting ? <Loader2 className="h-3 w-3 animate-spin" /> : <LogIn className="h-3 w-3" />}
         {provider === "webcal" ? "Save WebCal URL" : `Connect ${PROVIDERS.find((p) => p.value === provider)?.label}`}
       </button>
+      )}
     </div>
   );
 }
