@@ -5957,7 +5957,10 @@ export type get_ConnectNotion = {
 },
     }
 /**
- * Always 200. Any storage error collapses into `{"connected": false}` with no `workspace_name` key.
+ * `{"connected": false}` with no `workspace_name` key when no Notion connection is
+ * stored, or when its stored token cannot be decrypted (PAC-84 AC-16b). PAC-122
+ * (SF-045): any other failure to read the connection is the 500
+ * `{"error":"internal error"}`, never "not connected".
  */
 export type get_GetNotionStatus = {
       method: "GET",
@@ -6038,8 +6041,10 @@ export type get_ConnectSlack = {
 },
     }
 /**
- * Always 200. Any storage error (including "no row") is collapsed into
- * `{"connected": false}` — the `workspace_name` key is then absent entirely.
+ * `{"connected": false}` when no Slack connection is stored, or when its stored
+ * token cannot be decrypted (PAC-84 AC-16b); the `workspace_name` key is then
+ * absent entirely. PAC-122 (SF-045): any other failure to read the connection is
+ * the 500 `{"error":"internal error"}`, never "not connected".
  */
 export type get_GetSlackStatus = {
       method: "GET",
