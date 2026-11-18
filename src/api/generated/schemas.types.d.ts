@@ -144,6 +144,23 @@ export type AddManagerMemberRequest = ({
   cadence_custom_days?: (number | null);
 } & Record<string, unknown>)
 /**
+ * PAC-129. The 422 of addTeamPerson; nothing is stored. The values are exact.
+ */
+export type AddTeamPersonError = { error: ("email must be a valid email address" | "you cannot add your own address" | "this address belongs to a Paceday member of this team" | "this team has reached its limit of 50 members; remove someone before adding another") }
+/**
+ * PAC-129. Unknown keys are ignored (the generated decoder does not refuse them).
+ */
+export type AddTeamPersonRequest = ({
+  /**
+   * PAC-129 contract 1.1 (challenge B-1): a plain string, deliberately WITHOUT `format: email`, so the generated decoder accepts any JSON string and the server's one address normaliser is the only validator (contract PAC-129 §3.0, revision 1.2): trim the 26 code points of contract §2.2 from both ends (ECMAScript WhiteSpace and LineTerminator plus Go's unicode.IsSpace: U+0009- U+000D, U+0020, U+0085, U+00A0, U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF), lowercase, then net/mail.ParseAddress, whose parsed address must equal the result. Every check of this operation compares that form, and it is the form stored. Blank after trimming: 400 "email is required". Refused by the normaliser: 422 "email must be a valid email address". Stored normalised. A body that is not JSON, or an `email` that is not a JSON string, is the wrapper's 400 "invalid body".
+   */
+  email: string;
+  /**
+   * Optional display name, trimmed; absent or blank stores "".
+   */
+  name?: string;
+} & Record<string, unknown>)
+/**
  * api.breakdownEntry. Exactly 5 entries in a fixed order, with fixed colors:
  * meeting #FF6B6B, focus #5B7FFF, habit #9B7AE0, personal #E9B949, free #B0BEC5.
  */
@@ -1314,11 +1331,19 @@ export type IntegrationStatus = {
    */
   workspace_name?: string;
 }
+/**
+ * The address did not validate (normalizeManagerEmail).
+ */
+export type InvalidEmailError = { error: "email must be a valid email address" }
 export type InviteEmailRequest = ({
   /**
-   * Lowercased, trimmed and validated with net/mail.ParseAddress.
+   * Normalised by the one address normaliser of AddTeamPersonRequest.email (PAC-129 revision 1.2: the trim set now includes U+FEFF); every check of inviteTeamMember compares the normalised form, and it is the form stored.
    */
   email: string;
+  /**
+   * PAC-129 (SF-051). Optional display name, trimmed. Used only when the call adds the address to the team (inviteTeamMember step 3); an existing entry's name is never changed. Absent or blank: "".
+   */
+  name?: string;
 } & Record<string, unknown>)
 export type InviteSchedulingLinkHostRequest = {
   /**
@@ -1436,9 +1461,9 @@ export type ManagerAnalyticsMember = {
 }
 export type ManagerAnalytics = { members: Array<ManagerAnalyticsMember> }
 /**
- * "auto" = created by calendar detection, "manual" = created by an explicit add, "formal" = SYNTHETIC, returned only by getManagerRoster for a formal team_members row that has no manager assignment yet. "formal" is never persisted (the manager_team_members CHECK constraint permits only auto/manual).
+ * "auto" = created by calendar detection, "manual" = created by an explicit add, "formal" = SYNTHETIC, returned only by getManagerRoster for a formal team_members row that has no manager assignment yet. "formal" is never persisted (the manager_team_members CHECK constraint permits only auto/manual). "added" (PAC-129) = SYNTHETIC and READ-ONLY, returned only by getManagerRoster with include_added=true, for a person added to the team without Paceday access who has no assignment and is not a formal member. Never persisted, never returned without include_added.
  */
-export type ManagerMemberSource = ("auto" | "manual" | "formal")
+export type ManagerMemberSource = ("auto" | "manual" | "formal" | "added")
 export type ManagerProfileSummary = {
   is_manager: boolean;
   /**
@@ -3390,18 +3415,59 @@ export type Team = {
   createdAt: string;
 }
 /**
+ * PAC-129 (spec §3.2). `paceday`: joined by accepting an invitation (a team_members row). `added`: added without Paceday access (no account link, whatever account holds the address). The kind depends only on whether the person accepted an invitation.
+ */
+export type TeamPersonKind = ("paceday" | "added")
+/**
+ * PAC-129. `measured`: the figures are present. `no_data`: nothing was measured (show "no data", never zero). `withheld`: an added person's figures, hidden from a caller who is not an owner.
+ */
+export type TeamAnalyticsFigures = ("measured" | "no_data" | "withheld")
+/**
+ * PAC-129. One member's row. Every figure is null unless `figures` is `measured`; for kind `added`, focus_minutes and focus_score are always null (availability only).
+ */
+export type TeamAnalyticsPerson = {
+  /**
+   * As TeamPerson.email (no `format`, contract 1.1 B-1).
+   */
+  email: string;
+  name: string;
+  kind: TeamPersonKind;
+  /**
+   * As TeamPerson.userId.
+   */
+  userId: (string | null);
+  figures: TeamAnalyticsFigures;
+  /**
+   * Paceday member: the stored week. Added person: busy minutes from free/busy through the adding owner's credential over the week.
+   */
+  meeting_minutes: (number | null);
+  focus_minutes: (number | null);
+  focus_score: (number | null);
+}
+/**
  * engine.TeamAnalytics.
  */
 export type TeamAnalytics = {
   /**
-   * Integer division by member count (or by 1 for an empty team).
+   * PAC-129 (SF-053). The Monday of the week these figures are for, YYYY-MM-DD.
+   */
+  week_start: string;
+  /**
+   * PAC-129 (SF-041): integer division over the Paceday members whose figures are `measured` (by 1 when there are none). Added people and `no_data` members are never counted. Before PAC-129 the divisor was every member.
    */
   avg_meeting_minutes: number;
+  /**
+   * Same divisor as avg_meeting_minutes.
+   */
   avg_focus_minutes: number;
   /**
-   * `[]` when the team has no members.
+   * Kept for clients built before PAC-129: the Paceday members only, today's shape; a member with no stored week still appears with zeroes. `[]` when the team has no Paceday members. New clients read `people`.
    */
   member_breakdown: Array<MemberAnalyticsSummary>;
+  /**
+   * PAC-129. One row per member of both kinds, in TeamDetail.people order.
+   */
+  people: Array<TeamAnalyticsPerson>;
 }
 /**
  * storage.TeamMember, as returned inside TeamDetail.
@@ -3420,13 +3486,55 @@ export type TeamMember = {
    */
   email?: string;
 }
+/**
+ * PAC-129. A Paceday member's role (team_members.role).
+ */
+export type TeamPersonRole = ("owner" | "member")
+/**
+ * PAC-129. The address's pending invitation on the team (stored status pending and expiry after now). The token is not listed (it is returned only to the owner, by inviteTeamMember).
+ */
+export type TeamPersonInvitation = { expiresAt: string }
+/**
+ * PAC-129. One member of the team, of either kind, as every member sees it. No timestamp: two adds of different addresses answer bodies that differ only in `email` and `name` (AC-2).
+ */
+export type TeamPerson = {
+  /**
+   * Lowercase. For a Paceday member, the account's address. No `format: email` (contract 1.1, B-1): an address the server's normaliser accepts (for example `pat@localhost`) must encode, so the generated encoder may not apply a stricter pattern than the one that admitted it.
+   */
+  email: string;
+  /**
+   * Paceday member: the account's name ("" when it has none). Added person: the name given when they were added ("" when none). Always present, possibly "".
+   */
+  name: string;
+  kind: TeamPersonKind;
+  /**
+   * The account id for kind `paceday`; null, always, for kind `added`.
+   */
+  userId: (string | null);
+  /**
+   * The membership role for kind `paceday`; null, always, for kind `added`.
+   */
+  role: (TeamPersonRole | null);
+  /**
+   * For kind `added`, the pending invitation for the address, or null when there is none. Always null for kind `paceday`. Contract 1.1 (challenge m-6): shown ONLY to an owner of the team; for any other member it is always null, so who was invited and when it lapses stay visible only to owners, as before PAC-129.
+   */
+  invitation: (TeamPersonInvitation | null);
+}
 export type TeamDetail = {
   team: Team;
   /**
-   * `[]` when the team has no members or the query failed.
+   * The Paceday members only, in today's shape (spec §3.2, AC-8): what a client built before PAC-129 reads. `[]` only when the team has no member rows; since PAC-129 a failed read is the 500 (SF-039).
    */
   members: Array<TeamMember>;
+  /**
+   * PAC-129. Every member of both kinds: the Paceday members (in `members` order), then the added people by the time they were added.
+   */
+  people: Array<TeamPerson>;
 }
+/**
+ * PAC-129 (spec §3.7, §3.10, AC-19b). The 422 of acceptTeamInvite for a legacy invitation on a full team.
+ */
+export type TeamFullError = { error: "this team is full; ask its owner to remove someone before you accept" }
 /**
  * storage.TeamInvite, returned in full (token included) by inviteTeamMember.
  */
@@ -3446,6 +3554,10 @@ export type TeamInvite = {
    */
   expiresAt: string;
 }
+/**
+ * PAC-129. What inviteTeamMember did. `added_and_invited` (201): the address was not on the team; it is now an added person and a new invitation was created. `invited` (201): the address already was an added person; a new invitation was created. `already_pending` (200): a pending invitation existed; no new invitation (the person may have been added by this call, step 3). `already_member` (200): a Paceday member holds the address; nothing written.
+ */
+export type TeamInviteOutcome = ("added_and_invited" | "invited" | "already_pending" | "already_member")
 /**
  * A narrow projection of a pending invite, NOT a TeamInvite (no id, token, status, invitedBy or createdAt). The three original keys are camelCase and stay so for existing readers; the three keys added by PAC-34 are snake_case, the spelling the PAC-34 acceptance criteria name and the web normalizer reads (see contracts/features/PAC-34.md section 3 for the rejected alternatives). team_id and expires_at come from the invite row itself, so they are always present. The team and inviter rows are read separately and a failed read is not an error: teamName and inviterName become "" and inviter_email becomes null.
  */
@@ -3475,6 +3587,14 @@ export type TeamInvitePreview = {
    */
   inviter_email: (string | null);
 }
+/**
+ * PAC-129. The 201 and 200 of inviteTeamMember. `invitation` is null exactly when outcome is `already_member`. The caller is always an owner, so `person.invitation` is shown. Replaces the bare TeamInvite of the 201 (consumers: contract PAC-129 §8).
+ */
+export type TeamInviteResult = { outcome: TeamInviteOutcome, invitation: (TeamInvite | null), person: TeamPerson }
+/**
+ * PAC-129 (spec §3.10). The cap refusal of inviteTeamMember for an address not yet on the team; the same text as addTeamPerson's limit refusal.
+ */
+export type TeamMemberLimitError = { error: "this team has reached its limit of 50 members; remove someone before adding another" }
 export type TeamNameRequest = ({
   /**
    * Trimmed before storage. No maximum length is enforced by the backend.
@@ -3482,15 +3602,31 @@ export type TeamNameRequest = ({
   name: string;
 } & Record<string, unknown>)
 /**
+ * PAC-129. The 404 of removeTeamPerson.
+ */
+export type TeamPersonNotFoundError = { error: "person not found" }
+/**
  * engine.TeamSlot.
  */
 export type TeamSlot = {
   start: string;
   end: string;
   /**
-   * 100 - (members_with_disrupted_focus / total_members) * 100, integer division.
+   * 100 - (members_with_disrupted_focus / total_members) * 100, integer division. Focus blocks are a Paceday member's only; the divisor (PAC-129) is the Paceday members, so adding people does not change a slot's score.
    */
   quality_score: number;
+  /**
+   * PAC-129 (SF-054). Members of both kinds whose availability is known for the day; since an offered slot never has a busy member, all of them are free in this slot. free_count + unknown_count = total_count.
+   */
+  free_count: number;
+  /**
+   * PAC-129. Members of both kinds whose availability could not be read for the day (the same for every slot of one answer). Unknown is never counted free.
+   */
+  unknown_count: number;
+  /**
+   * PAC-129. Members of both kinds on the team when it was read.
+   */
+  total_count: number;
 }
 export type TeamSlotList = { slots: Array<TeamSlot> }
 /**
@@ -6182,6 +6318,7 @@ export type post_TestLLMConnection = {
     }
 /**
  * Returns exactly 12 week buckets per member (months=3 is hard-coded and numWeeks = months*4), ordered NEWEST FIRST: weeks[0].week_start == the resolved `week`, each subsequent entry is 7 days earlier. A member with no data still gets 12 buckets of zeroes with data_available=false. `members` is always an array, never null. Visibility (PAC-60): a member who is a Paceday user has measured minutes only when the caller owns at least one team that member belongs to; otherwise every bucket is zeroes with data_available=false, whatever the route or `team_id` that put the member on the caller's list. External (non-Paceday) members are unaffected (FreeBusy). PAC-34 (API-022): each member also carries is_paceday_user (same derivation as the roster's) and a member-level data_available that is true iff at least one of its 12 buckets has data_available=true. A client must render a bucket with data_available=false, and a member with data_available=false, as "no data", never as zero minutes. Neither field widens visibility: is_paceday_user is already on the roster for the same caller and members, and data_available is derived only from the buckets this response already returns.
+ * PAC-129 (spec §3.6, §3.9, AC-31): with `team_id` and `include_added=true`, the members gain every person added to the team who has no assignment of the caller on it and is not a formal member, with is_paceday_user false, data_available false and 12 zero buckets. No calendar is read for such a member and no figure is stored (team_analytics_cache is never written for them). Owners see an added person's availability figures through getFormalTeamAnalytics instead. Without the flag the answer is exactly today's. A roster entry the manager created explicitly (add, or detection confirm) keeps today's stored figures.
  */
 export type get_GetManagerAnalytics = {
       method: "GET",
@@ -6189,7 +6326,7 @@ export type get_GetManagerAnalytics = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query?:  Partial<{ team_id: string, week: string }>,
+            query?:  Partial<{ team_id: string, include_added: boolean, week: string }>,
         
         
         
@@ -6314,6 +6451,7 @@ export type post_SetManagerProfile = {
 /**
  * `team_id` is REQUIRED (unlike the member-mutation routes below), and membership — not ownership — suffices. The roster is the union of (a) manager assignments for this team and (b) formal team_members of this team that have no assignment yet, synthesised with source="formal" and cadence="none". The caller is always excluded from (b). Sorted case-insensitively by display_name. `members` is always an array, never null.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): merging formal members with roster entries is a keeping site: a roster entry represents a formal member whose stored address equals the entry's address case-insensitively, at ANY standing. Nothing is granted here.
+ * PAC-129 (spec §3.9, AC-31; contract PAC-129 §5.1): with `include_added=true` the union gains (c): every person ADDED to this team (no Paceday access) for whom the caller has no assignment on this team and who is not a formal member, as a read-only entry with source="added", cadence="none", cadence_custom_days null, last_one_on_one_at null, is_paceday_user false (never an account signal, whatever account holds the address), this_week and last_week zero-valued with data_available=false, and focus_trend_pct 0. Nothing is read from any calendar and nothing is stored for such an entry. Precedence for one address is: an assignment (today's entry, unchanged), then a formal member, then an added person. Without `include_added`, or with `false`, the answer is exactly today's: a client built before PAC-129 (whose strict schema knows only auto, manual and formal) never receives source="added".
  */
 export type get_GetManagerRoster = {
       method: "GET",
@@ -6321,7 +6459,7 @@ export type get_GetManagerRoster = {
       requestFormat: "json",
       responseFormat: "json",
       parameters: {
-            query:  { team_id: string, week?: string },
+            query:  { team_id: string, include_added?: boolean, week?: string },
         
         
         
@@ -6337,6 +6475,7 @@ export type get_GetManagerRoster = {
     }
 /**
  * `team_id` is OPTIONAL here. Without it the member is written to the global manager_team_members table only. With it the write is transactional across manager_team_members plus manager_team_member_assignments, and the caller must be the team OWNER. Adding a member never creates a team_invites row (asserted by TestManagerTeam_AddMemberCreatesOnlySelectedTeamAssignment).
+ * PAC-129 (spec §3.9, D-13, AC-31): unchanged. This explicit manager action creates a roster entry with today's behaviour even when the address is also a person added to the team without Paceday access; that person stays an added person of the team (team membership and the manager's roster are separate). It never adds anyone to the team.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): `member_user_id` is resolved to an account only when exactly one account holds `email` DOMAIN-CONFIRMED (compared case-insensitively; before PAC-71 an exact-case match on any account). An address that is carried only unconfirmed, by several accounts (a letter-case collision), or by none resolves to nobody: the roster row is stored with `member_user_id` null, as for a non-Paceday address today.
  */
 export type post_AddManagerTeamMember = {
@@ -6363,6 +6502,7 @@ export type post_AddManagerTeamMember = {
 /**
  * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. PAC-122 (SF-001): every storage error on this path is the 500 {"error":"internal error"}; with `team_id` the membership, assignment and pending-invite deletes run in one transaction, so a failed delete removes nothing.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
+ * PAC-129 (spec §3.8, D-5, D-8, AC-16b, AC-30, AC-37; contract PAC-129 §4): with `team_id` the whole decision moves inside ONE storage-owned transaction, in this order: the PAC-71 re-check (a stale session is the 401 and nothing is written); the team row locked FOR NO KEY UPDATE (the PAC-25 lock; no row is the 403); the owner check (not an owner is the 403); the carrier lookup and the membership reads (an owner among the carriers is the 422, nothing removed); then, in addition to today's deletes, the team's ADDED entry for the address and EVERY team_invites row of the team for the address, whatever its status (before PAC-129 only `pending` rows). Acceptance and the team removal take the same lock first, so an acceptance that committed before this removal is removed by it, and one that waits for it finds no invitation (404). The manager's global roster row and its 1:1 history are kept; only this team's assignment goes, as before. Cached manager figures (team_analytics_cache) are the manager's data and are kept. The answer is still 204 whatever was found. A storage error in the owner check inside the transaction is still the 403 (SF-074 is fixed for PAC-129's new operations only, spec OQ-12). Without `team_id` (the global delete) nothing about team membership changes: a person added to a team stays on it.
  */
 export type delete_RemoveManagerTeamMember = {
       method: "DELETE",
@@ -6388,6 +6528,7 @@ export type delete_RemoveManagerTeamMember = {
 /**
  * Omitted fields keep their current value. Supplying `cadence` as anything other than "custom" clears cadence_custom_days; omitting `cadence` preserves it (TestManagerPatchMember_PreservesOmittedCustomDays). A blank display_name falls back to the local part of the email. With `team_id`, only team-scoped preferences change (display_name_override, cadence, cadence_custom_days on the assignment row); the canonical global display name is never overwritten. Also, with `team_id`, a formal team member with no assignment yet is materialised into an assignment on first patch.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): that materialisation is a granting site: a formal member is matched to `{email}` only when that member's account holds `{email}` DOMAIN-CONFIRMED (case-insensitive); a formal member whose address is unconfirmed is not matched, and the answer is the one for an address with no roster entry.
+ * PAC-129 (spec §3.9, D-13, AC-31): with `team_id`, an address that has no assignment of the caller on this team, is not matched to a formal member, and is a person ADDED to this team is refused with the 422 "this person was added to the team without Paceday access; add them with Add person to track 1:1s". Nothing is written: no roster row and no assignment. The check runs after the body is validated. Without `team_id` nothing changes.
  */
 export type patch_PatchManagerTeamMember = {
       method: "PATCH",
@@ -6414,6 +6555,7 @@ export type patch_PatchManagerTeamMember = {
 /**
  * Creates nothing on any calendar. Returns a relative URL of the form `/app?attendees=<email>&duration=30&title=1%3A1+with+<display_name>` plus `&date=<suggested_date>` when supplied (query params are Go url.Values-encoded, so alphabetically ordered). An empty body is accepted (io.EOF is tolerated).
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster entry this operation may materialise for a formal team member follows the same DOMAIN-CONFIRMED rule as patchManagerTeamMember.
+ * PAC-129 (spec §3.9, D-13, AC-31): the same refusal as patchManagerTeamMember for a person added to the team who has no roster entry on it: the 422 below, no roster row, no assignment, no prefill URL.
  */
 export type post_ScheduleManagerOneOnOne = {
       method: "POST",
@@ -7713,6 +7855,7 @@ export type get_GetTeamInvite = {
 /**
  * The authenticated user's email must case-insensitively equal invitee_email. Membership is added with role "member" via an ON CONFLICT DO NOTHING insert, so accepting twice cannot demote an existing owner. Returns no body.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invite is accepted only when the caller's ACCOUNT holds invitee_email DOMAIN-CONFIRMED: its stored address equals invitee_email case-insensitively AND its addressStanding (getCurrentUser) is domain_confirmed. An account that carries the address unconfirmed (bound with mailbox evidence, or created before PAC-71 and not bound yet) gets exactly today's mismatch answer, the 403 "this invite is for a different email address", and nothing changes. The session's email claim is not consulted.
+ * PAC-129 (spec §3.7, §3.8, §3.10, D-4, D-8, AC-19, AC-19b, AC-22, AC-25, AC-30; contract PAC-129 §3.4, §4): after the checks above, the write is ONE storage-owned transaction: the PAC-71 re-check (a stale session is the 401, nothing written); the invitation's team row locked FOR NO KEY UPDATE (the PAC-25 lock); the invitation read again under the lock. No row (the person was removed meanwhile, or the team deleted) is the 404 "invite not found"; a status that is no longer pending, or an expiry not after the database's now(), is the 410 "invite is <status>". Then exactly one of: (a) the caller is already a member: the invitation is marked accepted, 204; (b) the address is a person ADDED to the team: that entry is deleted and the caller's membership (role "member") inserted, and the invitation marked accepted, all in this transaction; it never changes the member count, so it is allowed at or over the cap, 204; (c) a legacy invitation with no added entry: when the team holds 50 or more members of both kinds, the 422 "this team is full; ask its owner to remove someone before you accept" and nothing changes; otherwise the membership is inserted and the invitation marked accepted, 204. A failure at any step rolls the whole transaction back: the person stays added and the invitation pending (AC-19). Before PAC-129 the membership insert and the status update were two separate writes with no lock and no cap.
  */
 export type post_AcceptTeamInvite = {
       method: "POST",
@@ -7731,12 +7874,16 @@ export type post_AcceptTeamInvite = {
 403: Schemas.ErrorResponse,
 404: Schemas.ErrorResponse,
 410: Schemas.ErrorResponse,
+422: Schemas.TeamFullError,
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
- * Membership required. `members` is the raw result of ListTeamMembers with its error discarded, ordered by joined_at ASC, and is `[]` whenever the list is empty or the query failed (PAC-28).
+ * Membership required (a Paceday membership: a person added without Paceday access is not a member and gets the 403, even when signed in to an account holding the address, PAC-129 AC-9).
+ * `members` is ListTeamMembers ordered by joined_at ASC: the PAC-29-era shape, and, since PAC-129, the PACEDAY members only, exactly as a client built before PAC-129 saw it (spec §3.2, AC-8). It is `[]` only when the team has no member rows.
+ * `people` (PAC-129, spec §3.2, AC-1, AC-2): every member of both kinds, in this order: the Paceday members in `members` order, then the added people by the time they were added. Every member sees it, as today's `members`, except that `invitation` is null for a caller who is not an owner (contract 1.1, m-6). An added person's entry never carries an account identifier, whether or not an account holds the address (spec D-3).
+ * PAC-129 (SF-039, AC-6): a failed member read (either kind) is the 500, never a team with an empty list.
  */
 export type get_GetTeam = {
       method: "GET",
@@ -7803,7 +7950,9 @@ export type delete_DeleteTeam = {
       
     }
 /**
- * Membership required. Unlike GET /api/manager/analytics this reads the analytics_weeks table directly per team member, with no consent check and no FreeBusy fallback. Averages divide by the member count (or by 1 when the team is empty) using integer division.
+ * Membership required. Unlike GET /api/manager/analytics this reads the analytics_weeks table directly per Paceday member, with no consent check (not widened, not narrowed by PAC-129, spec §5).
+ * PAC-129 (spec §3.6, D-6, AC-9, AC-16, AC-17; SF-041, SF-053; contract PAC-129 §3.6). `week_start` is the Monday of the week asked for. `people` lists every member of both kinds (the order of TeamDetail.people), each with `figures`: `measured` (figures present), `no_data` (no stored week, or the read failed, or an added person whose availability is unknown: never zero), or `withheld` (an ADDED person's row seen by a caller who is not an owner of the team: name, email and kind only). An added person's row is availability-only: meeting_minutes from the owner's free/busy over the week (Monday 00:00 to the next Monday 00:00 UTC), read, batched and cached exactly as getTeamAvailability reads it (its "Caching" paragraph: a budget-cut batch is never cached and is the 503); focus_minutes and focus_score are always null. Their figures are read only when the caller is an owner, and are never stored (beyond the 15-minute free/busy cache). Averages divide by the number of Paceday members whose figures are `measured` (by 1 when none), integer division; added people never count. A failed analytics_weeks read is `no_data` for that row, never zero.
+ * `member_breakdown` is kept for clients built before PAC-129: Paceday members only, today's shape, a member with no stored week still shown with zeroes (SF-041 is fixed in `people`, not here). New clients read `people`.
  */
 export type get_GetFormalTeamAnalytics = {
       method: "GET",
@@ -7822,11 +7971,17 @@ export type get_GetFormalTeamAnalytics = {
 401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
 500: Schemas.ErrorResponse,
+503: Schemas.RequestBudgetExpiredError,
 },
       
     }
 /**
  * Membership required. The engine searches a fixed 09:00-18:00 UTC window on `date`, steps the cursor in 15-minute increments, treats no-meeting zones and busy calendar events as hard blocks, and scores each slot 0-100 by how few members' focus blocks it disrupts. A member whose calendar token is missing or whose calendar call fails contributes no busy intervals and is silently treated as fully free. `slots` is always an array, never null. Members (PAC-81, spec AC-A18): each member's calendar is read on at most 4 concurrent reads per request, each limited to its own 15 s (shortened to the budget left minus a 10 s stop margin). "Fails" includes, new with PAC-81, a read that fails on its own time limit: a member whose calendar answers too slowly now looks free, where before the request waited for it. A member who was not read because the request budget ran out (a read not started at the stop margin, or cut short by the budget) is never treated as free; a read that hits a deadline shortened by the budget (budget left minus the margin was below 15 s) counts as cut short by the budget, not as failing on its own limit: the answer is the 503, never a 200 that silently omits that member. There is no partial shape.
+ * PAC-129 (spec §3.3-§3.5, D-2, D-11, AC-9, AC-10, AC-11, AC-13, AC-14, AC-29; contract PAC-129 §3.5, §6). Searched: the Paceday members (as above) and the people ADDED to the team. An added person's free/busy for the day is read ONLY through the calendar credential of the owner who added them, whichever member asks; never through the requester's credential, never through the added person's own account even when one holds the address, and none of that account's focus blocks, habits or settings are read. If that owner is no longer an owner of the team, has no calendar connected, or their credential is lost, the person is unknown. A refused renewal during any member's request is recorded as that OWNER's credential loss (PAC-67), never the requester's. Every member's request spends the owner's provider quota, and the provider's audit log attributes the read to the owner's account and Paceday's OAuth client; Paceday's activity log does not record it.
+ * Coverage is decided per address: a person whose calendar the provider reports as unreadable (PAC-133 AC-1/AC-5 for Google, AC-4/AC-6 for Microsoft), whose address is at a personal-mail domain, or whose batch failed on its own time limit is unknown; unknown is never free. A busy added person blocks a slot exactly as a busy Paceday member. Blocking follows PAC-133 D-11 (contract 1.1, M-4): busy windows the provider REPORTED for an address block a slot even when that address is unknown; only an unknown person with no reported windows does not block. A Paceday member whose calendar could not be read is counted unknown and, as before, does not block. Each slot carries free_count, unknown_count and total_count; a person who is unknown is counted unknown even when their reported windows blocked other slots, and no offered slot overlaps any reported window.
+ * Batching (spec §3.5, D-11): the added people are requested from the owner's provider in batches of at most 50 addresses (Google `freebusy.query`) or 20 (Microsoft Graph `getSchedule`), at most 3 batches at a time, each on its own 5 s time limit (shortened to the budget left minus the PAC-81 stop margin). A batch that fails or hits its own limit makes only its own addresses unknown. A batch the budget prevents from starting, or cuts short, is the 503 below, as for a member read. With the team cap of 50 the worst case is 3 Microsoft batches in one round.
+ * Caching (contract 1.1, M-3; PAC-133 §5 hands this decision to PAC-129): results go through the existing process-wide 15-minute free/busy cache (the one FreeBusyService of the engine built once in newTeamHandlers), keyed by the credential owner, the address and the range (PAC-133 owns the key). A batch that the request budget prevents from starting, or cuts short, writes NOTHING to the cache, so a retry asks the provider again instead of answering 200 with those people unknown. A batch that fails on its own 5 s limit, or that the provider refuses, is cached as unknown for 15 minutes: today's behaviour (PAC-67, TestPAC67_TemporaryFailureLookupIsStillCached, unchanged). A result computed while the owner's credential is recorded as lost is not cached (PAC-67 AC-20). Nothing else about an added person is stored.
+ * Inference (spec §3.4, accepted by the owner): a member learns, at 15-minute granularity inside 09:00-18:00 UTC on `date`, the union of the busy times of everyone counted and, for each offered slot, how many members are free and how many unknown. With one added person a missing slot can reveal that this person is busy then. No per-person busy interval and no per-person coverage is returned.
  */
 export type get_GetTeamAvailability = {
       method: "GET",
@@ -7849,6 +8004,15 @@ export type get_GetTeamAvailability = {
 },
       
     }
+/**
+ * PAC-129 (spec §3.7, §3.10, D-4, D-8, D-12, AC-18, AC-20, AC-23, AC-25; contract PAC-129 §3.0, §3.3, §4). The address is normalised by the one address normaliser of AddTeamPersonRequest.email (trim set of contract §2.2, which since revision 1.2 includes U+FEFF; lowercase; ParseAddress), and every check below compares that form. The write is ONE storage-owned transaction: the PAC-71 re-check (stale session: 401, nothing written); the team row locked FOR NO KEY UPDATE (no row: 403); the owner check (not an owner: 403; a storage error there is still the 403, SF-074 left open on this existing operation, spec OQ-12). Then, judged under the lock, with "pending" meaning stored status `pending` AND expires_at after the database's now() (spec D-12):
+ * 1. the address is held by a Paceday member of the team (compared on the account's single address, lowercased): 200, outcome `already_member`, no invitation, no email;
+ * 2. the address is not on the team (neither kind) and the team holds 50 or more members of both kinds, owner included: the 422 TeamMemberLimitError, nothing written;
+ * 3. the address is not on the team: it is ADDED (an added person, named by `name`, trimmed, or "" when absent, `added_by` the caller). If it already is an added person whose adder is no longer an owner of the team (or whose account is gone), `added_by` becomes the caller, exactly as in addTeamPerson (contract 1.1, m-9); nothing else of the entry changes;
+ * 4. a pending invitation for the address exists on the team: 200, outcome `already_pending`, carrying that invitation (its token included); no second invitation, no second email (SF-012, API-090);
+ * 5. otherwise every stored-`pending` row for the address on the team whose expiry has passed (a lapsed invitation) is set to `expired`, and a new invitation is created (7 days) and committed; its email is then sent as before (a tracked unit; without SMTP the skip is logged with the invite id, PAC-122 SF-066): 201, outcome `added_and_invited` when step 3 added the person, else `invited`.
+ * At most one invitation per team and address is ever stored `pending` (migration 041's partial unique index). Before PAC-129 every call inserted a new invitation and sent a new email, the name was not accepted, and the address was never put on the team.
+ */
 export type post_InviteTeamMember = {
       method: "POST",
       path: "/api/teams/{id}/members/invite",
@@ -7861,17 +8025,19 @@ export type post_InviteTeamMember = {
         
         body:  Schemas.InviteEmailRequest,
           }
-      responses: {201: Schemas.TeamInvite,
+      responses: {200: Schemas.TeamInviteResult,
+201: Schemas.TeamInviteResult,
 400: Schemas.ErrorResponse,
 401: Schemas.ErrorResponse,
 403: Schemas.ErrorResponse,
-422: Schemas.ErrorResponse,
+422: (Schemas.TeamMemberLimitError | Schemas.InvalidEmailError),
 500: Schemas.ErrorResponse,
 },
       
     }
 /**
  * An owner of the team may remove anyone; any caller may remove themselves. A removal that would leave the team with zero owners is refused with 422 and changes nothing (PAC-25, API-023). Check order, fixed so that a non-owner cannot learn who the owner is from the answer: 400 malformed ids; then, when the caller is not the target, 403 unless the caller is an owner; then 422 if the target is an owner and no other owner of the team would remain; then the removal, 204. The guard counts owners ("would leave zero owners", PAC-25 D-4), it does not refuse every owner: in a team with two owners either may leave, and the second to try is refused. No interleaving of concurrent removals may leave the team with zero owners (PAC-25 D-6). A sole owner who is also the only member is refused too; deleting the team (DELETE /api/teams/{id}) stays the way to be rid of it (PAC-25 D-5). The manager-domain DELETE /api/manager/team/members/{email} keeps its own, role-based rule (it refuses removing any owner) with the same 422 wording (PAC-25 D-3).
+ * PAC-129: unchanged. It names a Paceday member by user id and cannot name a person added without Paceday access, who has none; removeTeamPerson (by address) removes either kind and also deletes the team's invitations for the address.
  */
 export type delete_RemoveTeamMember = {
       method: "DELETE",
@@ -7986,6 +8152,58 @@ export type delete_DeleteNoMeetingZone = {
 },
       
     }
+/**
+ * PAC-129 (spec §3.1, §3.3, §3.10, D-1, D-3, D-8, D-9, AC-1, AC-2, AC-4, AC-5, AC-7, AC-23, AC-23b, AC-24, AC-25; contract PAC-129 §3.1, §4). New. The person is on the team at once as an ADDED person. Nothing is sent to them, nothing is asked of them, and the address is never resolved to an account: the answer and the member list are identical whether or not an account holds the address. Their free/busy is read through the calendar credential of the owner who added them, for any member's Find a time (spec §3.4).
+ * Order: 401 (requireAuth); 400 "invalid team id"; 400 "invalid body" (the body does not decode, or `email` is not a JSON string); 400 "email is required" (blank after trimming); 422 "email must be a valid email address" (refused by the normaliser described on AddTeamPersonRequest.email); then ONE storage-owned transaction: the PAC-71 re-check (stale session: 401, nothing written); the team row locked FOR NO KEY UPDATE (no row: 403); the owner check (not a member or not an owner: 403; a storage error: the 500, SF-074 fixed for this new operation, spec OQ-12); the caller's own address: 422 `you cannot add your own address`; the address of a Paceday member of the team: 422 `this address belongs to a Paceday member of this team`; an existing added entry for the address: 200 with that entry, unchanged (the stored name is kept) except that when the owner who added it is no longer an owner of the team (or their account is gone) the caller becomes the owner whose credential reads it (spec OQ-1); 50 or more members of both kinds, owner included: 422 `this team has reached its limit of 50 members; remove someone before adding another`; otherwise the entry is stored (address lowercased, name trimmed) and the answer is 201. Teams already over 50 at deploy keep their members and get the 422 until they are below 50.
+ */
+export type post_AddTeamPerson = {
+      method: "POST",
+      path: "/api/teams/{id}/people",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: {
+            
+        path:  { id: string },
+        
+        
+        body:  Schemas.AddTeamPersonRequest,
+          }
+      responses: {200: Schemas.TeamPerson,
+201: Schemas.TeamPerson,
+400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
+403: Schemas.ErrorResponse,
+422: Schemas.AddTeamPersonError,
+500: Schemas.ErrorResponse,
+},
+      
+    }
+/**
+ * PAC-129 (spec §3.8, D-5, D-8, AC-15, AC-25, AC-30, AC-37; contract PAC-129 §3.2, §4). New. The person is named by address within the team. Order: 401; 400 "invalid team id"; 400 "invalid email" (the path does not normalise to a valid address); then ONE storage-owned transaction: the PAC-71 re-check (stale session: 401, nothing written); the team row locked FOR NO KEY UPDATE (no row: 403); the caller's membership (not a member: 403; a storage error: the 500); unless the address is the caller's own, the caller must be an owner (403); then, read under the lock: the Paceday members whose account address is the address, the added entry for it, and every invitation of the team for it, whatever its status. None of these: 404 `person not found`, nothing written. A Paceday member there who is an owner, with no other owner remaining: 422 "the team owner cannot be removed" (PAC-25 rule), nothing written. Otherwise all of them are deleted: memberships, the added entry, every invitation of the team for the address (pending, accepted, declined, expired), so no old link can bring the person back; 204. Nothing of the person is stored elsewhere on the team path (added people's figures are never stored).
+ * The acceptance takes the same lock first: removal first, the acceptance finds no invitation (404, nothing written); acceptance first, this removal deletes the membership the acceptance created. Either way the person ends absent with no invitation (AC-30). A manager's roster row and assignment for the address are that manager's data and are never touched here (AC-37). removeTeamMember (by user id) is unchanged and stays the PAC-25 path for Paceday members.
+ */
+export type delete_RemoveTeamPerson = {
+      method: "DELETE",
+      path: "/api/teams/{id}/people/{email}",
+      requestFormat: "json",
+      responseFormat: "json",
+      parameters: {
+            
+        path:  { id: string, email: string },
+        
+        
+        
+          }
+      responses: {204: unknown,
+400: Schemas.ErrorResponse,
+401: Schemas.ErrorResponse,
+403: Schemas.ErrorResponse,
+404: Schemas.TeamPersonNotFoundError,
+422: Schemas.ErrorResponse,
+500: Schemas.ErrorResponse,
+},
+      
+    }
 
   // </Endpoints>
   }
@@ -8037,7 +8255,8 @@ export type delete_DeleteNoMeetingZone = {
 "/api/teams": Endpoints.post_CreateTeam,
 "/api/teams/invites/{token}/accept": Endpoints.post_AcceptTeamInvite,
 "/api/teams/{id}/members/invite": Endpoints.post_InviteTeamMember,
-"/api/teams/{id}/no-meeting-zones": Endpoints.post_CreateNoMeetingZone
+"/api/teams/{id}/no-meeting-zones": Endpoints.post_CreateNoMeetingZone,
+"/api/teams/{id}/people": Endpoints.post_AddTeamPerson
          },
 get: {
            "/api/admin/sso": Endpoints.get_ListSsoProviders,
@@ -8117,7 +8336,8 @@ delete: {
 "/api/scheduling-links/{id}": Endpoints.delete_DeleteSchedulingLink,
 "/api/teams/{id}": Endpoints.delete_DeleteTeam,
 "/api/teams/{id}/members/{userId}": Endpoints.delete_RemoveTeamMember,
-"/api/teams/{id}/no-meeting-zones/{zoneId}": Endpoints.delete_DeleteNoMeetingZone
+"/api/teams/{id}/no-meeting-zones/{zoneId}": Endpoints.delete_DeleteNoMeetingZone,
+"/api/teams/{id}/people/{email}": Endpoints.delete_RemoveTeamPerson
          },
 put: {
            "/api/admin/sso/{domain}/state": Endpoints.put_SetSsoProviderState
