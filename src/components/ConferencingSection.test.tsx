@@ -87,7 +87,7 @@ describe("ConferencingSection disconnects (PAC-67)", () => {
   it("offers no Outlook disconnect when Teams is not connected", async () => {
     serve([{ provider: "teams", connected: false, auto_with: "outlook" }], {});
     renderSection();
-    expect(await screen.findByRole("switch", { name: "Attach Microsoft Teams links" })).toBeInTheDocument();
+    expect(await screen.findByText(/connect outlook calendar to add teams links/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /disconnect outlook/i })).not.toBeInTheDocument();
   });
 
@@ -103,5 +103,33 @@ describe("ConferencingSection disconnects (PAC-67)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /disconnect outlook/i }));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(toast.info).not.toHaveBeenCalled();
+  });
+});
+
+// PAC-122 batch 6, SF-048: the "Attach Microsoft Teams links" toggle wrote
+// `teams_enabled`, which the contract does not have, so it was never saved
+// while the page said "Settings saved". Teams links come with a connected
+// Outlook calendar; the row says that instead of offering a switch.
+describe("ConferencingSection Teams row (PAC-122 SF-048)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("offers no switch that would not be saved, and says how Teams links become available", async () => {
+    serve([{ provider: "teams", connected: false, auto_with: "outlook" }], {});
+    const onPatch = vi.fn();
+    render(
+      <Shell>
+        <ConferencingSection settings={{ calendar_provider: "google" } as Settings} onPatch={onPatch} />
+      </Shell>,
+    );
+    expect(await screen.findByText(/connect outlook calendar to add teams links/i)).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(onPatch).not.toHaveBeenCalled();
   });
 });

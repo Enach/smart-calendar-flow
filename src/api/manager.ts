@@ -75,7 +75,6 @@ const STORAGE_KEY = "paceday:manager:v1";
 interface Persisted {
   profile: ManagerProfile;
   members: TeamMember[];
-  last_scan_at?: string;
 }
 
 const DEFAULT_PROFILE: ManagerProfile = {
@@ -509,10 +508,6 @@ export const managerApi = {
     const s = load();
     s.members = s.members.filter((m) => m.email !== email);
     save(s);
-  },
-
-  lastScanAt(): string | undefined {
-    return load().last_scan_at;
   },
 
   gaps(): OneOnOneGap[] {

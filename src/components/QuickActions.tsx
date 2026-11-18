@@ -10,6 +10,7 @@ import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime } from "@/lib/timeFormat";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { effectOf } from "@/api/effects";
+import { focusRunNotice } from "@/business/focusRunNotice";
 
 interface QuickActionsProps {
   weekISO: string;
@@ -34,9 +35,9 @@ export function QuickActions({ weekISO, onScheduleMeeting }: QuickActionsProps) 
   const runFocus = async () => {
     setRunning(true);
     try {
-      const res = await api.runFocus(weekISO);
-      const n = res.createdBlocks.length;
-      toast.success(`Created ${n} focus block${n === 1 ? "" : "s"}`);
+      // PAC-122 SF-050: the failed days (`errors[]`) are reported too.
+      const notice = focusRunNotice(await api.runFocus(weekISO));
+      toast[notice.kind](notice.message);
       refreshAll();
     } catch (e) {
       toast.error(apiErrorMessage(e, effectOf("api.runFocus")));

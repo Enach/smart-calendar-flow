@@ -388,11 +388,12 @@ describe.each([
     createLink.mockRejectedValueOnce(refusal());
     renderDrawer();
     setTitle("Brand new title");
-    expect(screen.getByText(publicBookingUrl("brand-new-title"))).toBeInTheDocument();
+    // PAC-122 SF-052: no title-derived address is ever shown.
+    expect(screen.queryByText(publicBookingUrl("brand-new-title"))).toBeNull();
     pressCreate();
     await waitFor(() => expect(getLink).toHaveBeenCalledWith(L));
     expect(screen.queryByText(publicBookingUrl("brand-new-title"))).toBeNull();
-    expect(screen.getByText(publicBookingUrl("your-link"))).toBeInTheDocument();
+    expect(screen.getByTestId("link-address-pending")).toBeInTheDocument();
     await act(async () => read.resolve(makeLink([], L, "earlier-intro")));
     await waitFor(() => expect(screen.getByText(publicBookingUrl("earlier-intro"))).toBeInTheDocument());
     // Still dirty: a title change never re-derives it.
@@ -494,7 +495,8 @@ describe.each([
     expect(emailInput()).toBeDisabled();
     expect(document.getElementById("co-hosts-blocked")).toHaveTextContent(LINK_CREATE_TEXT.coHostsBlockedAfterRefusal);
     expect(document.body.textContent).not.toMatch(/reopen the editor/i);
-    expect(screen.getByText(publicBookingUrl("your-link"))).toBeInTheDocument();
+    // PAC-122 SF-052: no address is known here, so none is shown.
+    expect(screen.getByTestId("link-address-pending")).toBeInTheDocument();
 
     pressSave();
     await waitFor(() => expect(updateLink).toHaveBeenCalledTimes(1));

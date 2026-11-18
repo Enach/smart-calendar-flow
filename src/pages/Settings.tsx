@@ -597,17 +597,10 @@ export default function SettingsPage() {
           title="Calendar Connection"
           description="Choose which work calendar Paceday reads and writes to."
         >
+          {/* PAC-122 SF-047: no "Calendar ID" field. The contract has no such
+              setting, so a value typed there was never saved. */}
           <div className="space-y-4">
             <WorkCalendarConnection settings={draft} onPatch={patchDraft} />
-            <Field label="Calendar ID">
-              <input
-                type="text"
-                value={draft.calendar_id ?? "primary"}
-                onChange={(e) => set("calendar_id", e.target.value)}
-                className={inputCls}
-                placeholder="primary"
-              />
-            </Field>
           </div>
         </Section>
 

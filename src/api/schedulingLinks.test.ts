@@ -106,6 +106,7 @@ describe("scheduling links contract", () => {
     });
     expect(body).not.toHaveProperty("durations");
     expect(body).not.toHaveProperty("days");
+    // PAC-122 SF-052: the server assigns the address; no slug is requested.
     expect(body).not.toHaveProperty("slug");
 
     // PAC-112 D-1: no per-address invitation request any more.

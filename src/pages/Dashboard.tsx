@@ -29,6 +29,7 @@ import { useCalendarEvents } from "@/hooks/useCalendarEvents";
 import { useCalendarConnect } from "@/hooks/useCalendarConnect";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
+import { focusRunNotice } from "@/business/focusRunNotice";
 import type { AINotConfigured, CalendarEvent, ParseResult } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { eventChipColors } from "@/lib/eventChip";
@@ -190,10 +191,13 @@ export default function Dashboard() {
         }
       } else if (res.intent === "schedule_focus") {
         toast.success("Scheduling focus time…");
-        await api.runFocus(weekISO);
+        const run = await api.runFocus(weekISO);
         qc.invalidateQueries({ queryKey: ["events"] });
         qc.invalidateQueries({ queryKey: ["focusBlocks"] });
-        toast.success("Focus time scheduled");
+        // PAC-122 SF-050: what the run did, failed days included, never a
+        // blanket "Focus time scheduled".
+        const notice = focusRunNotice(run);
+        toast[notice.kind](notice.message);
         demoWriteToast();
       } else {
         setNlpError(res.error || "Sorry, I couldn't understand that request.");
