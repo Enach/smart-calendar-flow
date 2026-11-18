@@ -188,10 +188,15 @@ export default function Team() {
             </p>
             <div className="mt-6 flex flex-col items-center justify-center gap-2 sm:flex-row">
               <Button
-                onClick={() => {
-                  void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
-                  setProfile(managerApi.getProfile());
-                  toast.success("Manager mode enabled. Select a team, then scan to preview candidates.");
+                onClick={async () => {
+                  // PAC-122 SF-049: success only once the server stored it.
+                  try {
+                    const next = await managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
+                    setProfile(next);
+                    toast.success("Manager mode enabled. Select a team, then scan to preview candidates.");
+                  } catch (e) {
+                    toast.error(apiErrorMessage(e, effectOf("manager.setProfile")));
+                  }
                 }}
                 className="bg-primary text-white hover:bg-primary/90"
               >

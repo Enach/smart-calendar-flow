@@ -850,22 +850,26 @@ function ProfileSection() {
       return;
     }
     if (!profile.is_manager && manager) {
-      const next = managerApi.setProfile({
-        is_manager: true,
-        onboarding_profile_selected: true,
-      });
-      void managerApi.remote.setProfile({ is_manager: true, onboarding_profile_selected: true });
-      setProfile(next);
-      toast.success("Manager mode enabled. Select a team to preview calendar candidates.");
+      void saveRole({ is_manager: true, onboarding_profile_selected: true },
+        "Manager mode enabled. Select a team to preview calendar candidates.");
     }
   };
 
-  const confirmSwitchToIC = () => {
-    const next = managerApi.setProfile({ is_manager: false });
-    void managerApi.remote.setProfile({ is_manager: false });
-    setProfile(next);
+  // PAC-122 SF-049: the role changes, and success is shown, only once the
+  // server has stored it; a failed write leaves the role as it was and says so.
+  const saveRole = async (patch: { is_manager: boolean; onboarding_profile_selected?: boolean }, done: string) => {
+    try {
+      const next = await managerApi.remote.setProfile(patch);
+      setProfile(next);
+      toast.success(done);
+    } catch (e) {
+      toast.error(apiErrorMessage(e, effectOf("manager.setProfile")));
+    }
+  };
+
+  const confirmSwitchToIC = async () => {
+    await saveRole({ is_manager: false }, "Switched to Individual contributor.");
     setConfirmSwitch(false);
-    toast.success("Switched to Individual contributor.");
   };
 
 
