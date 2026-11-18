@@ -9,6 +9,8 @@ vi.hoisted(() => {
 
 
 import { AINotConfiguredNotice } from "./AINotConfiguredNotice";
+import { choiceProblemText } from "@/lib/orgAIChoiceProblem";
+import { ApiHttpError, ApiRequestCancelledError, ApiUnreachableError } from "@/api/client";
 
 // PAC-73 Part 2 (owner O-13; spec §3.4, §3.6; P2-AC-22, P2-AC-26, P2-AC-38):
 // the one-time notice before the organisation's AI is used, from the
@@ -181,5 +183,89 @@ describe("OrgAIConsentDialog via the not-configured notice", () => {
     await waitFor(() => expect(screen.queryByTestId("org-ai-consent-text")).not.toBeInTheDocument());
     expect(onResolved).not.toHaveBeenCalled();
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+});
+
+// PAC-122 batch 6b, SF-090: the confirmation was recorded, then the choice
+// write failed, and the mutation rejected as a whole: the dialog said the
+// confirmation failed although it was recorded. It now says what happened.
+describe("OrgAIConsentDialog when the choice write fails after the confirmation (PAC-122 SF-090)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    calls.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("says the confirmation was recorded and the choice was not saved", async () => {
+    serve(() => json(status));
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === `${API}/settings` && init?.method === "PATCH") {
+        calls.push({ method: "PATCH", url: String(input), body: JSON.parse(String(init.body)) });
+        // A 4xx refusal: the choice was definitely not saved.
+        return json({ error: "personal keys are not allowed" }, 422);
+      }
+      return base(input, init);
+    });
+    const onResolved = renderNotice(row7, vi.fn(), "unsupported");
+    fireEvent.click(screen.getByTestId("ai-use-org"));
+    await screen.findByTestId("org-ai-consent-text");
+    fireEvent.click(screen.getByRole("button", { name: /confirm and turn ai on/i }));
+    const problem = await screen.findByTestId("org-ai-consent-choice-failed");
+    expect(problem).toHaveTextContent(/your confirmation was recorded/i);
+    expect(problem).toHaveTextContent(/not saved/i);
+    expect(problem).not.toHaveTextContent(/confirmation (failed|was not)/i);
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+});
+
+// PAC-122 batch 6b review: when the choice write's outcome is unknown (lost,
+// budget) or the request was cancelled, "was not saved" may be false, and a
+// cancelled request used to leave an empty message.
+describe("OrgAIConsentDialog when the choice write's outcome is unknown (PAC-122 SF-090)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    calls.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("a lost answer says Paceday could not confirm whether it was saved, never 'not saved'", async () => {
+    serve(() => json(status));
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === `${API}/settings` && init?.method === "PATCH") throw new TypeError("Failed to fetch");
+      return base(input, init);
+    });
+    renderNotice(row7, vi.fn(), "unsupported");
+    fireEvent.click(screen.getByTestId("ai-use-org"));
+    await screen.findByTestId("org-ai-consent-text");
+    fireEvent.click(screen.getByRole("button", { name: /confirm and turn ai on/i }));
+    const problem = await screen.findByTestId("org-ai-consent-choice-failed");
+    expect(problem).toHaveTextContent(/your confirmation was recorded/i);
+    expect(problem).toHaveTextContent(/could not confirm whether .* was saved; check settings before trying again/i);
+    expect(problem).not.toHaveTextContent(/not saved/i);
+  });
+
+  it("the text for each failure kind", () => {
+    const unknown = /could not confirm whether .* was saved; check Settings before trying again/;
+    expect(choiceProblemText(new ApiUnreachableError("network"))).toMatch(unknown);
+    expect(choiceProblemText(new ApiUnreachableError("timeout"))).toMatch(unknown);
+    expect(choiceProblemText(new ApiRequestCancelledError())).toMatch(unknown);
+    // The request budget's 503 (contract RequestBudgetExpiredError).
+    expect(choiceProblemText(new ApiHttpError(503, { error: "request timed out" }, "request timed out"))).toMatch(unknown);
+    // Any 5xx may follow a committed save (PATCH /api/settings answers 500
+    // when the re-read after the save fails), so it is never "not saved".
+    for (const status of [500, 502, 503, 504]) {
+      const text = choiceProblemText(new ApiHttpError(status, { error: "internal error" }, "internal error"));
+      expect(text).toMatch(unknown);
+      expect(text).not.toMatch(/not saved/);
+    }
+    // Only a 4xx refusal is a definite "not saved".
+    expect(choiceProblemText(new ApiHttpError(400, { error: "invalid llmProvider" }, "invalid llmProvider"))).toBe(
+      "Your confirmation was recorded, but \"Use my organisation's AI\" was not saved (invalid llmProvider). Try again, or choose it in Settings.",
+    );
+    expect(choiceProblemText(new ApiHttpError(403, { error: "forbidden" }, "forbidden"))).toMatch(/was not saved \(/);
   });
 });

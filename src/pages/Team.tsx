@@ -52,6 +52,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "@/hooks/useToast";
+import { isSavedButNotRead } from "@/api/savedButNotRead";
 import {
   managerApi,
   managerKeys,
@@ -522,7 +523,16 @@ export function TeamTab({
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.updateMember"))),
+    onError: (e) => {
+      // PAC-122 SF-024: the change is saved; only the re-read failed.
+      if (isSavedButNotRead(e)) {
+        toast.info("Saved. The team list could not be refreshed yet.");
+        qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+        qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
+        return;
+      }
+      toast.error(apiErrorMessage(e, effectOf("manager.updateMember")));
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -634,6 +644,17 @@ export function TeamTab({
             </div>
           </div>
 
+          {/* PAC-122 SF-085: a failed analytics read is shown once, with a retry. */}
+          {analyticsQ.isError && (
+            <div className="px-5 pt-4" data-testid="manager-analytics-error">
+              <ErrorBanner
+                message="Could not load this week's focus figures."
+                failure={analyticsQ.error}
+                onRetry={() => void analyticsQ.refetch()}
+                busy={analyticsQ.isFetching}
+              />
+            </div>
+          )}
           <ul className="divide-y divide-border">
             {filtered.map((m) => (
               <MemberRow
@@ -641,6 +662,7 @@ export function TeamTab({
                 member={m}
                 analytics={analyticsByEmail.get(m.email.toLowerCase()) ?? null}
                 analyticsLoading={analyticsQ.isLoading}
+                analyticsFailed={analyticsQ.isError}
                 expanded={expanded === m.email}
                 onToggle={() => setExpanded(expanded === m.email ? null : m.email)}
                 onCadenceChange={(cadence, custom) =>
@@ -921,6 +943,7 @@ export function MemberRow({
   member,
   analytics,
   analyticsLoading,
+  analyticsFailed,
   expanded,
   onToggle,
   onCadenceChange,
@@ -930,6 +953,8 @@ export function MemberRow({
   member: TeamMember;
   analytics: MemberAnalytics | null;
   analyticsLoading: boolean;
+  /** PAC-122 SF-085: the analytics read failed (its error is shown above the list). */
+  analyticsFailed: boolean;
   expanded: boolean;
   onToggle: () => void;
   onCadenceChange: (c: Cadence, custom?: number) => void;
@@ -950,8 +975,10 @@ export function MemberRow({
   const lastWeek = analytics?.weeks[analytics.weeks.length - 1];
   const prevWeek = analytics?.weeks[analytics.weeks.length - 2];
   const focusMin = lastWeek?.focus_minutes ?? 0;
+  // PAC-122 SF-060: each week's own flag decides whether it was measured.
+  const weekMeasured = lastWeek?.data_available === true;
   const trendPct =
-    prevWeek && prevWeek.focus_minutes > 0
+    prevWeek?.data_available && prevWeek.focus_minutes > 0
       ? Math.round(((focusMin - prevWeek.focus_minutes) / prevWeek.focus_minutes) * 100)
       : 0;
 
@@ -1062,9 +1089,13 @@ export function MemberRow({
               <p className="max-w-[16rem] text-[11px] text-muted-foreground" data-testid="manager-analytics-added-hint">
                 {MANAGER_ANALYTICS_ADDED_HINT}
               </p>
+            ) : analyticsFailed && !analytics ? (
+              <div className="text-xs text-muted-foreground">Figures not loaded</div>
             ) : analyticsLoading && !analytics ? (
               <div className="h-7 w-20 animate-pulse rounded bg-muted" />
-            ) : member.data_available && analytics ? (
+            ) : member.data_available && analytics && lastWeek && !weekMeasured ? (
+              <div className="text-xs text-muted-foreground">Not measured this week</div>
+            ) : member.data_available && analytics && weekMeasured ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
                   <span className="text-2xl font-semibold text-primary">{fmtMin(focusMin)}</span>
@@ -1213,7 +1244,18 @@ export function AddPersonDialog({
         custom_cadence_days: cadence === "custom" ? customDays : undefined,
       }, teamId),
     // Form values are intentionally preserved on error.
-    onError: (e) => setError(apiErrorMessage(e, effectOf("manager.addMember"))),
+    onError: (e) => {
+      // PAC-122 SF-024: the person is added; only the re-read failed. Never a
+      // retry that would add them again.
+      if (isSavedButNotRead(e)) {
+        onAdded();
+        toast.success(`${name || email} added. The team list could not be refreshed yet.`);
+        reset();
+        onOpenChange(false);
+        return;
+      }
+      setError(apiErrorMessage(e, effectOf("manager.addMember")));
+    },
     onSuccess: ({ alreadyAuto }) => {
       onAdded();
       if (alreadyAuto) {
@@ -1320,7 +1362,9 @@ export function AddPersonDialog({
 type CreatedTeam = ReturnType<typeof teamsApi.list>[number];
 
 interface CreateTeamResult {
-  team: CreatedTeam;
+  /** Null when the team was created but could not be read back (PAC-122 SF-024). */
+  team: CreatedTeam | null;
+  teamName: string;
   /** The server added the person (201 or 200). */
   added: string[];
   /** The server refused the add (a 4xx), or it was never sent. */
@@ -1344,6 +1388,7 @@ export function CreateTeamDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: (t: CreatedTeam) => void;
 }) {
+  const qcCreate = useQueryClient();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -1384,13 +1429,23 @@ export function CreateTeamDialog({
 
   const createMut = useMutation({
     mutationFn: async (emails: string[]): Promise<CreateTeamResult> => {
-      const team = await teamsApi.remote.createTeam(name);
-      const out: CreateTeamResult = { team, added: [], rejected: [], unknown: [] };
+      // PAC-122 SF-024: a team created but not read back still carries its
+      // id, so the people typed are still added to it.
+      let team: CreatedTeam | null = null;
+      let teamId: string;
+      try {
+        team = await teamsApi.remote.createTeam(name);
+        teamId = team.id;
+      } catch (e) {
+        if (!isSavedButNotRead(e) || !e.savedId) throw e;
+        teamId = e.savedId;
+      }
+      const out: CreateTeamResult = { team, teamName: team?.name ?? name.trim(), added: [], rejected: [], unknown: [] };
       // PAC-129 (AC-33): each person is ADDED (no invitation, no email), one
       // at a time, through the same path as the team's "Add to team".
       for (const email of emails) {
         try {
-          await teamsApi.remote.addPerson(team.id, email);
+          await teamsApi.remote.addPerson(teamId, email);
           out.added.push(email);
         } catch (e) {
           if (addDefinitelyRefused(e)) {
@@ -1402,23 +1457,43 @@ export function CreateTeamDialog({
       }
       return out;
     },
-    // Keep the typed name and invitees on error: the team was not created.
-    onError: (e) => setError(apiErrorMessage(e, effectOf("teams.createTeam"))),
+    onError: (e, emails) => {
+      // PAC-122 SF-024: reached only when the create succeeded but the error
+      // carries no team id (`savedId`); with an id, mutationFn already added
+      // the people and answered a result. The dialog closes, so nothing can
+      // create the team a second time; the people given were not added.
+      if (isSavedButNotRead(e)) {
+        const notAdded = emails.length;
+        toast.info(
+          `Team "${name.trim()}" was created, but it could not be loaded yet.` +
+            (notAdded > 0
+              ? ` ${notAdded === 1 ? "1 person was" : `${notAdded} people were`} not added: add them from the team once it appears.`
+              : ""),
+        );
+        void qcCreate.invalidateQueries({ queryKey: ["formal-teams"] });
+        reset();
+        onOpenChange(false);
+        return;
+      }
+      // Keep the typed name and invitees on error: the team was not created.
+      setError(apiErrorMessage(e, effectOf("teams.createTeam")));
+    },
     onSettled: () => {
       inFlight.current = false;
     },
     onSuccess: (r) => {
+      if (!r.team) void qcCreate.invalidateQueries({ queryKey: ["formal-teams"] });
       if (r.rejected.length > 0 || r.unknown.length > 0) {
         setError(null);
         setResult(r);
         return;
       }
-      toast.success(
-        r.added.length > 0 ? `Team "${r.team.name}" created. ${r.added.length} added.` : `Team "${r.team.name}" created.`,
-      );
+      const added = r.added.length > 0 ? ` ${r.added.length} added.` : "";
+      if (r.team) toast.success(`Team "${r.team.name}" created.${added}`);
+      else toast.info(`Team "${r.teamName}" was created, but it could not be loaded yet.${added}`);
       reset();
       onOpenChange(false);
-      onCreated(r.team);
+      if (r.team) onCreated(r.team);
     },
   });
   const busy = createMut.isPending;
@@ -1474,7 +1549,8 @@ export function CreateTeamDialog({
         {result ? (
           <div className="space-y-3" data-testid="create-team-add-result">
             <p className="text-sm text-foreground">
-              Team &ldquo;{result.team.name}&rdquo; was created. {result.added.length} added.
+              Team &ldquo;{result.teamName}&rdquo; was created
+              {result.team ? "" : ", but it could not be loaded yet"}. {result.added.length} added.
             </p>
             {/* Per address, honestly (contract §9.5): added, refused with the reason, or unknown. */}
             {result.added.length > 0 && (

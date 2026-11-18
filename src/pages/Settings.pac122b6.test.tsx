@@ -6,12 +6,15 @@
  * still said "Settings saved", and the field came back as an invented
  * "primary". Making it work needs a contract change (register §7), so the
  * dead field is removed: nothing on the page offers a value that is not saved.
+ *
+ * SF-084 (batch 6b): a failed settings read kept the spinner forever
+ * (`isLoading || !draft`). The read's error is now shown with a retry.
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
-const state = vi.hoisted(() => ({ settings: undefined as unknown }));
+const state = vi.hoisted(() => ({ settings: undefined as unknown, error: null as unknown, refetch: (() => {}) as () => unknown }));
 
 vi.mock("@/components/Navbar", () => ({ Navbar: () => null }));
 vi.mock("@/components/ServerStatusBanner", () => ({ ServerStatusBanner: () => null }));
@@ -22,13 +25,23 @@ vi.mock("@/components/settings/OrganizationAISection", () => ({ OrganizationAISe
 vi.mock("@/components/settings/SsoAdminStepupSection", () => ({ SsoAdminStepupSection: () => null }));
 vi.mock("@/components/settings/AddressStandingNotice", () => ({ AddressStandingNotice: () => null }));
 vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({ data: state.settings, isLoading: false, refetch: async () => ({ data: state.settings }) }),
+  useSettings: () => ({
+    data: state.settings,
+    isLoading: false,
+    isError: state.error != null,
+    error: state.error,
+    isFetching: false,
+    refetch: async () => {
+      state.refetch();
+      return { data: state.settings };
+    },
+  }),
   useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/useOrganizationAI", () => ({ useOrganizationAI: () => ({ data: undefined }) }));
 
 import SettingsPage from "./Settings";
-import { normalizeSettings } from "@/api/client";
+import { ApiHttpError, normalizeSettings } from "@/api/client";
 
 function saved() {
   return normalizeSettings({
@@ -50,6 +63,7 @@ function saved() {
 
 describe("PAC-122 batch 6, Settings", () => {
   it("SF-047: offers no Calendar ID field, since the server never saves one", async () => {
+    state.error = null;
     state.settings = saved();
     render(
       <MemoryRouter>
@@ -59,5 +73,22 @@ describe("PAC-122 batch 6, Settings", () => {
     await screen.findByText("Calendar Connection");
     expect(screen.queryByText("Calendar ID")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("primary")).not.toBeInTheDocument();
+  });
+
+  it("SF-084: a failed settings read shows its error and a retry, not a spinner forever", async () => {
+    state.settings = undefined;
+    state.error = new ApiHttpError(500, { error: "internal error" }, "internal error");
+    const refetch = vi.fn();
+    state.refetch = refetch;
+    render(
+      <MemoryRouter>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+    const alert = await screen.findByTestId("api-error");
+    expect(alert).toHaveTextContent("internal error");
+    expect(alert).toHaveAttribute("data-effect", "read");
+    fireEvent.click(screen.getByTestId("api-error-retry"));
+    expect(refetch).toHaveBeenCalledOnce();
   });
 });

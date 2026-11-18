@@ -1,4 +1,5 @@
-import { Check, Clock, HelpCircle, Loader2, UserCheck } from "lucide-react";
+import { useId } from "react";
+import { AlertCircle, Check, Clock, HelpCircle, Loader2, UserCheck } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 /**
  * "On Paceday" and "Invite pending" come only from the link's own host record.
@@ -11,7 +12,9 @@ export type ChipState =
   | { kind: "paceday-accepted" }
   | { kind: "paceday-pending" }
   | { kind: "synced" }
-  | { kind: "unknown" };
+  | { kind: "unknown" }
+  /** PAC-122 SF-086: the free/busy read failed; `message` is its error. */
+  | { kind: "error"; message: string };
 
 interface CoverageBadgeProps {
   state: ChipState;
@@ -30,6 +33,8 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
       </span>
     );
   }
+
+  if (state.kind === "error") return <ErrorBadge message={state.message} />;
 
   if (state.kind === "paceday-accepted") {
     return (
@@ -80,6 +85,39 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-xs text-xs">
           We could not read their calendar. Slots will not account for their schedule.
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
+ * PAC-122 SF-086: the free/busy read failed. The detail is described for
+ * assistive technology (aria-describedby) and shown in a tooltip, like the
+ * other chips' explanations.
+ */
+function ErrorBadge({ message }: { message: string }) {
+  const id = useId();
+  const detail = `Paceday could not read free/busy for this person: ${message}`;
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            data-testid="coverage-badge-error"
+            tabIndex={0}
+            aria-describedby={id}
+            className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"
+          >
+            <AlertCircle className="h-2.5 w-2.5" aria-hidden="true" />
+            Availability not checked
+            <span id={id} className="sr-only">
+              {detail}
+            </span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs">
+          {detail} Slots will not account for their schedule.
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

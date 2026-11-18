@@ -7,12 +7,15 @@ import type { CalendarEvent } from "@/api/types";
 interface EventDrawerProps {
   event: CalendarEvent;
   events: CalendarEvent[];
-  workStart: string;
-  workEnd: string;
+  /** Undefined when the settings could not be read (PAC-122 SF-057). */
+  workStart: string | undefined;
+  workEnd: string | undefined;
+  /** The settings read is still pending (PAC-122 SF-057). */
+  hoursLoading?: boolean;
   onClose: () => void;
 }
 
-export function EventDrawer({ event, events, workStart, workEnd, onClose }: EventDrawerProps) {
+export function EventDrawer({ event, events, workStart, workEnd, hoursLoading, onClose }: EventDrawerProps) {
   const [mode, setMode] = useState<"detail" | "edit">("detail");
 
   // Always reset to detail when a different event is opened
@@ -32,6 +35,7 @@ export function EventDrawer({ event, events, workStart, workEnd, onClose }: Even
             events={events}
             workStart={workStart}
             workEnd={workEnd}
+            hoursLoading={hoursLoading}
             onEdit={() => setMode("edit")}
             onClose={onClose}
           />

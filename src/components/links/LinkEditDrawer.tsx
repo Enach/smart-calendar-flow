@@ -345,9 +345,14 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
       if (host.status === "accepted" && host.user_id) return { kind: "paceday-accepted" };
       if (host.status === "pending") return { kind: "paceday-pending" };
     }
-    if (coverageQuery.isLoading) return { kind: "loading" };
+    // PAC-122 SF-086: a failed read is said, never left "Checking…".
+    if (coverageQuery.isError) {
+      return { kind: "error", message: apiErrorMessage(coverageQuery.error, effectOf("api.freebusy")) };
+    }
+    if (coverageQuery.isLoading || !coverageQuery.data) return { kind: "loading" };
     const cov = coverageByEmail.get(email.toLowerCase());
-    if (!cov) return { kind: "loading" };
+    // Answered without this address: its availability is not known.
+    if (!cov) return { kind: "unknown" };
     // Free/busy has two statuses and no provider (PAC-41): "On Paceday" is
     // decided above, from the link's host record, never from free/busy (D-2).
     if (cov.status === "known") return { kind: "synced" };

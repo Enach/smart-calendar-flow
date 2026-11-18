@@ -11,6 +11,7 @@
 
 import { requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
+import { readBack } from "./savedButNotRead";
 import type { components } from "./generated/types";
 import { z as zod } from "zod";
 import {
@@ -377,7 +378,9 @@ const teamsRemote = {
         assertTeams(validateTeamName(name));
         const raw = unwrapTeam(await requestApi<unknown>("POST", "/teams/", { name: name.trim() }));
         if (!raw?.id) throw new TeamValidationError("The server did not return the created team.");
-        const team = await remoteTeam(raw.id);
+        // PAC-122 SF-024: the team exists now; a failed re-read is not a failed create.
+        const id = raw.id;
+        const team = await readBack(() => remoteTeam(id), id);
         const state = load();
         state.teams = state.teams.filter((item) => item.id !== team.id).concat(team);
         state.active_team_id = team.id;
@@ -389,7 +392,7 @@ const teamsRemote = {
     demoOrReal<FormalTeam | null>("teams.renameTeam", [id, name], async () => {
         assertTeams(validateTeamName(name));
         await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
-        return remoteTeam(id);
+        return readBack(() => remoteTeam(id));
       }),
 
   deleteTeam: (id: string) =>

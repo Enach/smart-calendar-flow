@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { apiErrorMessage } from "@/api/client";
+import { choiceProblemText } from "@/lib/orgAIChoiceProblem";
 import type { OrganizationAIConfiguration } from "@/api/types";
 import { useConfirmOrganizationAI, useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { useSettings } from "@/hooks/useSettings";
@@ -42,6 +43,7 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
   const keepsOwnChoice = !choose && storedChoice !== undefined && storedChoice !== "" && storedChoice !== "organization";
   const [changed, setChanged] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [choiceProblem, setChoiceProblem] = useState<string | null>(null);
   // The version displayed is the one confirmed (P2-AC-38): kept from the
   // read the user is looking at, replaced only by a conflict's answer.
   const [shown, setShown] = useState<OrganizationAIConfiguration | null>(null);
@@ -51,6 +53,7 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
       setShown(null);
       setChanged(false);
       setProblem(null);
+      setChoiceProblem(null);
     } else if (org.data && !shown) {
       setShown(org.data);
     }
@@ -59,8 +62,16 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
   const onConfirm = async () => {
     if (!shown) return;
     setProblem(null);
+    setChoiceProblem(null);
     try {
       const res = await confirm.mutateAsync({ version: shown.configurationVersion, choose });
+      if (res.kind === "confirmed" && res.choiceError !== undefined) {
+        // PAC-122 SF-090: the confirmation is recorded; only the choice write
+        // failed. "Not saved" only for a definite answer: a lost or budget
+        // answer, or a request cancelled by leaving, may have been applied.
+        setChoiceProblem(choiceProblemText(res.choiceError));
+        return;
+      }
       if (res.kind === "confirmed") {
         onOpenChange(false);
         onConfirmed?.();
@@ -100,6 +111,11 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
             <p data-testid="org-ai-consent-text">{organizationConsentText(provider)}</p>
             {keepsOwnChoice && <p data-testid="org-ai-consent-kept">{keptChoiceText(storedChoice)}</p>}
             {problem && <p className="text-destructive">{problem}</p>}
+            {choiceProblem && (
+              <p role="alert" data-testid="org-ai-consent-choice-failed" className="text-destructive">
+                {choiceProblem}
+              </p>
+            )}
           </div>
         )}
         <DialogFooter>

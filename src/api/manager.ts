@@ -10,6 +10,7 @@ import type { Attendee } from "./types";
 import type { components } from "./generated/types";
 import { api, requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
+import { readBack, SavedButNotReadError } from "./savedButNotRead";
 import { managerRosterSchema, scanConfirmationSchema, scanPreviewSchema, type ManagerMemberWire, type ManagerRosterWire, type ScanConfirmation, type ScanPreview } from "@/contracts/managerTeam";
 
 // ---------- Types ----------
@@ -280,9 +281,11 @@ const managerRemote = {
           cadence: input.cadence,
           cadence_custom_days: input.custom_cadence_days,
         }, managerQuery(teamId));
-        const roster = await managerRemote.listTeam(teamId);
+        // PAC-122 SF-024: the person is added now; a failed or incomplete
+        // re-read is not a failed add.
+        const roster = await readBack(() => managerRemote.listTeam(teamId));
         const member = roster.members.map(normalizeRemoteMember).find((m) => m.email === input.email.trim().toLowerCase());
-        if (!member) throw new Error("backend did not return the new team member");
+        if (!member) throw new SavedButNotReadError(new Error("the team list does not show the new member yet"));
         return { member, alreadyAuto: false };
       }),
 
@@ -299,7 +302,7 @@ const managerRemote = {
           ...(patch.custom_cadence_days === undefined ? {} : { cadence_custom_days: patch.custom_cadence_days }),
         };
         await requestApi("PATCH", "/manager/team/members/" + encodeURIComponent(email), body, managerQuery(teamId));
-        const roster = await managerRemote.listTeam(teamId);
+        const roster = await readBack(() => managerRemote.listTeam(teamId));
         return roster.members.map(normalizeRemoteMember).find((m) => m.email === email.toLowerCase()) ?? null;
       }),
 

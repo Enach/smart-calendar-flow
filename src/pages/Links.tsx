@@ -213,7 +213,7 @@ function ErrorBanner({ error, onRetry, busy }: { error: unknown; onRetry: () => 
   );
 }
 
-function InviteBanner({
+export function InviteBanner({
   onAccept,
   onDecline,
   pendingId,
@@ -242,6 +242,8 @@ function InviteBanner({
 
   return (
     <div className="space-y-2">
+      {/* PAC-122 SF-088: a failed refresh is shown above the cached invites. */}
+      {error && <ErrorBanner error={error} onRetry={() => refetch()} busy={isFetching} />}
       {invites.map((inv) => (
         <div
           key={inv.link_id}

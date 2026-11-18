@@ -56,6 +56,7 @@ import {
   type SchedulingTemplateId,
 } from "@/lib/schedulingPresets";
 import { effectOf } from "@/api/effects";
+import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 
 
 const TIMEZONES = [
@@ -134,7 +135,7 @@ function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: 
 }
 
 export default function SettingsPage() {
-  const { data, isLoading, refetch } = useSettings();
+  const { data, isLoading, isError, error, isFetching, refetch } = useSettings();
   const update = useUpdateSettings();
   const [draft, setDraft] = useState<Settings | null>(null);
   // PAC-73 Part 2: members are offered their organisation's AI; choosing it
@@ -241,6 +242,24 @@ export default function SettingsPage() {
     }
   };
 
+
+  // PAC-122 SF-084: a failed read is shown with a retry, never a spinner
+  // that never ends.
+  if (!data && isError) {
+    return (
+      <div className="min-h-screen bg-muted/30">
+        <Navbar />
+        <main className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+          <ApiErrorNotice
+            error={error}
+            effect={effectOf("api.getSettings")}
+            onRetry={() => void refetch()}
+            retrying={isFetching}
+          />
+        </main>
+      </div>
+    );
+  }
 
   if (isLoading || !draft) {
     return (
