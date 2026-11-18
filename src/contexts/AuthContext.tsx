@@ -8,6 +8,7 @@ import {
 } from "react";
 
 import { apiFetch, type ApiError } from "@/lib/api";
+import { isApiHttpError } from "@/api/client";
 import { clearDemoSession, isDemoSession, restoreStoresAfterDemo } from "@/api/demoGate";
 import { forgetSignInEmail } from "@/components/auth/rememberedEmail";
 import { AuthContext } from "./auth-context";
@@ -35,6 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isDemo, setIsDemo] = useState<boolean>(() => isDemoSession());
   const [loading, setLoading] = useState(true);
   const [sessionStale, setSessionStale] = useState(false);
+  // SF-004: the last sign-out the server did not confirm, or null.
+  const [signOutFailure, setSignOutFailure] = useState<{ error: unknown } | null>(null);
   const mounted = useRef(true);
 
   useEffect(() => () => {
@@ -65,6 +68,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (mounted.current) {
           setUser(null);
           setSessionStale(false);
+          // The server has no session: an unconfirmed sign-out is now moot.
+          setSignOutFailure(null);
         }
         return null;
       }
@@ -113,25 +118,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionStale(false);
   }, []);
 
-  const logout = useCallback(async () => {
+  /**
+   * SF-004: resolves to true once the user is signed out, false when the
+   * server did not confirm it. A failed POST /api/auth/logout leaves the
+   * HttpOnly session cookie live (the contract's 500 says the cookie is NOT
+   * expired; a lost answer says nothing), so the user is kept signed in here
+   * and `signOutFailure` is set for the "not confirmed" alert. A 401 means the
+   * server has no session for this browser, which is what sign-out wanted.
+   */
+  const logout = useCallback(async (): Promise<boolean> => {
     // PAC-97 AC-26: signing out forgets the email remembered for a switch.
     forgetSignInEmail();
     if (isDemo) {
       exitDemo();
-      return;
+      setSignOutFailure(null);
+      return true;
     }
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
-    } catch {
-      /* even if it fails, clear local state */
+    } catch (e) {
+      // A 401 (no session, or a superseded one) is "already signed out".
+      if (!(isApiHttpError(e) && e.status === 401)) {
+        if (mounted.current) setSignOutFailure({ error: e });
+        return false;
+      }
     }
-    setUser(null);
-    setSessionStale(false);
+    if (mounted.current) {
+      setUser(null);
+      setSessionStale(false);
+      setSignOutFailure(null);
+    }
+    return true;
   }, [isDemo, exitDemo]);
 
+  const dismissSignOutFailure = useCallback(() => setSignOutFailure(null), []);
+
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isDemo, loading, sessionStale, refresh, enterDemo, exitDemo, logout }),
-    [user, isDemo, loading, sessionStale, refresh, enterDemo, exitDemo, logout],
+    () => ({
+      user,
+      isDemo,
+      loading,
+      sessionStale,
+      signOutFailure,
+      refresh,
+      enterDemo,
+      exitDemo,
+      logout,
+      dismissSignOutFailure,
+    }),
+    [user, isDemo, loading, sessionStale, signOutFailure, refresh, enterDemo, exitDemo, logout, dismissSignOutFailure],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

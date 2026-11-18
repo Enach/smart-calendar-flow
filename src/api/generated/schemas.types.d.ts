@@ -5802,7 +5802,7 @@ export type get_GetIntegrationAvailability = {
       
     }
 /**
- * Idempotent. The storage error is discarded, so this is always 204.
+ * Idempotent. PAC-122 (SF-003): a failed delete is the 500 {"error":"internal error"} and the connection stays stored.
  */
 export type delete_DisconnectNotion = {
       method: "DELETE",
@@ -5878,8 +5878,9 @@ export type get_GetNotionStatus = {
       
     }
 /**
- * Deletes the `workspace_connections` row for (user, "slack"). The storage error is
- * explicitly discarded, so a failed delete is still reported as 204. Deleting a
+ * Deletes the `workspace_connections` row for (user, "slack"). PAC-122 (SF-003): a
+ * failed delete is the 500 {"error":"internal error"} and the connection stays
+ * stored. Deleting a
  * connection that does not exist is also 204 — this endpoint is idempotent and
  * never reports 404.
  */
@@ -6266,7 +6267,7 @@ export type post_AddManagerTeamMember = {
       
     }
 /**
- * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. Every storage error on this path is swallowed, so a failed delete still returns 204.
+ * Without `team_id`: deletes the global manager_team_members row outright. With `team_id` (owner required): removes the formal team_members row if the email maps to a Paceday user, deletes the manager assignment for this team only, deletes pending team_invites for this email on this team, and LEAVES the global manager_team_members identity row and its 1:1 history intact. PAC-122 (SF-001): every storage error on this path is the 500 {"error":"internal error"}; with `team_id` the membership, assignment and pending-invite deletes run in one transaction, so a failed delete removes nothing.
  * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): with `team_id`, the formal team membership is removed for EVERY account that carries the address in any letter case and at any standing (a revoking site): two accounts that differ only in letter case are both removed, and an unconfirmed carrier is removed too, never a silent no-op. If one of them is the team owner the answer is the 422 and nothing is removed. If no account carries the address, the assignment and pending invites are still removed and the answer is still 204 (spec §6). The global path (no `team_id`) is unchanged.
  */
 export type delete_RemoveManagerTeamMember = {
