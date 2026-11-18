@@ -8,14 +8,18 @@ import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 import { effectOf } from "@/api/effects";
+import { useCalendarEvents } from "@/hooks/useCalendarEvents";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 
 interface Props {
   event: CalendarEvent;
-  events: CalendarEvent[];
-  workStart: string; // "HH:MM"
-  workEnd: string;   // "HH:MM"
+  /** "HH:MM"; undefined when the settings could not be read (PAC-122 SF-057). */
+  workStart: string | undefined;
+  workEnd: string | undefined;
   onMoved: () => void;
 }
+
+const SUGGESTION_DAYS = 5;
 
 interface Slot {
   start: Date;
@@ -120,13 +124,38 @@ function fmtSlotLabel(d: Date, tf: TimeFormat) {
   return `${day} · ${time}`;
 }
 
-export function RescheduleSuggestions({ event, events, workStart, workEnd, onMoved }: Props) {
+/** Today plus the next business days the suggestions cover. */
+function suggestionDays(): Date[] {
+  const today = startOfDay(new Date());
+  const days: Date[] = [];
+  for (let d = today; days.length < SUGGESTION_DAYS; d = addDays(d, 1)) {
+    if (isBusinessDay(d)) days.push(d);
+  }
+  return days;
+}
+
+export function RescheduleSuggestions({ event, workStart, workEnd, onMoved }: Props) {
   const tf = useTimeFormat();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(true);
   const [movingKey, setMovingKey] = useState<string | null>(null);
 
+  // PAC-122 SF-057: the candidates span today and the next business days, so
+  // the events of exactly that window are read here, not the displayed
+  // week's (which may not cover it).
+  const businessDays = useMemo(suggestionDays, []);
+  const range = useMemo(
+    () => ({
+      start: businessDays[0].toISOString(),
+      end: addDays(businessDays[businessDays.length - 1], 1).toISOString(),
+    }),
+    [businessDays],
+  );
+  const windowEvents = useCalendarEvents(range.start, range.end);
+  const events = windowEvents.data;
+
   const slots = useMemo<Slot[]>(() => {
+    if (!events || !workStart || !workEnd) return [];
     const evStart = new Date(event.start);
     const evEnd = new Date(event.end);
     const durationMs = evEnd.getTime() - evStart.getTime();
@@ -137,17 +166,6 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
     // Personal blocks block focus too. We exclude the event being rescheduled.
     const others = events.filter((e) => e.id !== event.id);
     const allBlocks = others.map((e) => ({ start: new Date(e.start), end: new Date(e.end) }));
-
-    // Today (origin day) + 5 business days forward
-    const today = startOfDay(new Date());
-
-    const businessDays: Date[] = [];
-    let d = today;
-    while (businessDays.length < 5) {
-      if (isBusinessDay(d)) businessDays.push(d);
-      d = addDays(d, 1);
-      if (businessDays.length === 0 && d.getTime() - today.getTime() > 14 * 86400000) break;
-    }
 
     // Current focus baseline = sum of focus across the days that include the *current* event.
     // We compare per-candidate-day to that same day's focus; for the candidate slot day,
@@ -230,7 +248,7 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
 
     candidates.sort((a, b) => b.focusDelta - a.focusDelta || a.start.getTime() - b.start.getTime());
     return candidates.slice(0, 4);
-  }, [event, events, workStart, workEnd]);
+  }, [event, events, workStart, workEnd, businessDays]);
 
   const move = async (slot: Slot) => {
     const key = slot.start.toISOString();
@@ -267,7 +285,30 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
       </button>
       {expanded && (
         <div className="space-y-2 border-t border-border px-3 pb-3 pt-3">
-          {slots.length === 0 ? (
+          {!workStart || !workEnd ? (
+            <p role="status" className="px-2 py-6 text-center text-xs text-muted-foreground">
+              Suggestions need your working hours, which could not be loaded.
+            </p>
+          ) : !events && windowEvents.isError ? (
+            <div role="alert" className="flex items-start justify-between gap-2 px-2 py-4 text-xs">
+              <p className="min-w-0 text-foreground">
+                Could not check your calendar for open slots:{" "}
+                <ApiErrorText error={windowEvents.error} effect={effectOf("api.getEvents")} className="text-muted-foreground" />
+              </p>
+              <button
+                type="button"
+                onClick={() => void windowEvents.refetch()}
+                disabled={windowEvents.isFetching}
+                className="shrink-0 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+              >
+                Try again
+              </button>
+            </div>
+          ) : !events ? (
+            <p className="flex items-center justify-center gap-2 px-2 py-6 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Checking your calendar…
+            </p>
+          ) : slots.length === 0 ? (
             <p className="px-2 py-6 text-center text-xs text-muted-foreground">
               No open slots in the next 5 days — try compressing your schedule.
             </p>
@@ -283,7 +324,7 @@ export function RescheduleSuggestions({ event, events, workStart, workEnd, onMov
                   key={key}
                   className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2 transition hover:border-primary/40 hover:shadow-sm"
                 >
-                  <div className="min-w-[120px] text-xs font-medium text-foreground">
+                  <div data-testid="reschedule-slot" className="min-w-[120px] text-xs font-medium text-foreground">
                     {fmtSlotLabel(s.start, tf)}
                   </div>
                   <div className="flex flex-1 flex-wrap items-center gap-2">

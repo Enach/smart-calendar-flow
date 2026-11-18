@@ -48,8 +48,9 @@ function formatRange(startISO: string, endISO: string, tf: TimeFormat) {
 interface Props {
   event: CalendarEvent;
   events: CalendarEvent[];
-  workStart: string;
-  workEnd: string;
+  /** Undefined when the settings could not be read (PAC-122 SF-057). */
+  workStart: string | undefined;
+  workEnd: string | undefined;
   onEdit: () => void;
   onClose: () => void;
 }
@@ -278,7 +279,6 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
           ) : (
             <RescheduleSuggestions
               event={event}
-              events={events}
               workStart={workStart}
               workEnd={workEnd}
               onMoved={onClose}

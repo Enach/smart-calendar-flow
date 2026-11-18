@@ -19,8 +19,12 @@ export function useOrganizationAI(enabled: boolean) {
   return useQuery({ queryKey: ORG_AI_QUERY_KEY, queryFn: fetchOrganizationAI, enabled, retry: false, staleTime: 30_000 });
 }
 
-/** The outcome of confirming, after the optional "Use my organisation's AI" write. */
-export type OrganizationConsentOutcome = OrganizationAIConsentResult;
+/**
+ * The outcome of confirming, after the optional "Use my organisation's AI"
+ * write. PAC-122 SF-090: `choiceError` is set when the confirmation was
+ * recorded and the choice write then failed; the confirmation is not undone.
+ */
+export type OrganizationConsentOutcome = OrganizationAIConsentResult & { choiceError?: unknown };
 
 /**
  * Confirms the version the user was shown; when `choose` is set, then chooses
@@ -35,8 +39,12 @@ export function useConfirmOrganizationAI() {
     mutationFn: async ({ version, choose }: { version: number; choose: boolean }): Promise<OrganizationConsentOutcome> => {
       const res = await confirmOrganizationAI(version);
       if (res.kind === "confirmed" && choose) {
-        const saved = await chooseOrganizationAIChoice();
-        qc.setQueryData(["settings"], saved);
+        try {
+          const saved = await chooseOrganizationAIChoice();
+          qc.setQueryData(["settings"], saved);
+        } catch (choiceError) {
+          return { ...res, choiceError };
+        }
       }
       return res;
     },

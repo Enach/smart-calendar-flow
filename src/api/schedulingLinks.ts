@@ -13,6 +13,7 @@ import {
   ArchivedSchedulingLinkDetail as ArchivedSchedulingLinkDetailSchema,
   ArchivedSchedulingLinkListResponse as ArchivedSchedulingLinkListResponseSchema,
   SchedulingLinkCoHostChanges as SchedulingLinkCoHostChangesSchema,
+  SchedulingLinkBookingRecord as SchedulingLinkBookingRecordSchema,
   SchedulingLinkCreateConflict as SchedulingLinkCreateConflictSchema,
 } from "./generated/schemas";
 import type { ArchivedSchedulingLinkDetail, ArchivedSchedulingLinkListResponse } from "./types";
@@ -141,6 +142,7 @@ export type PublicSlotsParams = {
  * SchedulingLinkBookingRecord: `start_time`/`end_time`, no title or slug.
  * `start`/`end` are kept for the mock and older payloads.
  */
+/** The public booking answer (bookSlot). */
 type BackendBooking = {
   id: string; link_slug?: string; title?: string; start?: string; end?: string;
   start_time?: string; end_time?: string;
@@ -232,6 +234,35 @@ export const schedulingLinkKeys = {
  * later server). The archive is then unavailable: nothing is shown from it and
  * no erasure is promised. Never a reason to fall back to other data.
  */
+/**
+ * PAC-122 SF-093: one booking of the owner's link, as the server sends it
+ * (SchedulingLinkBookingRecord). Nothing is added: no invented title, slug or
+ * hosts.
+ */
+export interface LinkBooking {
+  id: string;
+  start: string;
+  end: string;
+  duration_minutes: number;
+  booker_name: string;
+  booker_email: string;
+  notes?: string;
+}
+
+/**
+ * PAC-122 SF-093: the bookings answer is not the contract's array of
+ * SchedulingLinkBookingRecord. Shown as the read's error, never as "no
+ * bookings".
+ */
+export class BookingsUnreadableError extends Error {
+  constructor() {
+    super("The bookings list could not be read. Try again later.");
+    this.name = "BookingsUnreadableError";
+  }
+}
+
+const BookingRecordList = SchedulingLinkBookingRecordSchema.array();
+
 export class ArchiveUnavailableError extends Error {
   constructor() {
     super("archive unavailable");
@@ -463,29 +494,19 @@ export const schedulingLinksApi = {
 
   /** GET /scheduling-links/:id/bookings — bookings already made on a link. */
   listBookings: (id: string) =>
-    demoOrReal<BookingConfirmation[]>("schedulingLinksApi.listBookings", [id], async () => {
-        const raw = await requestApi<BackendBooking[] | { bookings?: BackendBooking[] }>(
-          "GET",
-          `/scheduling-links/${id}/bookings`,
-        );
-        const items = Array.isArray(raw) ? raw : raw?.bookings ?? [];
-        return items.map((b) => {
-          const start = b.start_time ?? b.start ?? "";
-          const end = b.end_time ?? b.end ?? "";
-          return {
+    demoOrReal<LinkBooking[]>("schedulingLinksApi.listBookings", [id], async () => {
+        const raw = await requestApi<unknown>("GET", `/scheduling-links/${id}/bookings`);
+        const parsed = BookingRecordList.safeParse(raw);
+        if (!parsed.success) throw new BookingsUnreadableError();
+        return parsed.data.map((b) => ({
           id: b.id,
-          link_slug: b.link_slug ?? "",
-          title: b.title ?? "Booking",
-          start,
-          end,
-          duration_minutes:
-            b.duration_minutes ?? Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000),
-          hosts: b.hosts ?? [],
+          start: b.start_time,
+          end: b.end_time,
+          duration_minutes: Math.round((new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
           booker_name: b.booker_name,
           booker_email: b.booker_email,
-          notes: b.notes,
-          };
-        });
+          ...(b.notes ? { notes: b.notes } : {}),
+        }));
       }),
 
   /**

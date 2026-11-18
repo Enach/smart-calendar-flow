@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { isApiHttpError, isApiUnreachableError } from "./client";
-import { publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
+import { BookingsUnreadableError, publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -443,8 +443,8 @@ describe("link bookings", () => {
       // The server's SchedulingLinkBookingRecord, exactly (contract booking.yaml).
       return jsonResponse([
         {
-          id: "b1",
-          link_id: "l1",
+          id: "7b0e7c1e-4a49-4d7e-9a43-2f4e0a6b5c11",
+          link_id: "8c1f8d2f-5b5a-4e8f-8b54-3f5f1b7c6d22",
           booker_name: "Zoe",
           booker_email: "zoe@co.com",
           start_time: "2026-02-02T09:00:00Z",
@@ -463,12 +463,37 @@ describe("link bookings", () => {
     expect(res[0].booker_email).toBe("zoe@co.com");
   });
 
-  it("accepts an object-wrapped bookings payload", async () => {
+  // PAC-122 SF-093: the answer is parsed with the generated
+  // SchedulingLinkBookingRecord. Before, a non-array body became `[]` ("No
+  // bookings on this link yet.") and missing fields were invented
+  // (`title ?? "Booking"`, `link_slug ?? ""`, `hosts ?? []`).
+  it("SF-093: a body that is not the contract's array is an error, never an empty list", async () => {
     fetchMock.mockImplementation(async () =>
       jsonResponse({ bookings: [{ id: "b2", start: "2026-02-02T09:00:00Z", end: "2026-02-02T10:00:00Z", booker_name: "A", booker_email: "a@co.com" }] }),
     );
-    const res = await schedulingLinksApi.listBookings("l1");
-    expect(res[0].duration_minutes).toBe(60);
+    await expect(schedulingLinksApi.listBookings("l1")).rejects.toBeInstanceOf(BookingsUnreadableError);
+  });
+
+  it("SF-093: a record missing a contract field is an error, and nothing is invented", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse([{ id: "b1", link_id: "l1", booker_name: "Zoe", booker_email: "zoe@co.com", start_time: "2026-02-02T09:00:00Z" }]),
+    );
+    await expect(schedulingLinksApi.listBookings("l1")).rejects.toBeInstanceOf(BookingsUnreadableError);
+  });
+
+  it("SF-093: a booking carries only what the server sent", async () => {
+    fetchMock.mockImplementation(async () =>
+      jsonResponse([
+        {
+          id: "7b0e7c1e-4a49-4d7e-9a43-2f4e0a6b5c11", link_id: "8c1f8d2f-5b5a-4e8f-8b54-3f5f1b7c6d22", booker_name: "Zoe", booker_email: "zoe@co.com",
+          start_time: "2026-02-02T09:00:00Z", end_time: "2026-02-02T09:30:00Z", status: "confirmed", notes: "", created_at: "2026-01-30T12:00:00Z",
+        },
+      ]),
+    );
+    const [b] = await schedulingLinksApi.listBookings("l1");
+    expect(b).not.toHaveProperty("title");
+    expect(b).not.toHaveProperty("link_slug");
+    expect(b).not.toHaveProperty("hosts");
   });
 });
 

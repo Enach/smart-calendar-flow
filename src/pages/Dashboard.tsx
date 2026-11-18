@@ -620,6 +620,8 @@ export default function Dashboard() {
               errorMessage={apiErrorMessage(eventsErrorObj)}
               onRetry={() => refetchEvents()}
               retrying={eventsFetching}
+              todayShown={todayInRange}
+              onGoToday={goToday}
             />
             {settings && (
               <FocusStats
@@ -645,8 +647,9 @@ export default function Dashboard() {
         <EventDrawer
           event={popoverEvent}
           events={events}
-          workStart={settings?.work_start ?? "09:00"}
-          workEnd={settings?.work_end ?? "18:00"}
+          // PAC-122 SF-057: no invented working hours when settings failed.
+          workStart={settings?.work_start}
+          workEnd={settings?.work_end}
           onClose={() => setPopoverEvent(null)}
         />
       )}

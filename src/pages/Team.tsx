@@ -52,6 +52,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "@/hooks/useToast";
+import { isSavedButNotRead } from "@/api/savedButNotRead";
 import {
   managerApi,
   managerKeys,
@@ -520,7 +521,15 @@ export function TeamTab({
   const updateMut = useMutation({
     mutationFn: (input: { email: string; patch: Partial<TeamMember> }) =>
       managerApi.remote.updateMember(input.email, input.patch, activeTeam.id),
-    onError: (e) => toast.error(apiErrorMessage(e, effectOf("manager.updateMember"))),
+    onError: (e) => {
+      // PAC-122 SF-024: the change is saved; only the re-read failed.
+      if (isSavedButNotRead(e)) {
+        toast.info("Saved. The team list could not be refreshed yet.");
+        qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+        return;
+      }
+      toast.error(apiErrorMessage(e, effectOf("manager.updateMember")));
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
       qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
@@ -632,6 +641,17 @@ export function TeamTab({
             </div>
           </div>
 
+          {/* PAC-122 SF-085: a failed analytics read is shown once, with a retry. */}
+          {analyticsQ.isError && (
+            <div className="px-5 pt-4" data-testid="manager-analytics-error">
+              <ErrorBanner
+                message="Could not load this week's focus figures."
+                failure={analyticsQ.error}
+                onRetry={() => void analyticsQ.refetch()}
+                busy={analyticsQ.isFetching}
+              />
+            </div>
+          )}
           <ul className="divide-y divide-border">
             {filtered.map((m) => (
               <MemberRow
@@ -639,6 +659,7 @@ export function TeamTab({
                 member={m}
                 analytics={analyticsByEmail.get(m.email.toLowerCase()) ?? null}
                 analyticsLoading={analyticsQ.isLoading}
+                analyticsFailed={analyticsQ.isError}
                 expanded={expanded === m.email}
                 onToggle={() => setExpanded(expanded === m.email ? null : m.email)}
                 onCadenceChange={(cadence, custom) =>
@@ -919,6 +940,7 @@ export function MemberRow({
   member,
   analytics,
   analyticsLoading,
+  analyticsFailed,
   expanded,
   onToggle,
   onCadenceChange,
@@ -928,6 +950,8 @@ export function MemberRow({
   member: TeamMember;
   analytics: MemberAnalytics | null;
   analyticsLoading: boolean;
+  /** PAC-122 SF-085: the analytics read failed (its error is shown above the list). */
+  analyticsFailed: boolean;
   expanded: boolean;
   onToggle: () => void;
   onCadenceChange: (c: Cadence, custom?: number) => void;
@@ -948,8 +972,10 @@ export function MemberRow({
   const lastWeek = analytics?.weeks[analytics.weeks.length - 1];
   const prevWeek = analytics?.weeks[analytics.weeks.length - 2];
   const focusMin = lastWeek?.focus_minutes ?? 0;
+  // PAC-122 SF-060: each week's own flag decides whether it was measured.
+  const weekMeasured = lastWeek?.data_available === true;
   const trendPct =
-    prevWeek && prevWeek.focus_minutes > 0
+    prevWeek?.data_available && prevWeek.focus_minutes > 0
       ? Math.round(((focusMin - prevWeek.focus_minutes) / prevWeek.focus_minutes) * 100)
       : 0;
 
@@ -1060,9 +1086,13 @@ export function MemberRow({
               <p className="max-w-[16rem] text-[11px] text-muted-foreground" data-testid="manager-analytics-added-hint">
                 {MANAGER_ANALYTICS_ADDED_HINT}
               </p>
+            ) : analyticsFailed && !analytics ? (
+              <div className="text-xs text-muted-foreground">Figures not loaded</div>
             ) : analyticsLoading && !analytics ? (
               <div className="h-7 w-20 animate-pulse rounded bg-muted" />
-            ) : member.data_available && analytics ? (
+            ) : member.data_available && analytics && lastWeek && !weekMeasured ? (
+              <div className="text-xs text-muted-foreground">Not measured this week</div>
+            ) : member.data_available && analytics && weekMeasured ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
                   <span className="text-2xl font-semibold text-primary">{fmtMin(focusMin)}</span>
@@ -1211,7 +1241,18 @@ export function AddPersonDialog({
         custom_cadence_days: cadence === "custom" ? customDays : undefined,
       }, teamId),
     // Form values are intentionally preserved on error.
-    onError: (e) => setError(apiErrorMessage(e, effectOf("manager.addMember"))),
+    onError: (e) => {
+      // PAC-122 SF-024: the person is added; only the re-read failed. Never a
+      // retry that would add them again.
+      if (isSavedButNotRead(e)) {
+        onAdded();
+        toast.success(`${name || email} added. The team list could not be refreshed yet.`);
+        reset();
+        onOpenChange(false);
+        return;
+      }
+      setError(apiErrorMessage(e, effectOf("manager.addMember")));
+    },
     onSuccess: ({ alreadyAuto }) => {
       onAdded();
       if (alreadyAuto) {
@@ -1342,6 +1383,7 @@ export function CreateTeamDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: (t: CreatedTeam) => void;
 }) {
+  const qcCreate = useQueryClient();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -1400,8 +1442,24 @@ export function CreateTeamDialog({
       }
       return out;
     },
-    // Keep the typed name and invitees on error: the team was not created.
-    onError: (e) => setError(apiErrorMessage(e, effectOf("teams.createTeam"))),
+    onError: (e) => {
+      // PAC-122 SF-024: the team was created and only its re-read failed. The
+      // dialog closes, so nothing can create it a second time; the people
+      // typed were not added (the team's id was not read back).
+      if (isSavedButNotRead(e)) {
+        const notAdded = invitees.length + (inviteEmail.trim() ? 1 : 0);
+        toast.info(
+          `Team "${name.trim()}" was created, but it could not be loaded yet.` +
+            (notAdded > 0 ? ` Add the ${notAdded === 1 ? "person" : `${notAdded} people`} from the team once it appears.` : ""),
+        );
+        void qcCreate.invalidateQueries({ queryKey: ["formal-teams"] });
+        reset();
+        onOpenChange(false);
+        return;
+      }
+      // Keep the typed name and invitees on error: the team was not created.
+      setError(apiErrorMessage(e, effectOf("teams.createTeam")));
+    },
     onSettled: () => {
       inFlight.current = false;
     },

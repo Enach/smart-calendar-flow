@@ -7,8 +7,9 @@ import type { CalendarEvent } from "@/api/types";
 interface EventDrawerProps {
   event: CalendarEvent;
   events: CalendarEvent[];
-  workStart: string;
-  workEnd: string;
+  /** Undefined when the settings could not be read (PAC-122 SF-057). */
+  workStart: string | undefined;
+  workEnd: string | undefined;
   onClose: () => void;
 }
 

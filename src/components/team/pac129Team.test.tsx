@@ -376,6 +376,7 @@ describe("AC-32: Manager mode", () => {
           member={member}
           analytics={null}
           analyticsLoading={false}
+          analyticsFailed={false}
           expanded={false}
           onToggle={() => {}}
           onCadenceChange={() => {}}

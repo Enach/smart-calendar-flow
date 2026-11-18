@@ -18,13 +18,29 @@ interface TodayAgendaProps {
   errorMessage?: string;
   onRetry?: () => void;
   retrying?: boolean;
+  /**
+   * PAC-122 SF-058: whether today is in the range whose `events` were loaded.
+   * When it is not, nothing is said about today's meetings.
+   */
+  todayShown?: boolean;
+  onGoToday?: () => void;
 }
 
 function fmt(iso: string, tf: TimeFormat) {
   return formatTime(iso, tf);
 }
 
-export function TodayAgenda({ events, loading, error, notConnected, errorMessage, onRetry, retrying }: TodayAgendaProps) {
+export function TodayAgenda({
+  events,
+  loading,
+  error,
+  notConnected,
+  errorMessage,
+  onRetry,
+  retrying,
+  todayShown = true,
+  onGoToday,
+}: TodayAgendaProps) {
   const tf = useTimeFormat();
   const { user } = useAuth();
   const today = new Date();
@@ -61,6 +77,19 @@ export function TodayAgenda({ events, loading, error, notConnected, errorMessage
         <div className="rounded-lg border border-dashed border-border bg-background/50 px-4 py-6 text-center">
           <p className="text-sm font-medium text-foreground">No calendar connected</p>
           <p className="mt-0.5 text-xs text-muted-foreground">Connect one to see today's meetings.</p>
+        </div>
+      ) : !todayShown ? (
+        <div className="rounded-lg border border-dashed border-border bg-background/50 px-4 py-6 text-center">
+          <p className="text-sm font-medium text-foreground">Today is not in the range on screen</p>
+          {onGoToday && (
+            <button
+              type="button"
+              onClick={onGoToday}
+              className="mt-2 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-foreground transition hover:bg-muted"
+            >
+              Go to today
+            </button>
+          )}
         </div>
       ) : error && events.length === 0 ? (
         <InlineError

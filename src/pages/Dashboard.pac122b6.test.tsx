@@ -2,6 +2,9 @@
  * PAC-122 batch 6, SF-050 (Dashboard half): a typed focus request ("block
  * focus time") always said "Focus time scheduled", whatever the run answered.
  * The run's `createdBlocks` and `errors[]` now decide the message.
+ *
+ * SF-058 (batch 6b): the Today agenda filtered the displayed range's events
+ * for today. The Dashboard now tells it whether today is on screen.
  */
 import { act, render, waitFor } from "@testing-library/react";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,9 +13,24 @@ import { MemoryRouter } from "react-router-dom";
 
 const bar = vi.hoisted(() => ({ onSubmit: null as null | ((text: string) => Promise<void> | void) }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+const agenda = vi.hoisted(() => ({ todayShown: undefined as boolean | undefined }));
+const cal = vi.hoisted(() => ({ range: null as null | { start: Date; end: Date }, fired: false }));
 
 vi.mock("@/hooks/useToast", () => ({ toast }));
-vi.mock("@fullcalendar/react", () => ({ default: () => null }));
+vi.mock("@fullcalendar/react", async () => {
+  const { useEffect } = await import("react");
+  function FullCalendarStub(props: { datesSet?: (arg: unknown) => void }) {
+    // Fires once, as a navigation to `cal.range` would.
+    useEffect(() => {
+      if (!cal.range || cal.fired) return;
+      cal.fired = true;
+      const { start, end } = cal.range;
+      props.datesSet?.({ start, end, view: { currentStart: start, title: "Elsewhere", type: "timeGridWeek" } });
+    }, [props]);
+    return null;
+  }
+  return { default: FullCalendarStub };
+});
 vi.mock("@/components/Navbar", () => ({ Navbar: () => null }));
 vi.mock("@/components/NLPBar", () => ({
   NLPBar: (props: { onSubmit: (text: string) => Promise<void> | void }) => {
@@ -23,7 +41,12 @@ vi.mock("@/components/NLPBar", () => ({
 vi.mock("@/components/NLPConfirmModal", () => ({ NLPConfirmModal: () => null }));
 vi.mock("@/components/ScheduleSuggestModal", () => ({ ScheduleSuggestModal: () => null }));
 vi.mock("@/components/ConnectionStatus", () => ({ ConnectionStatus: () => null }));
-vi.mock("@/components/TodayAgenda", () => ({ TodayAgenda: () => null }));
+vi.mock("@/components/TodayAgenda", () => ({
+  TodayAgenda: (props: { todayShown?: boolean }) => {
+    agenda.todayShown = props.todayShown;
+    return null;
+  },
+}));
 vi.mock("@/components/FocusStats", () => ({ FocusStats: () => null }));
 vi.mock("@/components/QuickActions", () => ({ QuickActions: () => null }));
 vi.mock("@/components/EventDrawer", () => ({ EventDrawer: () => null }));
@@ -61,6 +84,7 @@ async function askForFocus(run: Record<string, unknown>) {
 
 describe("PAC-122 SF-050: the Dashboard reports what a typed focus request did", () => {
   beforeEach(() => {
+    cal.range = null;
     bar.onSubmit = null;
     toast.success.mockReset();
     toast.error.mockReset();
@@ -97,5 +121,43 @@ describe("PAC-122 SF-050: the Dashboard reports what a typed focus request did",
       errors: [],
     });
     expect(toast.success).toHaveBeenCalledWith("Created 1 focus block");
+  });
+});
+
+describe("PAC-122 SF-058: the Dashboard tells the Today agenda whether today is on screen", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (u) => {
+      const path = new URL(String(u), window.location.origin).pathname;
+      if (path === "/api/auth/status") return json({ connected: true, provider: "google" });
+      return json([]);
+    });
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  function renderDashboard() {
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <Dashboard />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("today on screen: todayShown is true", async () => {
+    cal.range = null;
+    renderDashboard();
+    await waitFor(() => expect(agenda.todayShown).toBe(true));
+  });
+
+  it("another week on screen: todayShown is false", async () => {
+    const start = new Date();
+    start.setDate(start.getDate() + 21);
+    cal.range = { start, end: new Date(start.getTime() + 7 * 86_400_000) };
+    cal.fired = false;
+    renderDashboard();
+    await waitFor(() => expect(agenda.todayShown).toBe(false));
   });
 });

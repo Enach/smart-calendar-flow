@@ -183,3 +183,36 @@ describe("OrgAIConsentDialog via the not-configured notice", () => {
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 });
+
+// PAC-122 batch 6b, SF-090: the confirmation was recorded, then the choice
+// write failed, and the mutation rejected as a whole: the dialog said the
+// confirmation failed although it was recorded. It now says what happened.
+describe("OrgAIConsentDialog when the choice write fails after the confirmation (PAC-122 SF-090)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    calls.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("says the confirmation was recorded and the choice was not saved", async () => {
+    serve(() => json(status));
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === `${API}/settings` && init?.method === "PATCH") {
+        calls.push({ method: "PATCH", url: String(input), body: JSON.parse(String(init.body)) });
+        return json({ error: "internal error" }, 500);
+      }
+      return base(input, init);
+    });
+    const onResolved = renderNotice(row7, vi.fn(), "unsupported");
+    fireEvent.click(screen.getByTestId("ai-use-org"));
+    await screen.findByTestId("org-ai-consent-text");
+    fireEvent.click(screen.getByRole("button", { name: /confirm and turn ai on/i }));
+    const problem = await screen.findByTestId("org-ai-consent-choice-failed");
+    expect(problem).toHaveTextContent(/your confirmation was recorded/i);
+    expect(problem).toHaveTextContent(/not saved/i);
+    expect(problem).not.toHaveTextContent(/confirmation (failed|was not)/i);
+    expect(onResolved).not.toHaveBeenCalled();
+  });
+});

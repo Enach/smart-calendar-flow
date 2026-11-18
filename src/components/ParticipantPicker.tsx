@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, X, UserPlus, Check, Clock as ClockIcon, AlertCircle } from "lucide-react";
 import { api } from "@/api/client";
+import { effectOf } from "@/api/effects";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 import type { Attendee, RsvpStatus } from "@/api/types";
 
 const inputCls =
@@ -33,6 +35,8 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
   const [suggestions, setSuggestions] = useState<Attendee[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // PAC-122 SF-087: a failed suggestions read is said, never left unhandled.
+  const [suggestError, setSuggestError] = useState<unknown>(null);
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -43,7 +47,11 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
       try {
         const rs = await api.suggestAttendees(query);
         const existing = new Set(participants.map((p) => p.email.toLowerCase()));
+        setSuggestError(null);
         setSuggestions(rs.filter((s) => !existing.has(s.email.toLowerCase())));
+      } catch (e) {
+        setSuggestions([]);
+        setSuggestError(e);
       } finally {
         setLoading(false);
       }
@@ -129,8 +137,14 @@ export function ParticipantPicker({ participants, onChange }: ParticipantPickerP
           <Loader2 className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
         )}
 
-        {open && (suggestions.length > 0 || query) && (
+        {open && (suggestions.length > 0 || query || suggestError != null) && (
           <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-border bg-card shadow-lg">
+            {suggestError != null && (
+              <li role="alert" data-testid="attendee-suggestions-error" className="px-3 py-2 text-[11px] text-destructive">
+                Could not load suggestions:{" "}
+                <ApiErrorText error={suggestError} effect={effectOf("api.suggestAttendees")} />
+              </li>
+            )}
             {suggestions.map((s) => (
               <li key={s.email}>
                 <button

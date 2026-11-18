@@ -1,4 +1,4 @@
-import { Check, Clock, HelpCircle, Loader2, UserCheck } from "lucide-react";
+import { AlertCircle, Check, Clock, HelpCircle, Loader2, UserCheck } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 /**
  * "On Paceday" and "Invite pending" come only from the link's own host record.
@@ -11,7 +11,9 @@ export type ChipState =
   | { kind: "paceday-accepted" }
   | { kind: "paceday-pending" }
   | { kind: "synced" }
-  | { kind: "unknown" };
+  | { kind: "unknown" }
+  /** PAC-122 SF-086: the free/busy read failed; `message` is its error. */
+  | { kind: "error"; message: string };
 
 interface CoverageBadgeProps {
   state: ChipState;
@@ -27,6 +29,19 @@ export function CoverageBadge({ state }: CoverageBadgeProps) {
       <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
         <Loader2 className="h-2.5 w-2.5 animate-spin" />
         Checking…
+      </span>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <span
+        data-testid="coverage-badge-error"
+        title={state.message}
+        className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"
+      >
+        <AlertCircle className="h-2.5 w-2.5" aria-hidden="true" />
+        Availability not checked
       </span>
     );
   }

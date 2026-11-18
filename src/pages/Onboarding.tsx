@@ -83,8 +83,20 @@ export default function Onboarding() {
       // This starts a connect (PAC-71: a signed-in POST,
       // never the sign-in start) whose provider step returns to
       // /auth/callback → which lands on /app/onboarding again.
-      const status = await api.authStatus().catch(() => ({ connected: false }));
-      if (status.connected || provider === "webcal") {
+      if (provider === "webcal") {
+        setStep("profile");
+        return;
+      }
+      // PAC-122 SF-091: a failed status read is said; it is never read as
+      // "not connected", which would save the choice and start a connect.
+      let status: { connected: boolean };
+      try {
+        status = await api.authStatus();
+      } catch (e) {
+        toast.error(`Could not check your calendar connection: ${apiErrorMessage(e, effectOf("api.authStatus"))}`);
+        return;
+      }
+      if (status.connected) {
         setStep("profile");
         return;
       }
