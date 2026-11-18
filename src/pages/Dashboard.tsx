@@ -101,7 +101,7 @@ export default function Dashboard() {
 
   const weekISO = useMemo(() => dateOnly(startOfWeek(currentDate)), [currentDate]);
 
-  const { data: settings } = useSettings();
+  const { data: settings, isLoading: settingsLoading } = useSettings();
   const {
     data: eventsRaw,
     isLoading: eventsLoading,
@@ -650,6 +650,7 @@ export default function Dashboard() {
           // PAC-122 SF-057: no invented working hours when settings failed.
           workStart={settings?.work_start}
           workEnd={settings?.work_end}
+          hoursLoading={settingsLoading}
           onClose={() => setPopoverEvent(null)}
         />
       )}

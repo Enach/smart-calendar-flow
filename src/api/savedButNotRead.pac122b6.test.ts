@@ -38,6 +38,8 @@ describe("PAC-122 SF-024: a failed re-read after a successful write", () => {
     const err = await teamsApi.remote.createTeam("Platform").catch((e) => e);
     expect(err).toBeInstanceOf(SavedButNotReadError);
     expect((err as SavedButNotReadError).cause).toBeDefined();
+    // The created team's id travels with it, so its people can still be added.
+    expect((err as SavedButNotReadError).savedId).toBe(TEAM);
     expect(calls("POST", "/api/teams/")).toHaveLength(1);
   });
 
@@ -46,6 +48,18 @@ describe("PAC-122 SF-024: a failed re-read after a successful write", () => {
       const path = new URL(String(i), window.location.origin).pathname;
       if (path === "/api/manager/team/members" && init?.method === "POST") return json({}, 201);
       return json({ error: "internal error" }, 500);
+    });
+    const err = await managerApi.remote.addMember({ email: "b@co.com", cadence: "weekly" }, TEAM).catch((e) => e);
+    expect(err).toBeInstanceOf(SavedButNotReadError);
+    expect(calls("POST", "/api/manager/team/members")).toHaveLength(1);
+  });
+
+  it("manager addMember: a roster that answers without the new member is SavedButNotRead, not a failed add", async () => {
+    fetchMock.mockImplementation(async (i, init) => {
+      const path = new URL(String(i), window.location.origin).pathname;
+      if (path === "/api/manager/team/members" && init?.method === "POST") return json({}, 201);
+      if (path === "/api/manager/team") return json({ team_id: TEAM, members: [] });
+      return json({ error: "not here" }, 404);
     });
     const err = await managerApi.remote.addMember({ email: "b@co.com", cadence: "weekly" }, TEAM).catch((e) => e);
     expect(err).toBeInstanceOf(SavedButNotReadError);

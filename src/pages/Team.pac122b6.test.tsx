@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
-import { managerApi } from "@/api/manager";
+import { managerApi, managerKeys } from "@/api/manager";
 import { ApiHttpError } from "@/api/client";
 import type { MemberAnalytics, TeamMember } from "@/api/manager";
 import type { FormalTeam } from "@/api/teams";
@@ -210,6 +210,75 @@ describe("PAC-122 SF-024: a write that succeeded, whose re-read failed", () => {
     expect(toast.info).toHaveBeenCalledWith(expect.stringMatching(/Team "Platform" was created/));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(create).toHaveBeenCalledOnce();
+  });
+
+  it("Create team still adds the people typed, using the created team's id, and says so truthfully", async () => {
+    toast.info.mockReset();
+    vi.spyOn(teamsApi.remote, "createTeam").mockRejectedValue(new SavedButNotReadError(new Error("x"), TEAM_ID));
+    const addPerson = vi.spyOn(teamsApi.remote, "addPerson").mockResolvedValue({
+      email: "bo@co.example", display_name: "bo@co.example", kind: "added", role: null, invitation: null,
+    });
+    const onOpenChange = vi.fn();
+    render(
+      <QueryClientProvider client={client()}>
+        <CreateTeamDialog open onOpenChange={onOpenChange} onCreated={() => {}} />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Add by email" }), { target: { value: "bo@co.example" } });
+    fireEvent.click(screen.getByRole("button", { name: /^create and add$/i }));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(addPerson).toHaveBeenCalledWith(TEAM_ID, "bo@co.example");
+    expect(toast.info).toHaveBeenCalledWith('Team "Platform" was created, but it could not be loaded yet. 1 added.');
+  });
+
+  it("Create team shows which people failed when the read-back failed too", async () => {
+    vi.spyOn(teamsApi.remote, "createTeam").mockRejectedValue(new SavedButNotReadError(new Error("x"), TEAM_ID));
+    vi.spyOn(teamsApi.remote, "addPerson").mockRejectedValue(new ApiHttpError(422, { error: "not a valid address" }, "not a valid address"));
+    const onOpenChange = vi.fn();
+    render(
+      <QueryClientProvider client={client()}>
+        <CreateTeamDialog open onOpenChange={onOpenChange} onCreated={() => {}} />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Add by email" }), { target: { value: "bo@co.example" } });
+    fireEvent.click(screen.getByRole("button", { name: /^create and add$/i }));
+    const view = await screen.findByTestId("create-team-add-result");
+    expect(view).toHaveTextContent("Team “Platform” was created");
+    expect(view).toHaveTextContent(/could not be loaded yet/);
+    expect(view).toHaveTextContent("not a valid address");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("a cadence change whose re-read failed says saved and refreshes the roster and the gaps", async () => {
+    toast.info.mockReset();
+    vi.spyOn(managerApi.remote, "updateMember").mockRejectedValue(new SavedButNotReadError(new Error("x")));
+    vi.spyOn(managerApi.remote, "listTeam").mockResolvedValue({
+      team_id: TEAM_ID,
+      members: [
+        {
+          email: "ana@co.example", display_name: "Ana", source: "manual", cadence: "weekly", cadence_custom_days: null,
+          last_one_on_one_at: null, is_paceday_user: true, this_week: WEEK, last_week: WEEK, focus_trend_pct: 0,
+        },
+      ],
+    });
+    vi.spyOn(managerApi.remote, "gaps").mockResolvedValue([]);
+    vi.spyOn(managerApi.remote, "analytics").mockResolvedValue([]);
+    const qc = client();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <TeamTab activeTeam={TEAM} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(await screen.findByLabelText("1:1 cadence:"), { target: { value: "monthly" } });
+    await waitFor(() => expect(toast.info).toHaveBeenCalledWith("Saved. The team list could not be refreshed yet."));
+    const keys = invalidate.mock.calls.map(([f]) => JSON.stringify(f?.queryKey));
+    expect(keys).toContain(JSON.stringify(managerKeys.team(TEAM_ID)));
+    expect(keys).toContain(JSON.stringify(managerKeys.gaps(TEAM_ID)));
   });
 
   it("Add person says the person was added and closes", async () => {

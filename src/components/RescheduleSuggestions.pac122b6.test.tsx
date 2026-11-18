@@ -87,3 +87,21 @@ describe("PAC-122 SF-057: reschedule suggestions", () => {
     expect(screen.queryByTestId("reschedule-slot")).not.toBeInTheDocument();
   });
 });
+
+// PAC-122 batch 6b review: while the settings read is still pending, the
+// panel said the working hours "could not be loaded".
+describe("PAC-122 SF-057: working hours still loading", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says the hours are loading, never that they could not be loaded", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json([])));
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <RescheduleSuggestions event={EVENT} workStart={undefined} workEnd={undefined} hoursLoading onMoved={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/loading your working hours/i)).toBeInTheDocument();
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reschedule-slot")).not.toBeInTheDocument();
+  });
+});

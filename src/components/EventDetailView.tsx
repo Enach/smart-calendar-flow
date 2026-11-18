@@ -51,11 +51,13 @@ interface Props {
   /** Undefined when the settings could not be read (PAC-122 SF-057). */
   workStart: string | undefined;
   workEnd: string | undefined;
+  /** The settings read is still pending (PAC-122 SF-057). */
+  hoursLoading?: boolean;
   onEdit: () => void;
   onClose: () => void;
 }
 
-export function EventDetailView({ event, events, workStart, workEnd, onEdit, onClose }: Props) {
+export function EventDetailView({ event, events, workStart, workEnd, hoursLoading, onEdit, onClose }: Props) {
   const tf = useTimeFormat();
   const [showFullDescription, setShowFullDescription] = useState(false);
   const { user } = useAuth();
@@ -281,6 +283,7 @@ export function EventDetailView({ event, events, workStart, workEnd, onEdit, onC
               event={event}
               workStart={workStart}
               workEnd={workEnd}
+              hoursLoading={hoursLoading}
               onMoved={onClose}
             />
           )

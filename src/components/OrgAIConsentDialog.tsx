@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { apiErrorMessage } from "@/api/client";
+import { choiceProblemText } from "@/lib/orgAIChoiceProblem";
 import type { OrganizationAIConfiguration } from "@/api/types";
 import { useConfirmOrganizationAI, useOrganizationAI } from "@/hooks/useOrganizationAI";
 import { useSettings } from "@/hooks/useSettings";
@@ -65,12 +66,10 @@ export function OrgAIConsentDialog({ open, onOpenChange, choose, onConfirmed }: 
     try {
       const res = await confirm.mutateAsync({ version: shown.configurationVersion, choose });
       if (res.kind === "confirmed" && res.choiceError !== undefined) {
-        // PAC-122 SF-090: the confirmation is recorded; only the choice failed.
-        setChoiceProblem(
-          "Your confirmation was recorded, but \"Use my organisation's AI\" was not saved: " +
-            apiErrorMessage(res.choiceError, effectOf("standalone.chooseOrganizationAIChoice")) +
-            " Try again, or choose it in Settings.",
-        );
+        // PAC-122 SF-090: the confirmation is recorded; only the choice write
+        // failed. "Not saved" only for a definite answer: a lost or budget
+        // answer, or a request cancelled by leaving, may have been applied.
+        setChoiceProblem(choiceProblemText(res.choiceError));
         return;
       }
       if (res.kind === "confirmed") {

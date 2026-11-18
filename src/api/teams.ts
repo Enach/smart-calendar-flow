@@ -380,7 +380,7 @@ const teamsRemote = {
         if (!raw?.id) throw new TeamValidationError("The server did not return the created team.");
         // PAC-122 SF-024: the team exists now; a failed re-read is not a failed create.
         const id = raw.id;
-        const team = await readBack(() => remoteTeam(id));
+        const team = await readBack(() => remoteTeam(id), id);
         const state = load();
         state.teams = state.teams.filter((item) => item.id !== team.id).concat(team);
         state.active_team_id = team.id;

@@ -37,7 +37,11 @@ describe("PAC-122 SF-086: co-host availability chips on a failed free/busy read"
     addCoHost("mate@co.com");
     const badge = await screen.findByTestId("coverage-badge-error");
     expect(badge).toHaveTextContent("Availability not checked");
-    expect(badge).toHaveAttribute("title", "internal error");
+    // The detail is exposed like the other chips' explanations: described by
+    // text assistive technology reads, and shown in a tooltip.
+    const describedBy = badge.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent("Paceday could not read free/busy for this person: internal error");
     expect(screen.queryByText("Checking…")).not.toBeInTheDocument();
   });
 

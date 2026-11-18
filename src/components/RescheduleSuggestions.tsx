@@ -16,6 +16,8 @@ interface Props {
   /** "HH:MM"; undefined when the settings could not be read (PAC-122 SF-057). */
   workStart: string | undefined;
   workEnd: string | undefined;
+  /** The settings read is still pending: the hours are not known yet, not missing. */
+  hoursLoading?: boolean;
   onMoved: () => void;
 }
 
@@ -134,7 +136,7 @@ function suggestionDays(): Date[] {
   return days;
 }
 
-export function RescheduleSuggestions({ event, workStart, workEnd, onMoved }: Props) {
+export function RescheduleSuggestions({ event, workStart, workEnd, hoursLoading = false, onMoved }: Props) {
   const tf = useTimeFormat();
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(true);
@@ -143,7 +145,9 @@ export function RescheduleSuggestions({ event, workStart, workEnd, onMoved }: Pr
   // PAC-122 SF-057: the candidates span today and the next business days, so
   // the events of exactly that window are read here, not the displayed
   // week's (which may not cover it).
-  const businessDays = useMemo(suggestionDays, []);
+  // Recomputed when the date changes (an open panel past midnight).
+  const dayKey = new Date().toDateString();
+  const businessDays = useMemo(suggestionDays, [dayKey]);
   const range = useMemo(
     () => ({
       start: businessDays[0].toISOString(),
@@ -285,7 +289,11 @@ export function RescheduleSuggestions({ event, workStart, workEnd, onMoved }: Pr
       </button>
       {expanded && (
         <div className="space-y-2 border-t border-border px-3 pb-3 pt-3">
-          {!workStart || !workEnd ? (
+          {(!workStart || !workEnd) && hoursLoading ? (
+            <p role="status" className="flex items-center justify-center gap-2 px-2 py-6 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" /> Loading your working hours…
+            </p>
+          ) : !workStart || !workEnd ? (
             <p role="status" className="px-2 py-6 text-center text-xs text-muted-foreground">
               Suggestions need your working hours, which could not be loaded.
             </p>

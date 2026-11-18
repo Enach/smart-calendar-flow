@@ -9,6 +9,8 @@ vi.hoisted(() => {
 
 
 import { AINotConfiguredNotice } from "./AINotConfiguredNotice";
+import { choiceProblemText } from "@/lib/orgAIChoiceProblem";
+import { ApiHttpError, ApiRequestCancelledError, ApiUnreachableError } from "@/api/client";
 
 // PAC-73 Part 2 (owner O-13; spec §3.4, §3.6; P2-AC-22, P2-AC-26, P2-AC-38):
 // the one-time notice before the organisation's AI is used, from the
@@ -214,5 +216,45 @@ describe("OrgAIConsentDialog when the choice write fails after the confirmation 
     expect(problem).toHaveTextContent(/not saved/i);
     expect(problem).not.toHaveTextContent(/confirmation (failed|was not)/i);
     expect(onResolved).not.toHaveBeenCalled();
+  });
+});
+
+// PAC-122 batch 6b review: when the choice write's outcome is unknown (lost,
+// budget) or the request was cancelled, "was not saved" may be false, and a
+// cancelled request used to leave an empty message.
+describe("OrgAIConsentDialog when the choice write's outcome is unknown (PAC-122 SF-090)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    calls.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("a lost answer says Paceday could not confirm whether it was saved, never 'not saved'", async () => {
+    serve(() => json(status));
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === `${API}/settings` && init?.method === "PATCH") throw new TypeError("Failed to fetch");
+      return base(input, init);
+    });
+    renderNotice(row7, vi.fn(), "unsupported");
+    fireEvent.click(screen.getByTestId("ai-use-org"));
+    await screen.findByTestId("org-ai-consent-text");
+    fireEvent.click(screen.getByRole("button", { name: /confirm and turn ai on/i }));
+    const problem = await screen.findByTestId("org-ai-consent-choice-failed");
+    expect(problem).toHaveTextContent(/your confirmation was recorded/i);
+    expect(problem).toHaveTextContent(/could not confirm whether .* was saved; check settings before trying again/i);
+    expect(problem).not.toHaveTextContent(/not saved/i);
+  });
+
+  it("the text for each failure kind", () => {
+    const unknown = /could not confirm whether .* was saved; check Settings before trying again/;
+    expect(choiceProblemText(new ApiUnreachableError("network"))).toMatch(unknown);
+    expect(choiceProblemText(new ApiUnreachableError("timeout"))).toMatch(unknown);
+    expect(choiceProblemText(new ApiRequestCancelledError())).toMatch(unknown);
+    const definite = choiceProblemText(new ApiHttpError(500, { error: "internal error" }, "internal error"));
+    expect(definite).toBe(
+      "Your confirmation was recorded, but \"Use my organisation's AI\" was not saved (internal error). Try again, or choose it in Settings.",
+    );
   });
 });

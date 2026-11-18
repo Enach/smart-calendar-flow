@@ -528,6 +528,7 @@ export function TeamTab({
       if (isSavedButNotRead(e)) {
         toast.info("Saved. The team list could not be refreshed yet.");
         qc.invalidateQueries({ queryKey: managerKeys.team(activeTeam.id) });
+        qc.invalidateQueries({ queryKey: managerKeys.gaps(activeTeam.id) });
         return;
       }
       toast.error(apiErrorMessage(e, effectOf("manager.updateMember")));
@@ -1361,7 +1362,9 @@ export function AddPersonDialog({
 type CreatedTeam = ReturnType<typeof teamsApi.list>[number];
 
 interface CreateTeamResult {
-  team: CreatedTeam;
+  /** Null when the team was created but could not be read back (PAC-122 SF-024). */
+  team: CreatedTeam | null;
+  teamName: string;
   /** The server added the person (201 or 200). */
   added: string[];
   /** The server refused the add (a 4xx), or it was never sent. */
@@ -1426,13 +1429,23 @@ export function CreateTeamDialog({
 
   const createMut = useMutation({
     mutationFn: async (emails: string[]): Promise<CreateTeamResult> => {
-      const team = await teamsApi.remote.createTeam(name);
-      const out: CreateTeamResult = { team, added: [], rejected: [], unknown: [] };
+      // PAC-122 SF-024: a team created but not read back still carries its
+      // id, so the people typed are still added to it.
+      let team: CreatedTeam | null = null;
+      let teamId: string;
+      try {
+        team = await teamsApi.remote.createTeam(name);
+        teamId = team.id;
+      } catch (e) {
+        if (!isSavedButNotRead(e) || !e.savedId) throw e;
+        teamId = e.savedId;
+      }
+      const out: CreateTeamResult = { team, teamName: team?.name ?? name.trim(), added: [], rejected: [], unknown: [] };
       // PAC-129 (AC-33): each person is ADDED (no invitation, no email), one
       // at a time, through the same path as the team's "Add to team".
       for (const email of emails) {
         try {
-          await teamsApi.remote.addPerson(team.id, email);
+          await teamsApi.remote.addPerson(teamId, email);
           out.added.push(email);
         } catch (e) {
           if (addDefinitelyRefused(e)) {
@@ -1466,17 +1479,18 @@ export function CreateTeamDialog({
       inFlight.current = false;
     },
     onSuccess: (r) => {
+      if (!r.team) void qcCreate.invalidateQueries({ queryKey: ["formal-teams"] });
       if (r.rejected.length > 0 || r.unknown.length > 0) {
         setError(null);
         setResult(r);
         return;
       }
-      toast.success(
-        r.added.length > 0 ? `Team "${r.team.name}" created. ${r.added.length} added.` : `Team "${r.team.name}" created.`,
-      );
+      const added = r.added.length > 0 ? ` ${r.added.length} added.` : "";
+      if (r.team) toast.success(`Team "${r.team.name}" created.${added}`);
+      else toast.info(`Team "${r.teamName}" was created, but it could not be loaded yet.${added}`);
       reset();
       onOpenChange(false);
-      onCreated(r.team);
+      if (r.team) onCreated(r.team);
     },
   });
   const busy = createMut.isPending;
@@ -1532,7 +1546,8 @@ export function CreateTeamDialog({
         {result ? (
           <div className="space-y-3" data-testid="create-team-add-result">
             <p className="text-sm text-foreground">
-              Team &ldquo;{result.team.name}&rdquo; was created. {result.added.length} added.
+              Team &ldquo;{result.teamName}&rdquo; was created
+              {result.team ? "" : ", but it could not be loaded yet"}. {result.added.length} added.
             </p>
             {/* Per address, honestly (contract §9.5): added, refused with the reason, or unknown. */}
             {result.added.length > 0 && (
