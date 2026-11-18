@@ -1,7 +1,8 @@
 /**
  * The team Invite dialog and the Create team dialog suggest people from the
  * user's calendar contacts (GET /api/attendees/suggest) through the shared
- * ContactEmailAutocomplete.
+ * ContactEmailAutocomplete. PAC-129: the Create team picker ADDS people
+ * (AC-33); inviting answers one of four outcomes.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -9,7 +10,7 @@ import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiGatewayError, ApiHttpError, ApiUnreachableError, api } from "@/api/client";
-import { teamsApi, type FormalTeam, type FormalTeamMember } from "@/api/teams";
+import { teamsApi, type FormalTeam, type FormalTeamMember, type TeamInviteOutcome } from "@/api/teams";
 import { InviteDialog } from "@/components/team/ProtectedHoursTab";
 import { AddPersonDialog, CreateTeamDialog } from "./Team";
 
@@ -28,6 +29,9 @@ const TEAM: FormalTeam = {
   members: [],
   no_meeting_zones: [],
 };
+
+const PERSON = (email: string): FormalTeamMember => ({ email, display_name: email, kind: "added", role: null, invitation: null });
+const INVITED: TeamInviteOutcome = { outcome: "added_and_invited", person: PERSON("newbie@example.com") };
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -56,7 +60,7 @@ describe("team InviteDialog suggestions", () => {
       { email: "Other.Member@Example.com", name: "Otto Member" },
       { email: "newbie@example.com", name: "Nina Newbie" },
     ]);
-    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(null);
+    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(INVITED);
     const onInvited = vi.fn();
 
     renderWithClient(
@@ -111,7 +115,7 @@ describe("team InviteDialog suggestions", () => {
 
   it("sends one invite for a double Enter", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
-    const pending = deferred<FormalTeamMember | null>();
+    const pending = deferred<TeamInviteOutcome>();
     const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockReturnValue(pending.promise);
     renderWithClient(
       <InviteDialog open onOpenChange={() => {}} teamId="team-9" existingEmails={[]} onInvited={() => {}} />,
@@ -121,7 +125,7 @@ describe("team InviteDialog suggestions", () => {
     fireEvent.change(input, { target: { value: "sam@example.com" } });
     fireEvent.keyDown(input, { key: "Enter" });
     fireEvent.keyDown(input, { key: "Enter" });
-    pending.resolve(null);
+    pending.resolve(INVITED);
     await waitFor(() => expect(invite).toHaveBeenCalledTimes(1));
   });
 
@@ -154,9 +158,9 @@ describe("AddPersonDialog", () => {
   });
 });
 
-describe("CreateTeamDialog initial invitees", () => {
+describe("CreateTeamDialog initial people (PAC-129 AC-33: added, never invited)", () => {
   function addInvitee(email: string) {
-    const input = screen.getByRole("combobox", { name: "Invite by email" });
+    const input = screen.getByRole("combobox", { name: "Add by email" });
     fireEvent.change(input, { target: { value: email } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
   }
@@ -165,10 +169,20 @@ describe("CreateTeamDialog initial invitees", () => {
     fireEvent.change(screen.getByPlaceholderText("Platform team"), { target: { value: "Platform" } });
   }
 
-  it("invites each person after the team is created and closes when all succeed", async () => {
+  it("is labelled Add people and never uses invite wording", () => {
+    renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={() => {}} />);
+    expect(screen.getByText(/^Add people/)).toBeInTheDocument();
+    expect(screen.queryByText(/Invite people/)).not.toBeInTheDocument();
+    addInvitee("a@example.com");
+    expect(screen.getByTestId("create-team-add-notice")).toHaveTextContent("Paceday sends them no email.");
+    expect(document.body).not.toHaveTextContent(/invites? sent/i);
+  });
+
+  it("adds each person after the team is created, sends no invitation, and closes when all succeed", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     const create = vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
-    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(null);
+    const add = vi.spyOn(teamsApi.remote, "addPerson").mockImplementation(async (_t, email) => PERSON(email));
+    const invite = vi.spyOn(teamsApi.remote, "inviteMember");
     const onCreated = vi.fn();
     const onOpenChange = vi.fn();
 
@@ -177,40 +191,41 @@ describe("CreateTeamDialog initial invitees", () => {
     addInvitee("a@example.com");
     addInvitee("B@example.com");
     addInvitee("a@example.com"); // de-duplicated
-    expect(screen.getByRole("list", { name: "People to invite" }).children).toHaveLength(2);
+    expect(screen.getByRole("list", { name: "People to add" }).children).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(TEAM));
     expect(create).toHaveBeenCalledWith("Platform");
-    expect(invite.mock.calls).toEqual([
+    expect(add.mock.calls).toEqual([
       ["team-9", "a@example.com"],
       ["team-9", "b@example.com"],
     ]);
+    expect(invite).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("includes an address that was typed but not added", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
-    const invite = vi.spyOn(teamsApi.remote, "inviteMember").mockResolvedValue(null);
+    const add = vi.spyOn(teamsApi.remote, "addPerson").mockImplementation(async (_t, email) => PERSON(email));
     const onCreated = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={onCreated} />);
     typeTeamName();
-    fireEvent.change(screen.getByRole("combobox", { name: "Invite by email" }), { target: { value: "Late@example.com" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Add by email" }), { target: { value: "Late@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
 
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(TEAM));
-    expect(invite.mock.calls).toEqual([["team-9", "late@example.com"]]);
+    expect(add.mock.calls).toEqual([["team-9", "late@example.com"]]);
   });
 
   it("does not create the team while a typed address is invalid", () => {
     const create = vi.spyOn(teamsApi.remote, "createTeam");
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={() => {}} />);
     typeTeamName();
-    fireEvent.change(screen.getByRole("combobox", { name: "Invite by email" }), { target: { value: "not-an-email" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Add by email" }), { target: { value: "not-an-email" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid email address.");
     expect(create).not.toHaveBeenCalled();
   });
@@ -219,18 +234,19 @@ describe("CreateTeamDialog initial invitees", () => {
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={() => {}} />);
     addInvitee("not-an-email");
     expect(screen.getByRole("alert")).toHaveTextContent("Enter a valid email address.");
-    expect(screen.queryByRole("list", { name: "People to invite" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "People to add" })).not.toBeInTheDocument();
   });
 
-  it("separates refused invites from invites with an unknown outcome, and claims only those sent", async () => {
+  it("reports each address as added, refused with the server's reason, or unknown — honestly", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
-    vi.spyOn(teamsApi.remote, "inviteMember").mockImplementation(async (_teamId, email) => {
-      if (email === "ok@example.com") return null;
+    vi.spyOn(teamsApi.remote, "addPerson").mockImplementation(async (_teamId, email) => {
+      if (email === "ok@example.com") return PERSON(email);
       if (email === "gone@example.com") throw new ApiUnreachableError("network");
       if (email === "proxy@example.com") throw new ApiGatewayError(502);
       if (email === "boom@example.com") throw new ApiHttpError(500, { error: "internal" }, "internal");
-      throw new ApiHttpError(409, { error: "already invited" }, "already invited");
+      const reason = "this address belongs to a Paceday member of this team";
+      throw new ApiHttpError(422, { error: reason }, reason);
     });
     const onCreated = vi.fn();
     const onOpenChange = vi.fn();
@@ -240,25 +256,21 @@ describe("CreateTeamDialog initial invitees", () => {
     for (const email of ["ok@example.com", "gone@example.com", "proxy@example.com", "boom@example.com", "dup@example.com"]) {
       addInvitee(email);
     }
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
 
-    const result = await screen.findByTestId("create-team-invite-result");
-    expect(result).toHaveTextContent("Invites sent to 1 person.");
-
-    const refused = screen.getByRole("alert");
-    expect(refused).toHaveTextContent("This invite was not sent:");
-    expect(refused).toHaveTextContent("dup@example.com");
-    for (const email of ["ok@example.com", "gone@example.com", "proxy@example.com", "boom@example.com"]) {
-      expect(refused).not.toHaveTextContent(email);
-    }
-
-    const unknown = screen.getByTestId("create-team-invite-unknown");
-    expect(unknown).toHaveTextContent("No answer for these 3 invites. They may not have been sent — check the team page:");
-    for (const email of ["gone@example.com", "proxy@example.com", "boom@example.com"]) {
-      expect(unknown).toHaveTextContent(email);
-    }
-    expect(unknown).not.toHaveTextContent("dup@example.com");
-    expect(unknown).not.toHaveTextContent("not sent:");
+    const result = await screen.findByTestId("create-team-add-result");
+    expect(result).toHaveTextContent("1 added.");
+    expect(result).not.toHaveTextContent(/invites? sent/i);
+    const outcomes = screen.getAllByTestId("create-team-add-outcome").map((li) => li.textContent);
+    expect(outcomes).toEqual([
+      "ok@example.com: added",
+      "dup@example.com: refused: this address belongs to a Paceday member of this team",
+      "gone@example.com: unknown",
+      "proxy@example.com: unknown",
+      "boom@example.com: unknown",
+    ]);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("gone@example.com");
+    expect(screen.getByTestId("create-team-add-unknown")).not.toHaveTextContent("dup@example.com");
 
     // The team exists, but the dialog stays until the user has read the result.
     expect(onCreated).not.toHaveBeenCalled();
@@ -268,18 +280,18 @@ describe("CreateTeamDialog initial invitees", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("refuses every close path while the team and its invites are being sent", async () => {
+  it("refuses every close path while the team is created and its people added", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     vi.spyOn(teamsApi.remote, "createTeam").mockResolvedValue(TEAM);
-    const pending = deferred<FormalTeamMember | null>();
-    vi.spyOn(teamsApi.remote, "inviteMember").mockReturnValue(pending.promise);
+    const pending = deferred<FormalTeamMember>();
+    vi.spyOn(teamsApi.remote, "addPerson").mockReturnValue(pending.promise);
     const onCreated = vi.fn();
     const onOpenChange = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={onOpenChange} onCreated={onCreated} />);
     typeTeamName();
     addInvitee("a@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
     await screen.findByRole("button", { name: "Creating…" });
 
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
@@ -289,26 +301,26 @@ describe("CreateTeamDialog initial invitees", () => {
     fireEvent.pointerDown(document.body);
     expect(onOpenChange).not.toHaveBeenCalled();
 
-    pending.resolve(null);
+    pending.resolve(PERSON("a@example.com"));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(TEAM));
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("sends no invite when the team could not be created", async () => {
+  it("adds nobody when the team could not be created", async () => {
     vi.spyOn(api, "suggestAttendees").mockResolvedValue([]);
     vi.spyOn(teamsApi.remote, "createTeam").mockRejectedValue(new ApiHttpError(400, { error: "bad name" }, "bad name"));
-    const invite = vi.spyOn(teamsApi.remote, "inviteMember");
+    const add = vi.spyOn(teamsApi.remote, "addPerson");
     const onCreated = vi.fn();
 
     renderWithClient(<CreateTeamDialog open onOpenChange={() => {}} onCreated={onCreated} />);
     typeTeamName();
     addInvitee("a@example.com");
-    fireEvent.click(screen.getByRole("button", { name: "Create and invite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create and add" }));
 
     await screen.findByRole("alert");
-    expect(invite).not.toHaveBeenCalled();
+    expect(add).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
-    // The typed invitee is kept for a retry.
-    expect(screen.getByRole("list", { name: "People to invite" })).toHaveTextContent("a@example.com");
+    // The typed person is kept for a retry.
+    expect(screen.getByRole("list", { name: "People to add" })).toHaveTextContent("a@example.com");
   });
 });

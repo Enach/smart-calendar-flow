@@ -284,26 +284,48 @@ describe("team request bodies", () => {
   });
 
   it("requests availability with date and duration query parameters", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ slots: [{ start: "2026-05-04T09:00:00Z", end: "2026-05-04T09:30:00Z", quality_score: 88 }] }))
-      .mockResolvedValueOnce(jsonResponse({ team: { id: "t1", name: "Platform" }, members: [] }))
-      .mockResolvedValueOnce(jsonResponse([]));
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        slots: [{ start: "2026-05-04T09:00:00Z", end: "2026-05-04T09:30:00Z", quality_score: 88, free_count: 2, unknown_count: 1, total_count: 3 }],
+      }),
+    );
     const slots = await teamsApi.remote.findSlots("t1", "2026-05-04", 30);
     const url = urlOf(0);
     expect(url.pathname).toBe("/api/teams/t1/availability");
     expect(url.searchParams.get("date")).toBe("2026-05-04");
     expect(url.searchParams.get("duration")).toBe("30");
     expect(slots[0].score).toBe(88);
+    // PAC-129 (SF-054): the counts are the server's; the member list is not read.
+    expect(slots[0]).toMatchObject({ free_count: 2, unknown_count: 1, total_count: 3 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps an accepted invite as sent when the re-read of the team fails", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ ok: true }, 201))
-      .mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    const member = await teamsApi.remote.inviteMember("t1", "New@Example.com");
+  it("reads the invite's outcome and entry from its own answer (PAC-129), with no re-read", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          outcome: "added_and_invited",
+          invitation: {
+            id: "11111111-1111-4111-8111-111111111111",
+            teamId: "22222222-2222-4222-8222-222222222222",
+            inviteeEmail: "new@example.com",
+            invitedBy: "33333333-3333-4333-8333-333333333333",
+            token: "tok",
+            status: "pending",
+            createdAt: "2026-05-01T00:00:00Z",
+            expiresAt: "2026-05-08T00:00:00Z",
+          },
+          person: { email: "new@example.com", name: "", kind: "added", userId: null, role: null, invitation: { expiresAt: "2026-05-08T00:00:00Z" } },
+        },
+        201,
+      ),
+    );
+    const result = await teamsApi.remote.inviteMember("t1", "New@Example.com");
     expect(urlOf(0).pathname).toBe("/api/teams/t1/members/invite");
     expect(bodyOf(0)).toEqual({ email: "new@example.com" });
-    expect(member).toMatchObject({ email: "new@example.com", status: "pending" });
+    expect(result.outcome).toBe("added_and_invited");
+    expect(result.person).toMatchObject({ email: "new@example.com", kind: "added", invitation: { expires_at: "2026-05-08T00:00:00Z" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("still rejects an invite the server refused", async () => {

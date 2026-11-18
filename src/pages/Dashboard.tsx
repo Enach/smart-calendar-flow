@@ -5,6 +5,8 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { useLocation } from "react-router-dom";
+import { schedulePrefillText } from "@/lib/schedulePrefill";
 
 import { Navbar } from "@/components/Navbar";
 import { NLPBar } from "@/components/NLPBar";
@@ -71,15 +73,14 @@ export default function Dashboard() {
   }, [isDemo]);
 
   // Read prefill query params (?title=&attendees=&duration=) from links like
-  // the Manager dashboard's "Schedule" buttons. We surface a toast and prefill
-  // the NLP bar — the user confirms the suggested slot from there.
+  // the Manager dashboard's "Schedule" buttons, and the attendees team Find a
+  // time passes in navigation state (PAC-129 AC-36). We surface a toast and
+  // prefill the NLP bar — the user confirms the suggested slot from there.
+  const arrivalState = useLocation().state as unknown;
+  const arrivalStateRef = useRef(arrivalState);
   useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    const title = sp.get("title");
-    const attendees = sp.get("attendees");
-    if (title || attendees) {
-      const dur = sp.get("duration") ?? "30";
-      const text = `Schedule ${dur}m ${title ?? "meeting"}${attendees ? ` with ${attendees}` : ""}`;
+    const text = schedulePrefillText(window.location.search, arrivalStateRef.current);
+    if (text) {
       setNlpInitial(text);
       toast.info("Prefilled from manager dashboard — review and confirm a slot.");
       window.history.replaceState({}, "", "/app");

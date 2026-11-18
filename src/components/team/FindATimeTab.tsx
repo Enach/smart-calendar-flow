@@ -11,6 +11,15 @@ import { localISODate } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
+import { slotCountsText } from "@/components/team/teamTexts";
+
+/**
+ * PAC-129 (AC-36): the attendees of a slot travel to the scheduling page in
+ * application state, never in the page address.
+ */
+export interface ScheduleFromTeamState {
+  attendees: string[];
+}
 
 interface Props {
   team: FormalTeam;
@@ -65,17 +74,17 @@ export function FindATimeTab({ team }: Props) {
   };
 
   const onSchedule = (slot: AvailabilitySlot) => {
-    const attendees = team.members
-      .filter((m) => m.status === "active" && m.email !== teamsApi.currentUserEmail())
-      .map((m) => m.email)
-      .join(",");
+    // Every member of both kinds except the user (PAC-129 §3.5).
+    const me = teamsApi.currentUserEmail().toLowerCase();
+    const state: ScheduleFromTeamState = {
+      attendees: team.members.filter((m) => m.email.toLowerCase() !== me).map((m) => m.email),
+    };
     const params = new URLSearchParams({
       title: `${team.name} sync`,
-      attendees,
       duration: String(duration),
       start: slot.start,
     });
-    navigate(`/app?${params.toString()}`);
+    navigate(`/app?${params.toString()}`, { state });
   };
 
   return (
@@ -162,8 +171,8 @@ export function FindATimeTab({ team }: Props) {
                   <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: dot }} />
                   <div>
                     <div className="text-sm font-medium text-foreground">{fmtSlot(s.start, s.end, tf)}</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      {s.free_count} of {s.total_count} free
+                    <div className="text-[11px] text-muted-foreground" data-testid="team-slot-counts">
+                      {slotCountsText(s)}
                     </div>
                   </div>
                   {i === 0 && (

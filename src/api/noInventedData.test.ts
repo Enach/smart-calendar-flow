@@ -89,6 +89,7 @@ const OPERATION_SAMPLES: Record<string, { args: unknown[] }> = {
   "teams.createTeam": { args: ["Team"] },
   "teams.renameTeam": { args: ["t1", "Team 2"] },
   "teams.deleteTeam": { args: ["t1"] },
+  "teams.addPerson": { args: ["t1", "b@co.com"] },
   "teams.inviteMember": { args: ["t1", "b@co.com"] },
   "teams.removeMember": { args: ["t1", "b@co.com"] },
   "teams.addZone": { args: ["t1", { day_of_week: 1, start_min: 540, end_min: 600, label: "x" }] },

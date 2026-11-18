@@ -12,7 +12,9 @@ export const memberWeekSchema = z.object({
 export const managerMemberSchema = z.object({
   email: z.string().email(),
   display_name: z.string(),
-  source: z.enum(["auto", "manual", "formal"]),
+  // "added" (PAC-129, contract §5.1): a person added to the team without
+  // Paceday access, read-only. Sent only because listTeam asks include_added.
+  source: z.enum(["auto", "manual", "formal", "added"]),
   cadence: cadenceSchema,
   cadence_custom_days: z.number().int().min(1).max(365).nullable(),
   last_one_on_one_at: z.string().datetime().nullable(),

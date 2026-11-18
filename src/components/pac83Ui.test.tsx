@@ -253,7 +253,7 @@ describe("AC-6: Find a time", () => {
     name: "Core",
     created_at: "2026-01-01T00:00:00Z",
     owner_email: "me@co.com",
-    members: [{ email: "me@co.com", display_name: "Me", role: "owner", status: "active", is_paceday_user: true }],
+    members: [{ email: "me@co.com", display_name: "Me", kind: "paceday", role: "owner", invitation: null }],
     no_meeting_zones: [],
   };
 
@@ -262,9 +262,13 @@ describe("AC-6: Find a time", () => {
     fetchMock.mockImplementation(async (u) => {
       const path = pathOf(u);
       if (path === "/api/teams/t1/availability")
-        return new Promise((r) => setTimeout(() => r(json({ slots: [{ start: "2030-03-04T14:00:00Z", end: "2030-03-04T14:30:00Z", quality_score: 88 }] })), 20_000));
-      if (path === "/api/teams/t1") return json({ team: { id: "t1", name: "Core" }, members: [{ email: "me@co.com", role: "owner", userId: "u1" }] });
-      if (path === "/api/teams/t1/no-meeting-zones") return json([]);
+        return new Promise((r) =>
+          setTimeout(
+            () =>
+              r(json({ slots: [{ start: "2030-03-04T14:00:00Z", end: "2030-03-04T14:30:00Z", quality_score: 88, free_count: 1, unknown_count: 0, total_count: 1 }] })),
+            20_000,
+          ),
+        );
       return json({ error: "not here" }, 404);
     });
     render(

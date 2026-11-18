@@ -9,25 +9,44 @@
  *               coordination (Protected Hours, Find a Time, Analytics)
  */
 
+import type { z } from "zod";
 import { requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
 import type { components } from "./generated/types";
-import { localISODate } from "@/lib/localDate";
+import {
+  TeamAnalytics as TeamAnalyticsSchema,
+  TeamDetail as TeamDetailSchema,
+  TeamInviteResult as TeamInviteResultSchema,
+  TeamPerson as TeamPersonSchema,
+  TeamSlotList as TeamSlotListSchema,
+} from "./generated/schemas";
 import { DEFAULT_TIME_FORMAT, formatMinutesOfDay, type TimeFormat } from "@/lib/timeFormat";
 
 // ---------- Types ----------
 
 export type TeamRole = "owner" | "member";
-export type TeamMemberStatus = "active" | "pending";
+/**
+ * PAC-129 (spec §3.2): a Paceday member joined by accepting an invitation; an
+ * added person was put on the team by an owner, without Paceday access. The
+ * kind comes from the server's `kind` only, never from an account guess.
+ */
+export type TeamPersonKind = components["schemas"]["TeamPersonKind"];
+
+/** PAC-129 (contract §9.1): the label an added person carries everywhere members are listed. */
+export const ADDED_PERSON_LABEL = "Added (no Paceday access)";
 
 export interface FormalTeamMember {
   email: string;
+  /** The name to show: the server's name, or the address when it has none. */
   display_name: string;
-  role: TeamRole;
-  status: TeamMemberStatus;
-  is_paceday_user: boolean;
-  invited_at?: string;
-  joined_at?: string;
+  kind: TeamPersonKind;
+  /** The membership role of a Paceday member; null for an added person. */
+  role: TeamRole | null;
+  /**
+   * An added person's pending invitation. The server sends it to owners only
+   * (contract §3.7, m-6); every other member gets null.
+   */
+  invitation: { expires_at: string } | null;
 }
 
 export interface NoMeetingZone {
@@ -50,12 +69,27 @@ export interface FormalTeam {
   no_meeting_zones: NoMeetingZone[];
 }
 
-/** One member's weeks in the team analytics view. */
+/** PAC-129 (contract §3.6): one member's row of the formal team analytics. */
 export interface TeamAnalyticsRow {
   email: string;
   display_name: string;
-  is_paceday_user: boolean;
-  weeks: { week_start: string; meeting_minutes: number; focus_minutes: number; free_minutes: number }[];
+  kind: TeamPersonKind;
+  /** `measured`: the figures are present. `no_data`: show "No data", never zero. `withheld`: owners only. */
+  figures: components["schemas"]["TeamAnalyticsFigures"];
+  meeting_minutes: number | null;
+  /** Always null for an added person (availability only). */
+  focus_minutes: number | null;
+  focus_score: number | null;
+}
+
+/** The formal team analytics for one week, as the server measured it (SF-041, SF-053). */
+export interface TeamAnalyticsView {
+  /** The Monday of the week asked for (YYYY-MM-DD): the week label. */
+  week_start: string;
+  /** Over the Paceday members whose figures are measured (server side). */
+  avg_meeting_minutes: number;
+  avg_focus_minutes: number;
+  rows: TeamAnalyticsRow[];
 }
 
 export interface AvailabilitySlot {
@@ -63,8 +97,10 @@ export interface AvailabilitySlot {
   end: string;
   /** 0-100 */
   score: number;
-  /** how many of the active members are free */
+  /** Members of both kinds whose availability is known: all free in this slot (SF-054). */
   free_count: number;
+  /** Members whose availability could not be read. Never counted free. */
+  unknown_count: number;
   total_count: number;
 }
 
@@ -102,24 +138,11 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function deriveName(email: string): string {
-  return email
-    .split("@")[0]
-    .replace(/[._-]+/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 // ---------- Public API ----------
 
 
 type BackendTeam = { id: string; name: string; createdAt?: string };
-type BackendTeamMember = {
-  userId?: string;
-  email?: string;
-  name?: string;
-  role?: string;
-  joinedAt?: string;
-};
 type BackendZone = {
   id: string;
   dayOfWeek?: number;
@@ -141,40 +164,48 @@ function timeFromMinutes(value: number): string {
   return hours + ":" + minutes;
 }
 
-function normalizeTeam(raw: BackendTeam, members: BackendTeamMember[], zones: BackendZone[]): FormalTeam {
-  const owner = members.find((member) => member.role === "owner");
-  const ownerEmail = owner?.email ?? load().current_user_email;
-  const normalizedMembers: FormalTeamMember[] = members.map((member) => ({
-    email: member.email ?? "",
-    display_name: member.name ?? deriveName(member.email ?? ""),
-    role: member.role === "owner" ? "owner" : "member",
-    status: "active",
-    is_paceday_user: Boolean(member.userId),
-    joined_at: member.joinedAt,
-  }));
+type TeamPersonWire = z.infer<typeof TeamPersonSchema>;
+
+/** PAC-129: one entry of `people`, both kinds. The web reads `people`, never `members` (contract §9.1). */
+export function normalizeTeamPerson(raw: TeamPersonWire): FormalTeamMember {
   return {
-    id: raw.id,
-    name: raw.name,
-    created_at: raw.createdAt ?? new Date().toISOString(),
-    owner_email: ownerEmail,
-    members: normalizedMembers,
-    no_meeting_zones: zones.map((zone) => ({
-      id: zone.id,
-      day_of_week: zone.dayOfWeek ?? 1,
-      start_min: minutesFromTime(zone.startTime),
-      end_min: minutesFromTime(zone.endTime),
-      label: zone.label ?? "Protected hours",
-      created_at: zone.createdAt ?? new Date().toISOString(),
-    })),
+    email: raw.email,
+    display_name: raw.name.trim() || raw.email,
+    kind: raw.kind,
+    role: raw.kind === "paceday" ? raw.role : null,
+    invitation: raw.invitation ? { expires_at: raw.invitation.expiresAt } : null,
   };
 }
 
+function normalizeZones(zones: BackendZone[]): NoMeetingZone[] {
+  return zones.map((zone) => ({
+    id: zone.id,
+    day_of_week: zone.dayOfWeek ?? 1,
+    start_min: minutesFromTime(zone.startTime),
+    end_min: minutesFromTime(zone.endTime),
+    label: zone.label ?? "Protected hours",
+    created_at: zone.createdAt ?? new Date().toISOString(),
+  }));
+}
+
 async function remoteTeam(id: string): Promise<FormalTeam> {
-  const [detail, zones] = await Promise.all([
-    requestApi<{ team?: BackendTeam; members?: BackendTeamMember[] }>("GET", "/teams/" + id),
+  const [rawDetail, zones] = await Promise.all([
+    requestApi<unknown>("GET", "/teams/" + id),
     requestApi<BackendZone[]>("GET", "/teams/" + id + "/no-meeting-zones"),
   ]);
-  return normalizeTeam(detail.team ?? { id, name: "Team" }, detail.members ?? [], zones ?? []);
+  // Strict: an unknown key or a missing `people` throws rather than showing a
+  // partial member list (SF-039 is the server's half; this is the client's).
+  const detail = TeamDetailSchema.parse(rawDetail);
+  const members = detail.people.map(normalizeTeamPerson);
+  const owner = members.find((member) => member.role === "owner");
+  return {
+    id: detail.team.id,
+    name: detail.team.name,
+    created_at: detail.team.createdAt,
+    owner_email: owner?.email ?? load().current_user_email,
+    members,
+    no_meeting_zones: normalizeZones(zones ?? []),
+  };
 }
 
 // ---------- Team invites ----------
@@ -351,37 +382,48 @@ const teamsRemote = {
         save(state);
       }),
 
-  inviteMember: (teamId: string, email: string, displayName?: string) =>
-    demoOrReal<FormalTeamMember | null>("teams.inviteMember", [teamId, email, displayName], async () => {
+  /**
+   * PAC-129 addTeamPerson: POST /api/teams/{id}/people. Adds the address to
+   * the team without Paceday access; nothing is sent to them. 201 (added) and
+   * 200 (already added) both answer the entry. A 422 carries the refusal's
+   * exact text, which the caller shows verbatim.
+   */
+  addPerson: (teamId: string, email: string, name?: string) =>
+    demoOrReal<FormalTeamMember>("teams.addPerson", [teamId, email, name], async () => {
         assertTeams(validateTeamEmail(email));
-        await requestApi("POST", "/teams/" + teamId + "/members/invite", { email: email.trim().toLowerCase() });
-        // The POST succeeded: the invite exists. A failed re-read afterwards
-        // must not turn that into a failure; the caller refreshes the team on
-        // its own, so fall back to the row the server just accepted.
-        let team: FormalTeam | null = null;
-        try {
-          team = await remoteTeam(teamId);
-        } catch {
-          team = null;
-        }
-        return team?.members.find((member) => member.email === email.trim().toLowerCase()) ?? {
+        const trimmedName = name?.trim();
+        const raw = await requestApi<unknown>("POST", "/teams/" + teamId + "/people", {
           email: email.trim().toLowerCase(),
-          display_name: displayName?.trim() || deriveName(email),
-          role: "member",
-          status: "pending",
-          is_paceday_user: false,
-          invited_at: new Date().toISOString(),
-        };
+          ...(trimmedName ? { name: trimmedName } : {}),
+        });
+        return normalizeTeamPerson(TeamPersonSchema.parse(raw));
       }),
 
+  /**
+   * PAC-129 inviteTeamMember: invites the address to Paceday and, when it is
+   * not on the team yet, adds it (contract §3.3). The name typed is sent
+   * (SF-051). The answer says what happened; nothing here claims delivery.
+   */
+  inviteMember: (teamId: string, email: string, displayName?: string) =>
+    demoOrReal<TeamInviteOutcome>("teams.inviteMember", [teamId, email, displayName], async () => {
+        assertTeams(validateTeamEmail(email));
+        const trimmedName = displayName?.trim();
+        const raw = await requestApi<unknown>("POST", "/teams/" + teamId + "/members/invite", {
+          email: email.trim().toLowerCase(),
+          ...(trimmedName ? { name: trimmedName } : {}),
+        });
+        const result = TeamInviteResultSchema.parse(raw);
+        return { outcome: result.outcome, person: normalizeTeamPerson(result.person) };
+      }),
+
+  /**
+   * PAC-129 removeTeamPerson: DELETE /api/teams/{id}/people/{email}, for both
+   * kinds. Resolves only on the 204; a 404 ("person not found") or a 422 is
+   * the caller's error, never a silent success (SF-089).
+   */
   removeMember: (teamId: string, email: string) =>
     demoOrReal<void>("teams.removeMember", [teamId, email], async () => {
-        const team = await remoteTeam(teamId);
-        const member = team.members.find((item) => item.email === email.toLowerCase());
-        if (!member) return;
-        const userID = (await requestApi<{ members?: BackendTeamMember[] }>("GET", "/teams/" + teamId)).members?.find((item) => item.email?.toLowerCase() === email.toLowerCase())?.userId;
-        if (!userID) throw new Error("team member has no user id");
-        await requestApi("DELETE", "/teams/" + teamId + "/members/" + userID);
+        await requestApi("DELETE", "/teams/" + teamId + "/people/" + encodeURIComponent(email.trim().toLowerCase()));
       }),
 
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
@@ -425,43 +467,62 @@ const teamsRemote = {
   findSlots: (teamId: string, dateISO: string, durationMin: number) =>
     demoOrReal<AvailabilitySlot[]>("teams.findSlots", [teamId, dateISO, durationMin], async () => {
         assertTeams(validateAvailabilityQuery(dateISO, durationMin));
-        const raw = await requestApi<{ slots?: Array<{ start: string; end: string; quality_score?: number }> }>(
+        const raw = await requestApi<unknown>(
           "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
         );
-        const team = await remoteTeam(teamId);
-        const total = team.members.filter((member) => member.status === "active").length;
-        return (raw.slots ?? []).map((slot) => ({
-          start: slot.start, end: slot.end, score: slot.quality_score ?? 0,
-          free_count: total, total_count: total,
+        // The counts are the server's (SF-054): never derived from the member list.
+        return TeamSlotListSchema.parse(raw).slots.map((slot) => ({
+          start: slot.start,
+          end: slot.end,
+          score: slot.quality_score,
+          free_count: slot.free_count,
+          unknown_count: slot.unknown_count,
+          total_count: slot.total_count,
         }));
       }),
 
   teamAnalytics: (teamId: string, dateISO?: string) =>
-    demoOrReal<TeamAnalyticsRow[]>("teams.teamAnalytics", [teamId, dateISO], async () => {
+    demoOrReal<TeamAnalyticsView>("teams.teamAnalytics", [teamId, dateISO], async () => {
         if (dateISO !== undefined) assertTeams(ISO_DATE_RE.test(dateISO) ? null : "Pick a valid date.");
-        const raw = await requestApi<{
-          member_breakdown?: Array<{ name?: string; meeting_minutes: number; focus_minutes: number }>;
-        }>("GET", "/teams/" + teamId + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
-        const team = await remoteTeam(teamId);
-        const weekStart = new Date();
-        const day = weekStart.getDay();
-        weekStart.setDate(weekStart.getDate() + (day === 0 ? -6 : 1 - day));
-        const week = localISODate(weekStart);
-        return team.members
-          .filter((member) => member.status === "active" && member.email !== team.owner_email)
-          .map((member, index) => {
-            const summary = raw.member_breakdown?.find((item) => item.name === member.display_name) ?? raw.member_breakdown?.[index];
-            const meeting = summary?.meeting_minutes ?? 0;
-            const focus = summary?.focus_minutes ?? 0;
-            return {
-              email: member.email,
-              display_name: member.display_name,
-              is_paceday_user: member.is_paceday_user,
-              weeks: [{ week_start: week, meeting_minutes: meeting, focus_minutes: focus, free_minutes: Math.max(0, 2400 - meeting - focus) }],
-            };
-          });
+        const raw = await requestApi<unknown>("GET", "/teams/" + teamId + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
+        return normalizeTeamAnalytics(TeamAnalyticsSchema.parse(raw));
       }),
 };
+
+/**
+ * PAC-129 (SF-053, SF-041): rows come from `people`, each attributed by its own
+ * email (never by name or position), with the server's figures as they are:
+ * nothing is computed here, no free time is invented, and the week is the
+ * server's `week_start` (the week asked for).
+ */
+export function normalizeTeamAnalytics(raw: z.infer<typeof TeamAnalyticsSchema>): TeamAnalyticsView {
+  return {
+    week_start: raw.week_start,
+    avg_meeting_minutes: raw.avg_meeting_minutes,
+    avg_focus_minutes: raw.avg_focus_minutes,
+    rows: raw.people.map((person) => ({
+      email: person.email,
+      display_name: person.name.trim() || person.email,
+      kind: person.kind,
+      figures: person.figures,
+      meeting_minutes: person.figures === "measured" ? person.meeting_minutes : null,
+      focus_minutes: person.figures === "measured" && person.kind === "paceday" ? person.focus_minutes : null,
+      focus_score: person.figures === "measured" && person.kind === "paceday" ? person.focus_score : null,
+    })),
+  };
+}
+
+/** The analytics rows without the team's owner: the view shows the people the owner coordinates. */
+export function analyticsRowsWithoutOwner(rows: readonly TeamAnalyticsRow[], ownerEmail: string): TeamAnalyticsRow[] {
+  const owner = ownerEmail.trim().toLowerCase();
+  return rows.filter((row) => row.email.toLowerCase() !== owner);
+}
+
+/** What inviteTeamMember did (contract §3.3) and the entry after it. */
+export interface TeamInviteOutcome {
+  outcome: components["schemas"]["TeamInviteOutcome"];
+  person: FormalTeamMember;
+}
 
 export const teamsApi = {
   remote: teamsRemote,
@@ -506,14 +567,7 @@ export const teamsApi = {
       created_at: new Date().toISOString(),
       owner_email: owner,
       members: [
-        {
-          email: owner,
-          display_name: "You",
-          role: "owner",
-          status: "active",
-          is_paceday_user: true,
-          joined_at: new Date().toISOString(),
-        },
+        { email: owner, display_name: "You", kind: "paceday", role: "owner", invitation: null },
       ],
       no_meeting_zones: [],
     };
@@ -539,45 +593,84 @@ export const teamsApi = {
     save(s);
   },
 
-  inviteMember(teamId: string, email: string, displayName?: string): FormalTeamMember | null {
+  /**
+   * The demo's add (PAC-129 §3.12): the address is put on the team as an
+   * added person, once. Refusals (own address, a Paceday member, the cap) are
+   * decided by the demo operation before it calls this.
+   */
+  addPerson(teamId: string, email: string, name?: string): { person: FormalTeamMember; created: boolean } | null {
     const s = load();
     const t = s.teams.find((x) => x.id === teamId);
     if (!t) return null;
     const norm = email.trim().toLowerCase();
     const existing = t.members.find((m) => m.email === norm);
-    if (existing) return existing;
-    const member: FormalTeamMember = {
+    if (existing) return { person: existing, created: false };
+    const person: FormalTeamMember = {
       email: norm,
-      display_name: displayName?.trim() || deriveName(norm),
-      role: "member",
-      status: "pending",
-      is_paceday_user: /paceday\.com$/i.test(norm),
-      invited_at: new Date().toISOString(),
+      display_name: name?.trim() || norm,
+      kind: "added",
+      role: null,
+      invitation: null,
     };
-    t.members.push(member);
+    t.members.push(person);
     save(s);
-    return member;
+    return { person, created: true };
   },
 
-  /** Mock-accept an invite (single-browser demo). */
+  /**
+   * The demo's invitation (PAC-129 §3.7): an invited person is an added
+   * person with a pending invitation. Never guesses an account from a domain.
+   */
+  inviteMember(teamId: string, email: string, displayName?: string): TeamInviteOutcome | null {
+    const s = load();
+    const t = s.teams.find((x) => x.id === teamId);
+    if (!t) return null;
+    const norm = email.trim().toLowerCase();
+    const existing = t.members.find((m) => m.email === norm);
+    if (existing?.kind === "paceday") return { outcome: "already_member", person: existing };
+    const pending = existing?.invitation && Date.parse(existing.invitation.expires_at) > Date.now();
+    if (existing && pending) return { outcome: "already_pending", person: existing };
+    const expires_at = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    if (existing) {
+      existing.invitation = { expires_at };
+      save(s);
+      return { outcome: "invited", person: existing };
+    }
+    const person: FormalTeamMember = {
+      email: norm,
+      display_name: displayName?.trim() || norm,
+      kind: "added",
+      role: null,
+      invitation: { expires_at },
+    };
+    t.members.push(person);
+    save(s);
+    return { outcome: "added_and_invited", person };
+  },
+
+  /** Mock-accept an invite (single-browser demo): the added entry becomes a Paceday member. */
   acceptInvite(teamId: string, email: string): FormalTeamMember | null {
     const s = load();
     const t = s.teams.find((x) => x.id === teamId);
     if (!t) return null;
     const m = t.members.find((x) => x.email === email.toLowerCase());
     if (!m) return null;
-    m.status = "active";
-    m.joined_at = new Date().toISOString();
+    m.kind = "paceday";
+    m.role = "member";
+    m.invitation = null;
     save(s);
     return m;
   },
 
-  removeMember(teamId: string, email: string) {
+  /** Removes the person (either kind) and their invitation. False when nobody was there. */
+  removeMember(teamId: string, email: string): boolean {
     const s = load();
     const t = s.teams.find((x) => x.id === teamId);
-    if (!t) return;
-    t.members = t.members.filter((m) => m.email !== email.toLowerCase());
+    if (!t) return false;
+    const before = t.members.length;
+    t.members = t.members.filter((m) => m.email !== email.trim().toLowerCase());
     save(s);
+    return t.members.length < before;
   },
 
   // ---------- No-meeting zones ----------

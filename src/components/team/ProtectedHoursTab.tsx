@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, X, UserPlus, ShieldCheck } from "lucide-react";
+import { Plus, Trash2, UserPlus, ShieldCheck, Mail } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -27,14 +27,27 @@ import {
   DAY_LABELS,
   fmtTime,
   type FormalTeam,
+  type FormalTeamMember,
   type NoMeetingZone,
 } from "@/api/teams";
-import { apiErrorMessage } from "@/api/client";
+import { apiErrorMessage, isApiHttpError } from "@/api/client";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { effectOf } from "@/api/effects";
 import type { Attendee } from "@/api/types";
 import { ContactEmailAutocomplete } from "@/components/team/ContactEmailAutocomplete";
 import { keepDialogOpenForOpenCombobox } from "@/lib/comboboxEscape";
+import {
+  ADD_TO_TEAM_BUTTON,
+  ADD_TO_TEAM_NOTICE,
+  ADD_TO_TEAM_TITLE,
+  ADDED_PERSON_LABEL,
+  INVITE_TO_PACEDAY,
+  addedText,
+  inviteOutcomeText,
+  invitedUntilText,
+  notOnTeamText,
+  removedText,
+} from "@/components/team/teamTexts";
 
 const HOUR_START = 8; // 08:00
 const HOUR_END = 20; // 20:00
@@ -59,6 +72,9 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
   const [labelInput, setLabelInput] = useState("");
   const [mobileFormOpen, setMobileFormOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  /** The added person "Invite to Paceday" was pressed on, prefilled in the invite dialog. */
+  const [inviteTarget, setInviteTarget] = useState<{ email: string; name: string } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
 
   const refresh = () => {
@@ -101,7 +117,9 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
     previousEditingZoneId.current = editingZoneId;
   }, [editingZoneId, editingZoneLabel]);
 
-  const activeMembers = team.members.filter((m) => m.status === "active");
+  // PAC-129: both kinds are members of the team.
+  const activeMembers = team.members;
+  const addedCount = team.members.filter((m) => m.kind === "added").length;
 
   return (
     <div className="space-y-5">
@@ -131,9 +149,8 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
             )}
           </div>
           <span className="text-xs text-muted-foreground">
-            {activeMembers.length} active member{activeMembers.length === 1 ? "" : "s"}
-            {team.members.some((m) => m.status === "pending") &&
-              ` · ${team.members.filter((m) => m.status === "pending").length} pending`}
+            {activeMembers.length} member{activeMembers.length === 1 ? "" : "s"}
+            {addedCount > 0 && ` · ${addedCount} without Paceday access`}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -143,9 +160,22 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
           >
             Manage members
           </button>
-          <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)} className="gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)} className="gap-1.5" data-testid="team-add-person-open">
             <UserPlus className="h-3.5 w-3.5" />
-            Invite
+            {ADD_TO_TEAM_BUTTON}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setInviteTarget(null);
+              setInviteOpen(true);
+            }}
+            className="gap-1.5"
+            data-testid="team-invite-open"
+          >
+            <Mail className="h-3.5 w-3.5" />
+            {INVITE_TO_PACEDAY}
           </Button>
         </div>
       </div>
@@ -291,11 +321,25 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
         }}
       />
 
-      <InviteDialog
-        open={inviteOpen}
-        onOpenChange={setInviteOpen}
+      <AddToTeamDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
         teamId={team.id}
         existingEmails={team.members.map((m) => m.email)}
+        onAdded={refresh}
+      />
+
+      <InviteDialog
+        key={inviteTarget?.email ?? "new"}
+        open={inviteOpen}
+        onOpenChange={(o) => {
+          setInviteOpen(o);
+          if (!o) setInviteTarget(null);
+        }}
+        teamId={team.id}
+        existingEmails={team.members.filter((m) => m.kind === "paceday" || m.invitation).map((m) => m.email)}
+        initialEmail={inviteTarget?.email}
+        initialName={inviteTarget?.name}
         onInvited={refresh}
       />
 
@@ -304,6 +348,10 @@ export function ProtectedHoursTab({ team, onChanged }: Props) {
         onOpenChange={setManageOpen}
         team={team}
         onChanged={refresh}
+        onInvite={(m) => {
+          setInviteTarget({ email: m.email, name: m.display_name === m.email ? "" : m.display_name });
+          setInviteOpen(true);
+        }}
       />
     </div>
   );
@@ -571,29 +619,171 @@ function MobileAddForm({
 // Invite + Manage members
 // ============================================================================
 
-export function InviteDialog({
+/**
+ * PAC-129 (contract §9.2): adds a person to the team without Paceday access.
+ * Nothing is sent to them; the notice says what the owner takes on.
+ */
+export function AddToTeamDialog({
   open,
   onOpenChange,
   teamId,
   existingEmails,
-  onInvited,
+  onAdded,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   teamId: string;
-  /**
-   * The team's current members: never suggested again. Pending invitees are
-   * not covered on the server-backed team: the contract has no endpoint that
-   * lists pending invites, so they cannot be excluded yet (PAC-129 makes an
-   * invited person a member, which will cover them).
-   */
+  /** Every member of both kinds (an address with a pending invitation is an added person): never suggested. */
   existingEmails: readonly string[];
-  onInvited: () => void;
+  onAdded: () => void;
 }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const nameSource = useRef<"empty" | "auto" | "manual">("empty");
+  // Set synchronously on submit: a second Enter can arrive before the
+  // mutation's pending state has rendered.
+  const inFlight = useRef(false);
+
+  const reset = () => {
+    setEmail("");
+    setName("");
+    setError(null);
+    nameSource.current = "empty";
+  };
+
+  const handleEmailChange = useCallback((value: string) => {
+    setEmail(value);
+    if (nameSource.current === "auto") {
+      setName("");
+      nameSource.current = "empty";
+    }
+  }, []);
+
+  const handleContactResolved = useCallback((contact: Attendee) => {
+    if (!contact.name || nameSource.current === "manual") return;
+    setName(contact.name);
+    nameSource.current = "auto";
+  }, []);
+
+  const addMut = useMutation({
+    mutationFn: () => teamsApi.remote.addPerson(teamId, email, name),
+    // A 422 is the server's refusal, shown verbatim (contract §9.2); typed values stay.
+    onError: (e) => setError(apiErrorMessage(e, effectOf("teams.addPerson"))),
+    onSettled: () => {
+      inFlight.current = false;
+    },
+    onSuccess: (person) => {
+      toast.success(addedText(person.display_name || person.email));
+      reset();
+      onOpenChange(false);
+      onAdded();
+    },
+  });
+
+  const submit = () => {
+    if (inFlight.current) return;
+    const invalid = validateTeamEmail(email);
+    if (invalid) {
+      setError(invalid);
+      return;
+    }
+    setError(null);
+    inFlight.current = true;
+    addMut.mutate();
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
+      <DialogContent className="sm:max-w-md" onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
+        <DialogHeader>
+          <DialogTitle className="font-serif text-lg">{ADD_TO_TEAM_TITLE}</DialogTitle>
+          <DialogDescription data-testid="team-add-person-notice">{ADD_TO_TEAM_NOTICE}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block text-xs font-medium text-foreground">
+            Email <span className="text-[#EF4444]">*</span>
+            <ContactEmailAutocomplete
+              value={email}
+              onValueChange={handleEmailChange}
+              onContactResolved={handleContactResolved}
+              exclude={existingEmails}
+              onSubmit={submit}
+              autoFocus
+              inputClassName="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+          </label>
+          <label className="block text-xs font-medium text-foreground">
+            Name <span className="text-muted-foreground">(optional)</span>
+            <input
+              value={name}
+              onChange={(e) => {
+                const value = e.target.value;
+                setName(value);
+                nameSource.current = value.trim() ? "manual" : "empty";
+              }}
+              className="mt-1 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              placeholder="Alex Carter"
+            />
+          </label>
+          {error && (
+            <div className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-[#B91C1C]" role="alert">
+              {error}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            onClick={submit}
+            disabled={addMut.isPending}
+            className="bg-primary text-white hover:bg-primary/90"
+            data-testid="team-add-person-submit"
+          >
+            {addMut.isPending ? "Adding…" : ADD_TO_TEAM_BUTTON}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Invite to Paceday (contract §9.3). Inviting an address not on the team also
+ * adds it; the answer says which of the four outcomes happened, and nothing
+ * claims the email was delivered.
+ */
+export function InviteDialog({
+  open,
+  onOpenChange,
+  teamId,
+  existingEmails,
+  initialEmail,
+  initialName,
+  onInvited,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  teamId: string;
+  /** Paceday members and addresses with a pending invitation: never suggested again. */
+  existingEmails: readonly string[];
+  /** Prefilled when the dialog is opened from an added person's "Invite to Paceday". */
+  initialEmail?: string;
+  initialName?: string;
+  onInvited: () => void;
+}) {
+  const [email, setEmail] = useState(initialEmail ?? "");
+  const [name, setName] = useState(initialName ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const nameSource = useRef<"empty" | "auto" | "manual">(initialName ? "manual" : "empty");
   // Set synchronously on submit: a second Enter can arrive before the
   // mutation's pending state has rendered.
   const inFlight = useRef(false);
@@ -619,8 +809,8 @@ export function InviteDialog({
     onSettled: () => {
       inFlight.current = false;
     },
-    onSuccess: () => {
-      toast.success(`Invite sent to ${email}.`);
+    onSuccess: (result) => {
+      toast.success(inviteOutcomeText(result.outcome, result.person.email));
       setEmail("");
       setName("");
       setError(null);
@@ -646,9 +836,9 @@ export function InviteDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-sm" onEscapeKeyDown={keepDialogOpenForOpenCombobox}>
         <DialogHeader>
-          <DialogTitle className="font-serif text-lg">Invite to team</DialogTitle>
+          <DialogTitle className="font-serif text-lg">{INVITE_TO_PACEDAY}</DialogTitle>
           <DialogDescription>
-            They will appear as Pending until they accept.
+            They get an invitation to join Paceday. Someone not on the team yet is added to it now.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -687,8 +877,13 @@ export function InviteDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={inviteMut.isPending} className="bg-primary text-white hover:bg-primary/90">
-            {inviteMut.isPending ? "Sending…" : "Send invite"}
+          <Button
+            onClick={submit}
+            disabled={inviteMut.isPending}
+            className="bg-primary text-white hover:bg-primary/90"
+            data-testid="team-invite-submit"
+          >
+            {inviteMut.isPending ? "Inviting…" : "Invite"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -696,24 +891,32 @@ export function InviteDialog({
   );
 }
 
-function ManageMembersSheet({
+/** The removal's message (contract §9.4): "removed" only on the 204 (SF-089). */
+function removalErrorText(e: unknown, email: string): string {
+  if (isApiHttpError(e) && e.status === 404) return notOnTeamText(email);
+  return apiErrorMessage(e, effectOf("teams.removeMember"));
+}
+
+export function ManageMembersSheet({
   open,
   onOpenChange,
   team,
   onChanged,
+  onInvite,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   team: FormalTeam;
   onChanged: () => void;
+  onInvite: (member: FormalTeamMember) => void;
 }) {
   const me = teamsApi.currentUserEmail();
   const isOwner = team.owner_email === me;
   const removeMemberMut = useMutation({
-    mutationFn: (email: string) => teamsApi.remote.removeMember(team.id, email),
-    onError: (e) => toast.error(apiErrorMessage(e, effectOf("teams.removeMember"))),
-    onSuccess: () => {
-      toast.success("Member removed.");
+    mutationFn: (member: FormalTeamMember) => teamsApi.remote.removeMember(team.id, member.email),
+    onError: (e, member) => toast.error(removalErrorText(e, member.email)),
+    onSuccess: (_, member) => {
+      toast.success(removedText(member.display_name || member.email));
       onChanged();
     },
   });
@@ -725,9 +928,9 @@ function ManageMembersSheet({
           <SheetTitle className="font-serif">Manage members</SheetTitle>
           <SheetDescription>{team.name}</SheetDescription>
         </SheetHeader>
-        <ul className="mt-6 divide-y divide-border">
+        <ul className="mt-6 divide-y divide-border" aria-label="Team members">
           {team.members.map((m) => (
-            <li key={m.email} className="flex items-center gap-3 py-3">
+            <li key={m.email} className="flex items-center gap-3 py-3" data-testid={`team-person-${m.email}`}>
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-foreground">
                 {m.display_name
                   .split(/\s+/)
@@ -738,25 +941,41 @@ function ManageMembersSheet({
                   .toUpperCase()}
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 text-sm text-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
                   <span className="truncate font-medium">{m.display_name}</span>
                   {m.role === "owner" && (
                     <span className="inline-flex items-center gap-0.5 rounded bg-ai/12 px-1.5 py-0.5 text-[9px] font-semibold text-[#5A3F9C]">
                       <ShieldCheck className="h-2.5 w-2.5" /> Owner
                     </span>
                   )}
-                  {m.status === "pending" && (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">Pending</span>
+                  {m.kind === "added" && (
+                    <span
+                      className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                      data-testid="team-person-added-label"
+                    >
+                      {ADDED_PERSON_LABEL}
+                    </span>
                   )}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">{m.email}</div>
+                {m.invitation && (
+                  <div className="text-[11px] text-muted-foreground" data-testid="team-person-invitation">
+                    {invitedUntilText(m.invitation.expires_at)}
+                  </div>
+                )}
               </div>
+              {isOwner && m.kind === "added" && !m.invitation && (
+                <Button size="sm" variant="ghost" onClick={() => onInvite(m)} className="h-10 px-2 text-xs">
+                  {INVITE_TO_PACEDAY}
+                </Button>
+              )}
               {isOwner && m.email !== me && (
                 <button
-                  onClick={() => removeMemberMut.mutate(m.email)}
+                  onClick={() => removeMemberMut.mutate(m)}
                   disabled={removeMemberMut.isPending}
                   className="rounded p-1.5 text-muted-foreground hover:bg-[#EF4444]/10 hover:text-[#EF4444]"
                   title="Remove"
+                  aria-label={`Remove ${m.display_name}`}
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>

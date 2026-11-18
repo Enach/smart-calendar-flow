@@ -1,14 +1,26 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ArrowDownRight, Minus, Users } from "lucide-react";
+import { Users } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { teamsApi, teamKeys, type FormalTeam } from "@/api/teams";
-import { apiErrorMessage } from "@/api/client";
+import {
+  analyticsRowsWithoutOwner,
+  teamsApi,
+  teamKeys,
+  type FormalTeam,
+  type TeamAnalyticsRow,
+} from "@/api/teams";
 import { managerApi, managerKeys } from "@/api/manager";
 import { localISODate, mondayOf } from "@/lib/localDate";
 import { UI_LOCALE } from "@/lib/locale";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
+import {
+  ADDED_PERSON_LABEL,
+  ANALYTICS_AVAILABILITY_ONLY,
+  ANALYTICS_NO_DATA,
+  ANALYTICS_WITHHELD,
+  MANAGER_ANALYTICS_ADDED_HINT,
+} from "@/components/team/teamTexts";
 
 interface Props {
   activeTeam: FormalTeam | null;
@@ -35,13 +47,21 @@ function initials(name: string): string {
   return name.split(/\s+/).map((p) => p[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
+function fmtWeek(weekStart: string): string {
+  return new Date(`${weekStart}T12:00:00`).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric", year: "numeric" });
+}
+
 const todayISO = () => localISODate();
+
+/** A row with figures the view can draw: a measured Paceday member. */
+function isMeasuredPaceday(r: TeamAnalyticsRow): boolean {
+  return r.kind === "paceday" && r.figures === "measured";
+}
 
 export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
   const [sub, setSub] = useState<SubTab>("week");
   const [date, setDate] = useState(todayISO());
 
-  // Data source preference: formal team if available, else manager team
   const teamAnalyticsQ = useQuery({
     queryKey: teamKeys.analytics(activeTeam?.id ?? "none", date),
     queryFn: () => teamsApi.remote.teamAnalytics(activeTeam!.id, date),
@@ -49,11 +69,14 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
     // Keep the previous week's data visible while a refetch is in flight.
     placeholderData: (prev) => prev,
   });
+  const view = activeTeam ? teamAnalyticsQ.data ?? null : null;
   // Without a team there is no real data to show. Never substitute generated
-  // numbers: a manager would read them as facts about a real person.
-  const teamData = useMemo(
-    () => (activeTeam ? teamAnalyticsQ.data ?? [] : []),
-    [activeTeam, teamAnalyticsQ.data],
+  // numbers: a manager would read them as facts about a real person. The
+  // rows are the server's, each matched by its own email (SF-053); the owner
+  // is left out of the per-person view.
+  const rows = useMemo(
+    () => (view && activeTeam ? analyticsRowsWithoutOwner(view.rows, activeTeam.owner_email) : []),
+    [view, activeTeam],
   );
 
   const sourceLabel = activeTeam ? activeTeam.name : "your manager team";
@@ -78,6 +101,12 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
               className="ml-2 h-9 rounded-lg border border-input bg-background px-3 text-sm"
             />
           </label>
+          {view && (
+            // The week the server measured: the week asked for (SF-053).
+            <span className="text-xs text-muted-foreground" data-testid="team-analytics-week">
+              Showing the week of {fmtWeek(view.week_start)}
+            </span>
+          )}
           {teamAnalyticsQ.isFetching && <span className="text-[11px] text-muted-foreground">Refreshing…</span>}
         </div>
       )}
@@ -117,7 +146,7 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
         </div>
       )}
 
-      {teamData.length === 0 && !(activeTeam && teamAnalyticsQ.isLoading) && !(activeTeam && teamAnalyticsQ.isError) && (
+      {rows.length === 0 && !(activeTeam && teamAnalyticsQ.isLoading) && !(activeTeam && teamAnalyticsQ.isError) && (
         <div className="rounded-2xl border border-dashed border-border bg-card p-8 text-center">
           <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
             <Users className="h-5 w-5" />
@@ -131,10 +160,12 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
         </div>
       )}
 
-      {teamData.length > 0 && sub === "week" && <ThisWeek data={teamData} />}
-      {teamData.length > 0 && sub === "trends" && <Trends data={teamData} />}
-      {activeTeam && teamData.length > 0 && sub === "members" && (
-        <MembersPanel teamId={activeTeam.id} week={mondayOf(date)} members={teamData} />
+      {view && rows.length > 0 && sub === "week" && (
+        <ThisWeek rows={rows} avgFocus={view.avg_focus_minutes} avgMeetings={view.avg_meeting_minutes} />
+      )}
+      {view && rows.length > 0 && sub === "trends" && <Trends rows={rows} />}
+      {activeTeam && rows.length > 0 && sub === "members" && (
+        <MembersPanel teamId={activeTeam.id} week={mondayOf(date)} members={rows} />
       )}
     </div>
   );
@@ -144,40 +175,30 @@ export function AnalyticsTab({ activeTeam, onCreateTeam }: Props) {
 // This week
 // ============================================================================
 
-interface RowData {
-  email: string;
-  display_name: string;
-  is_paceday_user: boolean;
-  weeks: { week_start: string; meeting_minutes: number; focus_minutes: number; free_minutes: number }[];
+/** The text shown in place of a figure the server did not measure or withheld (contract §9.7). */
+function missingFigure(r: TeamAnalyticsRow): string {
+  return r.figures === "withheld" ? ANALYTICS_WITHHELD : ANALYTICS_NO_DATA;
 }
 
-function ThisWeek({ data }: { data: RowData[] }) {
-  const rows = data.map((d) => {
-    const w = d.weeks[d.weeks.length - 1];
-    const meeting = w?.meeting_minutes ?? 0;
-    const focus = w?.focus_minutes ?? 0;
-    const total = meeting + focus + (w?.free_minutes ?? 0);
-    const score = total > 0 ? Math.round((focus / Math.max(1, focus + meeting)) * 100) : 0;
-    return { ...d, meeting, focus, score };
-  });
-  rows.sort((a, b) => a.score - b.score);
-
-  const avgFocus = Math.round(rows.reduce((s, r) => s + r.focus, 0) / Math.max(1, rows.length));
-  const avgMtg = Math.round(rows.reduce((s, r) => s + r.meeting, 0) / Math.max(1, rows.length));
-  const avgScore = Math.round(rows.reduce((s, r) => s + r.score, 0) / Math.max(1, rows.length));
-
+function ThisWeek({ rows, avgFocus, avgMeetings }: { rows: TeamAnalyticsRow[]; avgFocus: number; avgMeetings: number }) {
+  const measured = rows.filter(isMeasuredPaceday);
   const insights: string[] = [];
   for (const r of rows) {
-    if (r.meeting > 25 * 60) insights.push(`${r.display_name} had over 25 hours in meetings this week.`);
+    if (r.figures === "measured" && (r.meeting_minutes ?? 0) > 25 * 60) {
+      insights.push(`${r.display_name} had over 25 hours in meetings this week.`);
+    }
   }
-  if (avgScore < 40) insights.push("The team is spending more time in meetings than focused work.");
-  if (rows.every((r) => r.score >= 60)) insights.push("Great week — the whole team had solid focus time.");
+  if (measured.length > 0) {
+    const avgScore = Math.round(measured.reduce((n, r) => n + (r.focus_score ?? 0), 0) / measured.length);
+    if (avgScore < 40) insights.push("The team is spending more time in meetings than focused work.");
+    if (measured.every((r) => (r.focus_score ?? 0) >= 60)) insights.push("Great week — the whole team had solid focus time.");
+  }
 
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <Stat label="Avg team focus" value={fmtMin(avgFocus)} color="#5B7FFF" />
-        <Stat label="Avg team meetings" value={fmtMin(avgMtg)} color="#E9B949" />
+        <Stat label="Avg team meetings" value={fmtMin(avgMeetings)} color="#E9B949" />
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-card">
@@ -192,14 +213,10 @@ function ThisWeek({ data }: { data: RowData[] }) {
           </thead>
           <tbody>
             {rows.map((r) => {
-              const tint =
-                r.meeting > r.focus
-                  ? "bg-[#EF4444]/5"
-                  : r.focus > r.meeting
-                    ? "bg-[#22C55E]/5"
-                    : "";
+              const measuredRow = r.figures === "measured";
+              const score = r.focus_score;
               return (
-                <tr key={r.email} className={"border-t border-border " + tint}>
+                <tr key={r.email} className="border-t border-border" data-testid={`team-analytics-row-${r.email}`}>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center gap-2">
                       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground">
@@ -207,28 +224,42 @@ function ThisWeek({ data }: { data: RowData[] }) {
                       </span>
                       <div className="min-w-0">
                         <div className="truncate text-foreground">{r.display_name}</div>
-                        {!r.is_paceday_user && (
-                          <div className="text-[10px] italic text-muted-foreground">Meeting time estimated</div>
+                        {r.kind === "added" && (
+                          <div className="text-[10px] text-muted-foreground">
+                            {ADDED_PERSON_LABEL}
+                            {measuredRow && ` · ${ANALYTICS_AVAILABILITY_ONLY}`}
+                          </div>
                         )}
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-foreground">{fmtMin(r.meeting)}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
-                    {r.is_paceday_user ? fmtMin(r.focus) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <span
-                      className="inline-block rounded-full px-2 py-0.5 text-xs font-medium tabular-nums"
-                      style={{
-                        color: r.score >= 60 ? "#15803D" : r.score >= 40 ? "#8A6A14" : "#B91C1C",
-                        backgroundColor:
-                          r.score >= 60 ? "#22C55E20" : r.score >= 40 ? "#E9B94920" : "#EF444420",
-                      }}
-                    >
-                      {r.is_paceday_user ? `${r.score}` : "—"}
-                    </span>
-                  </td>
+                  {measuredRow ? (
+                    <>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-foreground">{fmtMin(r.meeting_minutes ?? 0)}</td>
+                      <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
+                        {r.focus_minutes !== null ? fmtMin(r.focus_minutes) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">
+                        {score !== null ? (
+                          <span
+                            className="inline-block rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{
+                              color: score >= 60 ? "#15803D" : score >= 40 ? "#8A6A14" : "#B91C1C",
+                              backgroundColor: score >= 60 ? "#22C55E20" : score >= 40 ? "#E9B94920" : "#EF444420",
+                            }}
+                          >
+                            {score}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    </>
+                  ) : (
+                    <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-muted-foreground">
+                      {missingFigure(r)}
+                    </td>
+                  )}
                 </tr>
               );
             })}
@@ -264,110 +295,62 @@ function Stat({ label, value, color }: { label: string; value: string; color: st
 }
 
 // ============================================================================
-// Trends
+// Trends — the week's measured figures side by side. The formal analytics
+// answer one week, so nothing here is extrapolated across weeks.
 // ============================================================================
 
-function Trends({ data }: { data: RowData[] }) {
+function Trends({ rows }: { rows: TeamAnalyticsRow[] }) {
   const [metric, setMetric] = useState<"focus" | "meetings">("focus");
-
-  // 8 most recent weeks per member
-  const weeks = data[0]?.weeks.slice(-8) ?? [];
   const palette = ["#5B7FFF", "#E9B949", "#9B7AE0", "#5FC9A6", "#EF4444", "#0EA5E9", "#F97316", "#6366F1"];
-
-  // Trend arrows: compare last week vs avg of prior weeks per member
-  const trends = data.map((d, idx) => {
-    const last = (metric === "focus" ? d.weeks[d.weeks.length - 1]?.focus_minutes : d.weeks[d.weeks.length - 1]?.meeting_minutes) ?? 0;
-    const prior = d.weeks.slice(-8, -1);
-    const avg = prior.length
-      ? prior.reduce((s, w) => s + (metric === "focus" ? w.focus_minutes : w.meeting_minutes), 0) / prior.length
-      : 0;
-    const pct = avg > 0 ? Math.round(((last - avg) / avg) * 100) : 0;
-    return { name: d.display_name, color: palette[idx % palette.length], last, pct };
-  });
-
-  // Max value across all members & weeks for scaling
-  const maxVal = Math.max(
-    1,
-    ...data.flatMap((d) => d.weeks.slice(-8).map((w) => (metric === "focus" ? w.focus_minutes : w.meeting_minutes))),
-  );
+  const valueOf = (r: TeamAnalyticsRow) => (metric === "focus" ? r.focus_minutes : r.meeting_minutes);
+  const drawn = rows.filter((r) => r.figures === "measured" && valueOf(r) !== null);
+  const maxVal = Math.max(1, ...drawn.map((r) => valueOf(r) ?? 0));
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="inline-flex rounded-lg border border-border bg-card p-1 text-xs">
-          {(["focus", "meetings"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => setMetric(m)}
-              className={
-                "rounded-md px-3 py-1.5 font-medium transition " +
-                (metric === m ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")
-              }
-            >
-              {m === "focus" ? "Focus" : "Meetings"}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="overflow-x-auto rounded-2xl border border-border bg-card p-5">
-        <div className="flex h-48 min-w-[600px] items-end gap-2">
-          {weeks.map((_, weekIdx) => (
-            <div key={weekIdx} className="flex flex-1 items-end gap-0.5">
-              {data.map((d, memberIdx) => {
-                const w = d.weeks.slice(-8)[weekIdx];
-                const v = w ? (metric === "focus" ? w.focus_minutes : w.meeting_minutes) : 0;
-                const h = (v / maxVal) * 100;
-                return (
-                  <div
-                    key={d.email}
-                    className="flex-1 rounded-t-sm transition hover:opacity-80"
-                    style={{ height: `${h}%`, backgroundColor: palette[memberIdx % palette.length] }}
-                    title={`${d.display_name} · ${fmtMin(v)}`}
-                  />
-                );
-              })}
-            </div>
-          ))}
-        </div>
-        <div className="mt-2 flex justify-between text-[10px] text-muted-foreground">
-          {weeks.map((w, i) => (
-            <span key={i}>
-              {new Date(w.week_start).toLocaleDateString(UI_LOCALE, { month: "short", day: "numeric" })}
-            </span>
-          ))}
-        </div>
-      </div>
-
-      {/* Per-member trend arrows */}
-      <div className="grid gap-2 sm:grid-cols-2">
-        {trends.map((t) => (
-          <div key={t.name} className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-2.5">
-            <div className="flex items-center gap-2 text-sm text-foreground">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: t.color }} />
-              <span className="truncate">{t.name}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-muted-foreground tabular-nums">{fmtMin(t.last)}</span>
-              {t.pct > 5 ? (
-                <span className="inline-flex items-center text-[#22C55E]">
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  {t.pct}%
-                </span>
-              ) : t.pct < -5 ? (
-                <span className="inline-flex items-center text-[#EF4444]">
-                  <ArrowDownRight className="h-3.5 w-3.5" />
-                  {t.pct}%
-                </span>
-              ) : (
-                <span className="inline-flex items-center text-muted-foreground">
-                  <Minus className="h-3 w-3" />
-                </span>
-              )}
-            </div>
-          </div>
+      <div className="inline-flex rounded-lg border border-border bg-card p-1 text-xs">
+        {(["focus", "meetings"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMetric(m)}
+            className={
+              "rounded-md px-3 py-1.5 font-medium transition " +
+              (metric === m ? "bg-primary text-white" : "text-muted-foreground hover:text-foreground")
+            }
+          >
+            {m === "focus" ? "Focus" : "Meetings"}
+          </button>
         ))}
       </div>
+
+      {drawn.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-border bg-card p-6 text-center text-sm text-muted-foreground">
+          {ANALYTICS_NO_DATA}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card p-5">
+          <div className="flex h-48 min-w-[320px] items-end gap-2">
+            {drawn.map((r, idx) => {
+              const v = valueOf(r) ?? 0;
+              return (
+                <div
+                  key={r.email}
+                  className="flex-1 rounded-t-sm transition hover:opacity-80"
+                  style={{ height: `${(v / maxVal) * 100}%`, backgroundColor: palette[idx % palette.length] }}
+                  title={`${r.display_name} · ${fmtMin(v)}`}
+                />
+              );
+            })}
+          </div>
+          <div className="mt-2 flex gap-2 text-[10px] text-muted-foreground">
+            {drawn.map((r) => (
+              <span key={r.email} className="flex-1 truncate text-center">
+                {r.display_name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -376,7 +359,7 @@ function Trends({ data }: { data: RowData[] }) {
 // Members panel — per-member 12-week chart + history
 // ============================================================================
 
-function MembersPanel({ teamId, week, members }: { teamId: string; week: string; members: RowData[] }) {
+function MembersPanel({ teamId, week, members }: { teamId: string; week: string; members: TeamAnalyticsRow[] }) {
   const analyticsQ = useQuery({
     queryKey: managerKeys.analytics(week, teamId),
     queryFn: () => managerApi.remote.analytics(week, teamId),
@@ -428,7 +411,12 @@ function MembersPanel({ teamId, week, members }: { teamId: string; week: string;
         <div className="mb-1 text-sm font-semibold text-foreground">{member.display_name}</div>
         <div className="mb-4 text-xs text-muted-foreground">Weekly breakdown</div>
 
-        {analyticsQ.isLoading ? (
+        {member.kind === "added" ? (
+          // PAC-129 (contract §9.8, m-7): an added person has no Manager figures.
+          <p className="text-sm text-muted-foreground" data-testid="manager-analytics-added-hint">
+            {ADDED_PERSON_LABEL}. {MANAGER_ANALYTICS_ADDED_HINT}
+          </p>
+        ) : analyticsQ.isLoading ? (
           <div className="h-40 animate-pulse rounded-lg bg-muted" />
         ) : analyticsQ.isError ? (
           <div className="flex flex-wrap items-start gap-3">
