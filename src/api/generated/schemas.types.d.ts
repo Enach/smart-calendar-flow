@@ -2389,7 +2389,7 @@ export type SchedulingLinkHost = {
    */
   user_id: string;
   /**
-   * Empty string when the user record could not be loaded.
+   * The host's address. Never empty: every operation that answers a roster reads it strictly, and a host's user record that cannot be loaded is that operation's 500 (PAC-25, PAC-122, PAC-132; SF-029).
    */
   email: string;
   /**
@@ -2615,7 +2615,7 @@ export type SchedulingLinkListResponse = {
   shared: Array<SchedulingLink>;
 }
 /**
- * PAC-112. The answer to `createSchedulingLink` (201) and `updateSchedulingLink` (200): every property of `SchedulingLink` (shared through a YAML anchor, so the two cannot drift) plus the optional `co_host_changes`. The roster in `hosts` is built without the strict read's guarantee (a failed roster read can empty it or blank a host's email; PAC-122 SF-029 leaves this open), unlike `getSchedulingLink`'s and, since PAC-122, the list's, and is never a co-host baseline (spec D-3). `required` is shared through a second anchor, so neither the property map nor the required list can drift.
+ * PAC-112. The answer to `createSchedulingLink` (201) and `updateSchedulingLink` (200): every property of `SchedulingLink` (shared through a YAML anchor, so the two cannot drift) plus the optional `co_host_changes`. The roster in `hosts` is read strictly inside the write, before it commits (PAC-132, SF-029): a failed roster read is the operation's 500 with nothing written, never an emptied roster or a blank email. It is still never a co-host baseline (spec D-3). `required` is shared through a second anchor, so neither the property map nor the required list can drift.
  */
 export type SchedulingLinkSaved = {
   id: string;
@@ -7253,7 +7253,7 @@ export type get_ListSchedulingLinkInvitesAlias = {
 /**
  * Readable only by the link's owner and by co-hosts whose host row on the link is `accepted` (PAC-25, API-006), and only while the link is not deleted: a deleted link answers every caller, owner and accepted co-hosts included, the same `404 {"error":"not found"}` as an id that matches no link (PAC-40 AC-2, D-9); the owner reads it through `getArchivedSchedulingLink` instead. A paused link (`active=false`) is still returned to its owner and accepted co-hosts. That is the same set of callers who receive the link from `GET /api/scheduling-links`, so this read discloses nothing the list does not. Every other authenticated caller (no host row, a `pending` or `declined` invitation, a co-host who left or was removed) receives the same `404 {"error":"not found"}` as for an id that matches no link, with no part of the link in the body, so the answer does not reveal whether a link exists. A refused read is never `403` (PAC-25 D-1; contrast the owner-only siblings PATCH, DELETE, `/bookings` and `/hosts`, which still answer `403` and are out of scope). Check order: `400` malformed id; then the link lookup, which does not find a deleted link; then the caller's own host-status lookup on that link; then `404` for no link (never existed or deleted) or a caller who may not read it; then `200`. A storage error on either lookup answers `500` `{"error":"internal error"}`, never `404` (an outage is not reported as "not found") and never `200` (the reader check does not fail open). An allowed reader receives the full record including every host row (accepted, pending and declined) with each host's email, name and avatar; `is_owner` is computed against the caller and `my_status` is the caller's own host status. Building that record reads the roster (the link's host rows and each host's user record); a storage error on that read also answers `500` `{"error":"internal error"}`, never `200` with `hosts: []` or with a host's email missing (PAC-25 C-2). An accepted co-host therefore still sees pending and declined invitees' emails, as through the list (PAC-25 D-2).
  * 
- * PAC-112 (spec D-3, §6): this is the ONLY read from which a client may take a link's co-host list as the baseline for a co-host edit (the list sent in `co_host_emails` is the complete list, so a baseline missing someone removes them). The answers of `listSchedulingLinks`, `createSchedulingLink` and `updateSchedulingLink` must not be used as a baseline: create and PATCH build the roster without this guarantee, and the list, although it reads the roster strictly since PAC-122 (SF-029: a failed roster read is its 500), is not the baseline read either. The strictness above (500, never a degraded roster) is therefore load-bearing and must not be relaxed; it is pinned by TestPAC25GetLinkRosterFailureIs500.
+ * PAC-112 (spec D-3, §6): this is the ONLY read from which a client may take a link's co-host list as the baseline for a co-host edit (the list sent in `co_host_emails` is the complete list, so a baseline missing someone removes them). The answers of `listSchedulingLinks`, `createSchedulingLink` and `updateSchedulingLink` must not be used as a baseline. They read the roster strictly too (the list since PAC-122, create and PATCH inside their write since PAC-132; SF-029: a failed roster read is their 500), but they are not the baseline read. The strictness above (500, never a degraded roster) is therefore load-bearing and must not be relaxed; it is pinned by TestPAC25GetLinkRosterFailureIs500.
  */
 export type get_GetSchedulingLink = {
       method: "GET",
