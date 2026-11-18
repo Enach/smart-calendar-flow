@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { Calendar, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
+import { Calendar, CircleHelp, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
 import { api, apiErrorMessage } from "@/api/client";
 import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/useAuth";
@@ -59,6 +59,9 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const [slots, setSlots] = useState<SuggestedSlot[]>([]);
+  // PAC-133 OQ-6: attendees whose availability the server could not read.
+  // Their missing time did not constrain the slots, so they are never shown as free.
+  const [unknownAttendees, setUnknownAttendees] = useState<string[]>([]);
   const [selected, setSelected] = useState<number>(0);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +97,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       return;
     }
     setSearching(true);
+    setUnknownAttendees([]);
     try {
       const res = await api.scheduleSuggest({
         title: title.trim(),
@@ -103,6 +107,8 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
         range_end: end.toISOString(),
       });
       setSlots(res.slots);
+      // An absent list (a server from before PAC-133) is read as [].
+      setUnknownAttendees(res.unknown_attendees ?? []);
       setSelected(0);
       setSearched(true);
     } catch (e) {
@@ -335,6 +341,17 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
                 </button>
               );
             })}
+          {searched && !searching && unknownAttendees.length > 0 && (
+            <p
+              data-testid="schedule-suggest-unknown-attendees"
+              className="flex items-start gap-1.5 pt-1 text-xs font-medium text-[#8A6A14]"
+            >
+              <CircleHelp aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>
+                Couldn't check availability for: {unknownAttendees.join(", ")}. These times don't account for their calendars.
+              </span>
+            </p>
+          )}
         </div>
 
         {/* Footer */}

@@ -415,8 +415,38 @@ export const PublicLinkInfo = z.strictObject({ slug: z.string(), title: z.string
 export type PublicSlotsResponse = __TypedOpenapi.Schemas.PublicSlotsResponse;
 export const PublicSlotsResponse = z.strictObject({ slots: z.array(PublicBookingSlot), available_dates: z.array(z.iso.date()), time_zone: z.string(), display_time_zone: z.string(), range_from: z.iso.date(), range_to: z.iso.date() });
 
-export type RawGoogleFreeBusyMap = __TypedOpenapi.Schemas.RawGoogleFreeBusyMap;
-export const RawGoogleFreeBusyMap = z.record(z.string(), z.array(RawGoogleBusyWindow));
+export type RawFreeBusyOwnKnown = __TypedOpenapi.Schemas.RawFreeBusyOwnKnown;
+export const RawFreeBusyOwnKnown = z.strictObject({ status: z.literal("known"), busy: z.array(RawGoogleBusyWindow) });
+
+export type RawFreeBusyOwnUnknown = __TypedOpenapi.Schemas.RawFreeBusyOwnUnknown;
+export const RawFreeBusyOwnUnknown = z.strictObject({ status: z.literal("unknown"), busy: z.array(RawGoogleBusyWindow).min(1).optional() });
+
+export type RawFreeBusyOwnCalendar = __TypedOpenapi.Schemas.RawFreeBusyOwnCalendar;
+export const RawFreeBusyOwnCalendar = z.union([RawFreeBusyOwnKnown, RawFreeBusyOwnUnknown]).refine((data) => [RawFreeBusyOwnKnown.safeParse(data).success, RawFreeBusyOwnUnknown.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
+
+export type RawFreeBusyMemberKnown = __TypedOpenapi.Schemas.RawFreeBusyMemberKnown;
+export const RawFreeBusyMemberKnown = z.strictObject({ address: z.string(), status: z.literal("known"), busy: z.array(RawGoogleBusyWindow) });
+
+export type RawFreeBusyMemberUnknown = __TypedOpenapi.Schemas.RawFreeBusyMemberUnknown;
+export const RawFreeBusyMemberUnknown = z.strictObject({ address: z.string(), status: z.literal("unknown"), busy: z.array(RawGoogleBusyWindow).min(1).optional() });
+
+export type RawFreeBusyMember = __TypedOpenapi.Schemas.RawFreeBusyMember;
+export const RawFreeBusyMember = z.union([RawFreeBusyMemberKnown, RawFreeBusyMemberUnknown]).refine((data) => [RawFreeBusyMemberKnown.safeParse(data).success, RawFreeBusyMemberUnknown.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
+
+export type RawFreeBusyGroup = __TypedOpenapi.Schemas.RawFreeBusyGroup;
+export const RawFreeBusyGroup = z.strictObject({ members: z.array(RawFreeBusyMember) });
+
+export type RawFreeBusyCalendarKnown = __TypedOpenapi.Schemas.RawFreeBusyCalendarKnown;
+export const RawFreeBusyCalendarKnown = z.strictObject({ address: z.string(), status: z.literal("known"), busy: z.array(RawGoogleBusyWindow), group: RawFreeBusyGroup.optional() });
+
+export type RawFreeBusyCalendarUnknown = __TypedOpenapi.Schemas.RawFreeBusyCalendarUnknown;
+export const RawFreeBusyCalendarUnknown = z.strictObject({ address: z.string(), status: z.literal("unknown"), busy: z.array(RawGoogleBusyWindow).min(1).optional(), group: RawFreeBusyGroup.optional() });
+
+export type RawFreeBusyCalendar = __TypedOpenapi.Schemas.RawFreeBusyCalendar;
+export const RawFreeBusyCalendar = z.union([RawFreeBusyCalendarKnown, RawFreeBusyCalendarUnknown]).refine((data) => [RawFreeBusyCalendarKnown.safeParse(data).success, RawFreeBusyCalendarUnknown.safeParse(data).success].filter(Boolean).length === 1, { message: "oneOf" });
+
+export type RawFreeBusyAnswer = __TypedOpenapi.Schemas.RawFreeBusyAnswer;
+export const RawFreeBusyAnswer = z.strictObject({ own: RawFreeBusyOwnCalendar, calendars: z.array(RawFreeBusyCalendar) });
 
 export type ReadinessNotReady = __TypedOpenapi.Schemas.ReadinessNotReady;
 export const ReadinessNotReady = z.strictObject({ error: z.literal("not ready") });
@@ -449,7 +479,7 @@ export type ScheduleSuggestRequest = __TypedOpenapi.Schemas.ScheduleSuggestReque
 export const ScheduleSuggestRequest = z.object({ duration_minutes: z.number().int().optional(), attendees: z.array(z.email()).optional(), range_start: z.iso.datetime(), range_end: z.iso.datetime(), title: z.string().optional() }).catchall(z.unknown());
 
 export type ScheduleSuggestions = __TypedOpenapi.Schemas.ScheduleSuggestions;
-export const ScheduleSuggestions = z.strictObject({ slots: z.array(SuggestedSlot) });
+export const ScheduleSuggestions = z.strictObject({ slots: z.array(SuggestedSlot), unknown_attendees: z.array(z.string()) });
 
 export type SchedulingErrorResponse = __TypedOpenapi.Schemas.SchedulingErrorResponse;
 export const SchedulingErrorResponse = z.strictObject({ error: z.string() });

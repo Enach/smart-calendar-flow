@@ -180,7 +180,10 @@ export default function Dashboard() {
         setNlpNotConfigured(res.not_configured);
       } else if (res.intent === "schedule_meeting") {
         if (!res.suggested_slots?.length) {
-          setNlpError("No available slots found for that request.");
+          // PAC-133 AC-43: the parse answer's error, whatever set it (the model,
+          // or the server's suggestion failure; the server keeps the model's
+          // error first), replaces the generic "no slots" text.
+          setNlpError(res.error || "No available slots found for that request.");
         } else {
           setParseResult(res);
         }

@@ -47,7 +47,7 @@ describe("frontend/backend API port", () => {
   });
 
   it("sends scheduling requests using the backend JSON shape", async () => {
-    fetchMock.mockResolvedValueOnce(jsonResponse({ slots: [] }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ slots: [], unknown_attendees: [] }));
     const body = {
       duration_minutes: 30,
       attendees: ["alice@example.com"],
@@ -56,7 +56,7 @@ describe("frontend/backend API port", () => {
       title: "Planning",
     };
 
-    await expect(api.scheduleSuggest(body)).resolves.toEqual({ slots: [] });
+    await expect(api.scheduleSuggest(body)).resolves.toEqual({ slots: [], unknown_attendees: [] });
 
     const [input, init] = fetchMock.mock.calls[0];
     expect(requestPath(input)).toBe("/api/schedule/suggest");

@@ -550,11 +550,15 @@ export const demoClientOps = {
     range_end: string;
     title: string;
   }) => {
-        const cov = coverageFromAttendees(body.attendees);
-        const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end).map(
-          (s) => ({ ...s, coverage: cov }),
+        // PAC-133: the server's shape. The slots carry no coverage (the
+        // contract's SuggestedSlot has none); the attendees the demo cannot
+        // read are named, as sent and in request order, and never treated
+        // as free.
+        const slots = mockSuggestedSlots(body.duration_minutes, body.range_start, body.range_end);
+        const unknown_attendees = body.attendees.filter(
+          (a, i) => classifyEmail(a) === "unknown" && body.attendees.indexOf(a) === i,
         );
-        return { slots };
+        return { slots, unknown_attendees };
       },
 
   scheduleCreate: (body: {

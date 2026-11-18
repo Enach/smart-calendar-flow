@@ -32,6 +32,9 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
 
     // Pull freebusy in one window
     let busyMap: Record<string, Array<{ start: string; end: string }>> = {};
+    // PAC-133: a member whose calendar could not be read is unknown, never
+    // free. Windows reported for them still block; they are never counted free.
+    let unknown = new Set<string>();
     try {
       const fb = await getFreebusy({
         emails: active.map((m) => m.email),
@@ -39,8 +42,10 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
         end_time: dayEnd.toISOString(),
       });
       busyMap = fb.busy ?? {};
+      unknown = new Set(fb.participants.filter((p) => p.status === "unknown").map((p) => p.email.toLowerCase()));
     } catch {
       busyMap = {};
+      unknown = new Set(active.map((m) => m.email.toLowerCase()));
     }
 
     const zones = team.no_meeting_zones.filter((z) => z.day_of_week === dow);
@@ -68,7 +73,7 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
         const conflict = busy.some(
           (b) => !(new Date(b.end) <= slotStart || new Date(b.start) >= slotEnd),
         );
-        if (!conflict) free += 1;
+        if (!conflict && !unknown.has(m.email.toLowerCase())) free += 1;
       }
 
       if (free === 0) continue;
