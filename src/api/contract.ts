@@ -32,6 +32,18 @@ import type { components } from "./generated/types";
  */
 export type CalendarEventDTO = components["schemas"]["CalendarEvent"];
 
+/**
+ * POST /api/schedule/suggest 200 (`ScheduleSuggestions`). PAC-133:
+ * `unknown_attendees` names the attendees whose availability could not be
+ * read; their missing time did not constrain the slots, so they are never
+ * free. The contract makes it required; it is optional here because a server
+ * from before PAC-133 omits it, and the modal reads an absent list as [].
+ */
+export interface ScheduleSuggestResponse {
+  slots: SuggestedSlot[];
+  unknown_attendees?: components["schemas"]["ScheduleSuggestions"]["unknown_attendees"];
+}
+
 export interface ScheduleSuggestRequest {
   duration_minutes: number;
   attendees: string[];
@@ -81,7 +93,7 @@ export interface ApiPort {
   getFocusBlocks(week: string): Promise<FocusBlock[]>;
   clearFocusBlocks(week: string): Promise<{ deleted: number }>;
 
-  scheduleSuggest(body: ScheduleSuggestRequest): Promise<{ slots: SuggestedSlot[] }>;
+  scheduleSuggest(body: ScheduleSuggestRequest): Promise<ScheduleSuggestResponse>;
   scheduleCreate(body: ScheduleCreateRequest): Promise<CalendarEventDTO>;
   compressionPreview(body: { date?: string; week?: string }): Promise<CompressionResult[]>;
   compressionApply(body: { proposals: MoveProposal[] }): Promise<CompressionApplyResponse>;
