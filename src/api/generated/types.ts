@@ -2323,7 +2323,11 @@ export interface paths {
         };
         /**
          * Whether Notion is connected for this user
-         * @description Always 200. Any storage error collapses into `{"connected": false}` with no `workspace_name` key.
+         * @description `{"connected": false}` with no `workspace_name` key when no Notion connection is
+         *     stored, or when its stored token cannot be decrypted (PAC-84 AC-16b). PAC-122
+         *     (SF-045): any other failure to read the connection is the 500
+         *     `{"error":"internal error"}`, never "not connected".
+         *
          */
         get: operations["getNotionStatus"];
         put?: never;
@@ -2416,8 +2420,10 @@ export interface paths {
         };
         /**
          * Whether Slack is connected for this user
-         * @description Always 200. Any storage error (including "no row") is collapsed into
-         *     `{"connected": false}` — the `workspace_name` key is then absent entirely.
+         * @description `{"connected": false}` when no Slack connection is stored, or when its stored
+         *     token cannot be decrypted (PAC-84 AC-16b); the `workspace_name` key is then
+         *     absent entirely. PAC-122 (SF-045): any other failure to read the connection is
+         *     the 500 `{"error":"internal error"}`, never "not connected".
          *
          */
         get: operations["getSlackStatus"];
@@ -8934,7 +8940,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description "SSO not configured for this domain" — JSON, unlike the other errors here. No active provider row: none exists, or it is suspended (PAC-22). A sign-in started before a suspension that reaches this callback after it gets this 404 and no session. Also returned when the lookup errors. */
+            /** @description "SSO not configured for this domain" — JSON, unlike the other errors here. No active provider row: none exists, or it is suspended (PAC-22). A sign-in started before a suspension that reaches this callback after it gets this 404 and no session. A lookup that fails is the 500 since PAC-122 (SF-072), not this 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -8943,7 +8949,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description OIDC setup, code exchange, or account creation (one transaction, nothing kept) failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description The provider lookup (PAC-122 SF-072), OIDC setup, code exchange, or account creation (one transaction, nothing kept) failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9245,7 +9251,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Only (PAC-71) the account's current session generation could not be read. Body `{"error":"internal error"}`; no Set-Cookie (spec AC-48). Other read failures answer as before this change. */
+            /** @description The account's current session generation could not be read (PAC-71), or (PAC-122 SF-072) the user row could not be read: only a missing row is the 404. Body `{"error":"internal error"}`; no Set-Cookie (spec AC-48). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -9585,7 +9591,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description "SSO not configured for this domain" — no active provider row: none exists, or it is suspended (PAC-22). Also returned when the lookup errors. */
+            /** @description "SSO not configured for this domain" — no active provider row: none exists, or it is suspended (PAC-22). A lookup that fails is the 500 since PAC-122 (SF-072), not this 404. */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -9594,7 +9600,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Issuer discovery failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Issuer discovery failed, or (PAC-122 SF-072) the provider lookup failed. Body: `{"error":"internal error"}`. The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -10940,7 +10946,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description The token exchange failed (transport error, unparseable JSON, or a non-empty `error` field from Notion). Body: `{"error":"upstream provider error"}`. Notion's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description The token exchange failed (transport error, unparseable JSON, a non-empty `error` field from Notion, or, since PAC-122 SF-023, a non-2xx status whatever its body holds, or a 2xx with no `access_token`). Nothing is stored. Body: `{"error":"upstream provider error"}`. Notion's string is not returned. The detail is written to the server log and Sentry only (PAC-21). */
             502: {
                 headers: {
                     [name: string]: unknown;
@@ -10973,7 +10979,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             500: components["responses"]["SessionGenerationUnavailable"];
-            /** @description `NOTION_CLIENT_ID` is unset. Body: `{"error":"Notion not configured"}`. */
+            /** @description `NOTION_CLIENT_ID` is unset, or (PAC-122 SF-081) `NOTION_REDIRECT_URI` is unset, which would only send the user to Notion's own error page. Body: `{"error":"Notion not configured"}`. No state cookie is set. */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -11103,7 +11109,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             500: components["responses"]["SessionGenerationUnavailable"];
-            /** @description `SLACK_CLIENT_ID` is unset. Body: `{"error":"Slack not configured"}`. */
+            /** @description `SLACK_CLIENT_ID` is unset, or (PAC-122 SF-081) `SLACK_REDIRECT_URI` is unset, which would only send the user to Slack's own error page. Body: `{"error":"Slack not configured"}`. No state cookie is set. */
             503: {
                 headers: {
                     [name: string]: unknown;
