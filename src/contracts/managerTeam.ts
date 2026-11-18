@@ -9,10 +9,15 @@ export const memberWeekSchema = z.object({
   data_available: z.boolean(),
 }).strict();
 
+// Response addresses are read as strings: the server's normaliser accepts
+// addresses (`a&b@x.example`, `pat@x.y`) that zod's email check refuses, and
+// one such roster entry must not make the whole team unreadable (PAC-129 review).
 export const managerMemberSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),
   display_name: z.string(),
-  source: z.enum(["auto", "manual", "formal"]),
+  // "added" (PAC-129, contract §5.1): a person added to the team without
+  // Paceday access, read-only. Sent only because listTeam asks include_added.
+  source: z.enum(["auto", "manual", "formal", "added"]),
   cadence: cadenceSchema,
   cadence_custom_days: z.number().int().min(1).max(365).nullable(),
   last_one_on_one_at: z.string().datetime().nullable(),
@@ -28,7 +33,7 @@ export const managerRosterSchema = z.object({
 }).strict();
 
 export const scanCandidateSchema = z.object({
-  email: z.string().email(),
+  email: z.string().min(1),
   display_name: z.string(),
   already_assigned: z.boolean(),
 }).strict();

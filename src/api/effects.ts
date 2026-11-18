@@ -69,6 +69,7 @@ export const OPERATION_EFFECTS = {
   "teams.createTeam": "write",
   "teams.renameTeam": "write",
   "teams.deleteTeam": "write",
+  "teams.addPerson": "write",
   "teams.inviteMember": "write",
   "teams.removeMember": "write",
   "teams.addZone": "write",

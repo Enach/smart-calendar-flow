@@ -4,8 +4,17 @@
  * answered from the local team store. Reached only through
  * src/api/demoGate.ts in a demo session of a non-production build.
  */
-import { teamsApi, type AvailabilitySlot, type NoMeetingZone } from "@/api/teams";
-import { managerApi, type TeamMember as ManagerTeamMember } from "@/api/manager";
+import { ApiHttpError } from "@/api/client";
+import {
+  teamsApi,
+  type AvailabilitySlot,
+  type FormalTeamMember,
+  type NoMeetingZone,
+  type TeamAnalyticsRow,
+  type TeamAnalyticsView,
+  type TeamInviteOutcome,
+} from "@/api/teams";
+import { localISODate, mondayOf } from "@/lib/localDate";
 import { getFreebusy } from "@/api/coverageCache";
 import { demoMemberAnalytics } from "./manager";
 
@@ -19,7 +28,8 @@ import { demoMemberAnalytics } from "./manager";
 async function findSlots(teamId: string, dateISO: string, durationMin: number): Promise<AvailabilitySlot[]> {
     const team = teamsApi.get(teamId);
     if (!team) return [];
-    const active = team.members.filter((m) => m.status === "active");
+    // PAC-129 (AC-35): added people count, exactly like Paceday members.
+    const active = team.members;
     if (active.length === 0) return [];
 
     const day = new Date(dateISO);
@@ -66,15 +76,16 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
       const inZone = zones.some((z) => !(endMin <= z.start_min || startMin >= z.end_min));
       if (inZone) continue;
 
-      // count free members
-      let free = 0;
-      for (const m of active) {
-        const busy = busyMap[m.email.toLowerCase()] ?? [];
-        const conflict = busy.some(
+      // As the server (PAC-129 §3.5): a reported busy window blocks the slot,
+      // even for an unknown member; unknown is counted, never free.
+      const blocked = active.some((m) =>
+        (busyMap[m.email.toLowerCase()] ?? []).some(
           (b) => !(new Date(b.end) <= slotStart || new Date(b.start) >= slotEnd),
-        );
-        if (!conflict && !unknown.has(m.email.toLowerCase())) free += 1;
-      }
+        ),
+      );
+      if (blocked) continue;
+      const unknownCount = active.filter((m) => unknown.has(m.email.toLowerCase())).length;
+      const free = active.length - unknownCount;
 
       if (free === 0) continue;
 
@@ -97,6 +108,7 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
         end: slotEnd.toISOString(),
         score,
         free_count: free,
+        unknown_count: unknownCount,
         total_count: active.length,
       });
     }
@@ -108,75 +120,83 @@ async function findSlots(teamId: string, dateISO: string, durationMin: number): 
 
   // ---------- Aggregated team analytics ----------
 
-  /**
-   * Pull per-member analytics from the manager API where possible.
-   * Members not in the manager team get a synthetic estimate.
-   */
-function teamAnalytics(teamId: string): Array<{
-    email: string;
-    display_name: string;
-    is_paceday_user: boolean;
-    weeks: { week_start: string; meeting_minutes: number; focus_minutes: number; free_minutes: number }[];
-  }> {
-    const team = teamsApi.get(teamId);
-    if (!team) return [];
-    const mgrMap = new Map<string, ManagerTeamMember>();
-    for (const m of managerApi.listTeam()) mgrMap.set(m.email, m);
-
-    return team.members
-      .filter((m) => m.status === "active" && m.email !== teamsApi.currentUserEmail())
-      .map((m) => {
-        const mgr = mgrMap.get(m.email);
-        if (mgr) {
-          const a = demoMemberAnalytics(m.email);
-          if (a) {
-            return {
-              email: m.email,
-              display_name: m.display_name,
-              is_paceday_user: m.is_paceday_user,
-              weeks: a.weeks,
-            };
-          }
-        }
-        // Synthetic estimate for non-manager-team folks
-        return {
-          email: m.email,
-          display_name: m.display_name,
-          is_paceday_user: m.is_paceday_user,
-          weeks: syntheticWeeks(m.email, m.is_paceday_user),
-        };
-      });
+/**
+ * The demo's team analytics for the week of `dateISO` (made-up numbers,
+ * PAC-83), in the server's shape (PAC-129 §3.6): one row per member of both
+ * kinds; an added person's row is availability only (meeting time, no focus);
+ * no free time; the week is the week asked for. The demo user owns the team,
+ * so no row is withheld.
+ */
+function teamAnalytics(teamId: string, dateISO?: string): TeamAnalyticsView {
+  const week_start = mondayOf(dateISO ?? localISODate());
+  const team = teamsApi.get(teamId);
+  const rows: TeamAnalyticsRow[] = (team?.members ?? []).map((m) => {
+    const managed = demoMemberAnalytics(m.email)?.weeks.find((w) => w.week_start === week_start);
+    const synthetic = syntheticWeek(m.email, week_start);
+    const meeting = managed?.meeting_minutes ?? synthetic.meeting;
+    const focus = managed?.focus_minutes ?? synthetic.focus;
+    const paceday = m.kind === "paceday";
+    return {
+      email: m.email,
+      display_name: m.display_name,
+      kind: m.kind,
+      figures: "measured",
+      meeting_minutes: meeting,
+      focus_minutes: paceday ? focus : null,
+      focus_score: paceday ? Math.round((focus / Math.max(1, focus + meeting)) * 100) : null,
+    };
+  });
+  const measured = rows.filter((r) => r.kind === "paceday");
+  const div = Math.max(1, measured.length);
+  return {
+    week_start,
+    avg_meeting_minutes: Math.floor(measured.reduce((n, r) => n + (r.meeting_minutes ?? 0), 0) / div),
+    avg_focus_minutes: Math.floor(measured.reduce((n, r) => n + (r.focus_minutes ?? 0), 0) / div),
+    rows,
+  };
 }
 
+function syntheticWeek(email: string, weekStart: string): { meeting: number; focus: number } {
+  const seed = Array.from(email + weekStart).reduce((a, c) => a + c.charCodeAt(0), 0);
+  const r = (n: number) => ((seed * (n + 3)) % 100) / 100;
+  return { meeting: Math.round(120 + r(1) * 600), focus: Math.round(60 + r(2) * 480) };
+}
 
-function syntheticWeeks(email: string, paceday: boolean) {
-  const seed = Array.from(email).reduce((a, c) => a + c.charCodeAt(0), 0);
-  const monday = (() => {
-    const d = new Date();
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    d.setHours(0, 0, 0, 0);
-    return d;
-  })();
-  const weeks = [];
-  for (let i = 11; i >= 0; i--) {
-    const ws = new Date(monday);
-    ws.setDate(ws.getDate() - i * 7);
-    const r = (n: number) => ((seed * (i + 1) * (n + 3)) % 100) / 100;
-    const meetings = Math.round(120 + r(1) * 600);
-    const focus = paceday ? Math.round(60 + r(2) * 480) : 0;
-    const free = Math.max(0, 2400 - meetings - focus);
-    weeks.push({
-      week_start: ws.toISOString().slice(0, 10),
-      meeting_minutes: meetings,
-      focus_minutes: focus,
-      free_minutes: free,
-    });
+// ---------- Members (PAC-129 §3.12) ----------
+
+const LIMIT_TEXT = "this team has reached its limit of 50 members; remove someone before adding another";
+
+function refuse(status: number, error: string): never {
+  throw new ApiHttpError(status, { error }, error);
+}
+
+function addPerson(teamId: string, email: string, name?: string): FormalTeamMember {
+  const team = teamsApi.get(teamId);
+  if (!team) refuse(403, "forbidden");
+  const norm = email.trim().toLowerCase();
+  if (norm === teamsApi.currentUserEmail().toLowerCase()) refuse(422, "you cannot add your own address");
+  const existing = team.members.find((m) => m.email === norm);
+  if (existing?.kind === "paceday") refuse(422, "this address belongs to a Paceday member of this team");
+  if (!existing && team.members.length >= 50) refuse(422, LIMIT_TEXT);
+  return teamsApi.addPerson(teamId, norm, name)!.person;
+}
+
+function inviteMember(teamId: string, email: string, displayName?: string): TeamInviteOutcome {
+  const team = teamsApi.get(teamId);
+  if (!team) refuse(403, "forbidden");
+  const norm = email.trim().toLowerCase();
+  if (!team.members.some((m) => m.email === norm) && team.members.length >= 50) refuse(422, LIMIT_TEXT);
+  return teamsApi.inviteMember(teamId, norm, displayName)!;
+}
+
+function removeMember(teamId: string, email: string): void {
+  const team = teamsApi.get(teamId);
+  const person = team?.members.find((m) => m.email === email.trim().toLowerCase());
+  if (person?.role === "owner" && team!.members.filter((m) => m.role === "owner").length === 1) {
+    refuse(422, "the team owner cannot be removed");
   }
-  return weeks;
+  if (!teamsApi.removeMember(teamId, email)) refuse(404, "person not found");
 }
-
 
 /** The demo answer of each teamsApi.remote operation, keyed by its name. */
 export const demoTeamsOps = {
@@ -190,9 +210,11 @@ export const demoTeamsOps = {
 
   deleteTeam: (id: string) => teamsApi.deleteTeam(id),
 
-  inviteMember: (teamId: string, email: string, displayName?: string) => teamsApi.inviteMember(teamId, email, displayName),
+  addPerson: (teamId: string, email: string, name?: string) => addPerson(teamId, email, name),
 
-  removeMember: (teamId: string, email: string) => teamsApi.removeMember(teamId, email),
+  inviteMember: (teamId: string, email: string, displayName?: string) => inviteMember(teamId, email, displayName),
+
+  removeMember: (teamId: string, email: string) => removeMember(teamId, email),
 
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) => teamsApi.addZone(teamId, input),
 
@@ -202,5 +224,5 @@ export const demoTeamsOps = {
 
   findSlots: (teamId: string, dateISO: string, durationMin: number) => findSlots(teamId, dateISO, durationMin),
 
-  teamAnalytics: (teamId: string, dateISO?: string) => teamAnalytics(teamId),
+  teamAnalytics: (teamId: string, dateISO?: string) => teamAnalytics(teamId, dateISO),
 };

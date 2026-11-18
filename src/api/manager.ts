@@ -28,7 +28,8 @@ export interface TeamMember {
   custom_cadence_days?: number;
   /** ISO date of last 1:1, or null. */
   last_one_on_one?: string | null;
-  source: "auto" | "manual" | "formal";
+  /** "added" (PAC-129): added to the team without Paceday access; read-only here. */
+  source: "auto" | "manual" | "formal" | "added";
   is_paceday_user: boolean;
   data_available: boolean;
   added_at: string;
@@ -254,7 +255,9 @@ const managerRemote = {
 
   listTeam: (teamId: string) =>
     demoOrReal<ManagerRosterWire>("manager.listTeam", [teamId], async () => {
-        const raw = await requestApi<unknown>("GET", "/manager/team", undefined, managerQuery(teamId));
+        // PAC-129 (contract §9.8): the team-scoped roster includes the people
+        // added to the team, as read-only `source: "added"` entries.
+        const raw = await requestApi<unknown>("GET", "/manager/team", undefined, { ...managerQuery(teamId), include_added: "true" });
         const roster = managerRosterSchema.parse(raw);
         if (roster.team_id !== teamId) throw new ManagerValidationError("Roster response does not match the active team.");
         const state = load();
