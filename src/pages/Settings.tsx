@@ -842,6 +842,9 @@ function ProfileSection() {
   const navigate = useNavigate();
   const [profile, setProfile] = useState(() => managerApi.getProfile());
   const [confirmSwitch, setConfirmSwitch] = useState(false);
+  // PAC-122 SF-049: true while the profile write is in flight; the role
+  // buttons and the dialog actions are disabled until it answers.
+  const [saving, setSaving] = useState(false);
 
   const setRole = (manager: boolean) => {
     if (profile.is_manager && !manager) {
@@ -858,12 +861,15 @@ function ProfileSection() {
   // PAC-122 SF-049: the role changes, and success is shown, only once the
   // server has stored it; a failed write leaves the role as it was and says so.
   const saveRole = async (patch: { is_manager: boolean; onboarding_profile_selected?: boolean }, done: string) => {
+    setSaving(true);
     try {
       const next = await managerApi.remote.setProfile(patch);
       setProfile(next);
       toast.success(done);
     } catch (e) {
       toast.error(apiErrorMessage(e, effectOf("manager.setProfile")));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -887,6 +893,7 @@ function ProfileSection() {
         <button
           type="button"
           onClick={() => setRole(false)}
+          disabled={saving}
           className={
             "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
             (!profile.is_manager
@@ -900,6 +907,7 @@ function ProfileSection() {
         <button
           type="button"
           onClick={() => setRole(true)}
+          disabled={saving}
           className={
             "inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-xs font-semibold transition " +
             (profile.is_manager
@@ -942,9 +950,14 @@ function ProfileSection() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmSwitchToIC}
+              onClick={(e) => {
+                // Keep the dialog open until the write answers (SF-049).
+                e.preventDefault();
+                void confirmSwitchToIC();
+              }}
+              disabled={saving}
               className="bg-primary text-white hover:bg-primary/90"
             >
               Switch

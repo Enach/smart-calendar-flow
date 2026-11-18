@@ -105,5 +105,58 @@ describe("PAC-122 SF-049: the Settings role toggle awaits the profile write", ()
     expect(toasts.error).not.toHaveBeenCalled();
     expect(managerApi.getProfile().is_manager).toBe(true);
     expect(await screen.findByRole("button", { name: /choose a team and scan calendar/i })).toBeInTheDocument();
+    });
+
+  it("a failed switch back to Individual contributor keeps the Manager role and shows the error", async () => {
+    let posts = 0;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url).endsWith("/manager/profile") && init?.method === "POST") {
+        posts += 1;
+        return posts === 1 ? json(200, { user_id: "u", is_manager: true }) : json(500, { error: "internal error" });
+      }
+      return json(200, {});
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /^manager$/i }));
+    await waitFor(() => expect(managerApi.getProfile().is_manager).toBe(true));
+    toasts.success.mockReset();
+
+    fireEvent.click(screen.getByRole("button", { name: /individual contributor/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /^switch$/i }));
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalled());
+    expect(profilePosts()).toHaveLength(2);
+    expect(JSON.parse(String(profilePosts()[1][1]?.body))).toEqual({ is_manager: false });
+    expect(toasts.success).not.toHaveBeenCalled();
+    expect(managerApi.getProfile().is_manager).toBe(true);
+    expect(screen.getByRole("button", { name: /choose a team and scan calendar/i })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^switch$/i })).not.toBeInTheDocument());
+  });
+
+  it("disables the role buttons and the Switch button while the write is in flight", async () => {
+    const pending: Array<(r: Response) => void> = [];
+    fetchMock.mockImplementation((url, init) =>
+      String(url).endsWith("/manager/profile") && init?.method === "POST"
+        ? new Promise<Response>((resolve) => pending.push(resolve))
+        : Promise.resolve(json(200, {})),
+    );
+    renderPage();
+    const manager = await screen.findByRole("button", { name: /^manager$/i });
+    const ic = screen.getByRole("button", { name: /individual contributor/i });
+    fireEvent.click(manager);
+    await waitFor(() => expect(pending).toHaveLength(1));
+    expect(manager).toBeDisabled();
+    expect(ic).toBeDisabled();
+    pending[0](json(200, { user_id: "u", is_manager: true }));
+    await waitFor(() => expect(manager).not.toBeDisabled());
+
+    fireEvent.click(ic);
+    const sw = await screen.findByRole("button", { name: /^switch$/i });
+    fireEvent.click(sw);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    expect(sw).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^cancel$/i })).toBeDisabled();
+    pending[1](json(200, { user_id: "u", is_manager: false }));
+    await waitFor(() => expect(managerApi.getProfile().is_manager).toBe(false));
   });
 });
