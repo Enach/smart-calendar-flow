@@ -306,7 +306,9 @@ function mockSuggestedSlots(durationMin: number, rangeStart?: string, rangeEnd?:
         out.push({
           start: s.toISOString(),
           end: e.toISOString(),
-          score: 0.95 - out.length * 0.15,
+          // The backend's integer scale (PAC-135): 50 is its best score without
+          // preferences (a Mon-Wed morning slot), then 40, 30.
+          score: 50 - out.length * 10,
           reasons: out.length === 0 ? ["Best fit", "No conflicts", "Inside working hours"] : ["No conflicts", "Inside working hours"],
         });
       }

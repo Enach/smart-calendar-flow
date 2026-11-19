@@ -7,14 +7,11 @@
  *
  *   1. Memoises responses for ~5 minutes (in-memory + sessionStorage so a
  *      reload doesn't re-spam the backend during onboarding).
- *   2. Exposes a stable "is this attendee actively blocking the slot?"
- *      helper that mimics Google Calendar's RSVP rules — see
- *      `attendeeCountsAsBusy` below.
+ *   2. Exposes small RSVP helpers (`rsvpCountsAsBusy`, `activeParticipants`).
  */
 
 import { api } from "@/api/client";
 import type {
-  Attendee,
   CoverageStatus,
   FreeBusyResponse,
   ParticipantCoverage,
@@ -118,29 +115,7 @@ export async function getCoverageMap(emails: string[]): Promise<Map<string, { st
 
 // ---------- RSVP / "Google-style" busy logic ----------
 
-/**
- * Decide whether this attendee should make a candidate slot count as busy.
- *
- * Mirrors Google Calendar's behavior:
- *   - "declined" attendees → treated as free (their decline removes the
- *     conflict). A meeting where everyone else declined still appears on
- *     the current user's calendar — but for *new* slot generation, we
- *     should not refuse a slot just because a declined attendee was on
- *     a clashing event.
- *   - "tentative" → still counts as busy (they might show up).
- *   - "pending" / "accepted" / undefined → counts as busy.
- *   - Coverage status "unknown" → can't be evaluated, treated as free
- *     (caller already surfaces "Availability unknown" in the UI).
- */
-export function attendeeCountsAsBusy(
-  attendee: Pick<Attendee, "rsvp"> & { coverage?: { status?: CoverageStatus } },
-): boolean {
-  if (attendee.rsvp === "declined") return false;
-  if (attendee.coverage?.status === "unknown") return false;
-  return true;
-}
-
-/** Same idea, but for a bare RSVP value. */
+/** Whether a bare RSVP value makes its attendee block a candidate slot. */
 export function rsvpCountsAsBusy(rsvp?: RsvpStatus): boolean {
   return rsvp !== "declined";
 }

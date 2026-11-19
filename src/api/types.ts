@@ -211,6 +211,10 @@ export type FocusRunResult = components["schemas"]["FocusRunResult"];
 export interface SuggestedSlot {
   start: string;
   end: string;
+  /**
+   * The backend's integer score, higher is better; no fixed range and may be
+   * negative (PAC-135). Draw it with `scoreBarPercent`, never as a fraction.
+   */
   score: number;
   reasons: string[];
   /** Coverage of the attendees considered when ranking this slot (T-40). */
