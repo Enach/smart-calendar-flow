@@ -25,6 +25,11 @@ import type {
 
 // ---------- Mock state ----------
 
+/**
+ * Names for the seeded accepted hosts only. PAC-149: this is not an account
+ * check — the demo invites every well-formed address, and a pending entry never
+ * carries a name, a picture or an account id, whatever this table holds.
+ */
 const KNOWN_DIRECTORY: Record<string, { name: string; avatar_url?: string }> = {
   "alice@co.com": { name: "Alice Martin" },
   "bob@co.com": { name: "Bob Chen" },
@@ -49,9 +54,12 @@ function makeOwnerHost(): SchedulingHost {
 }
 
 function buildHostFromEmail(email: string, status: SchedulingHost["status"] = "pending"): SchedulingHost {
+  // PAC-149 (contract §2.5): pending and declined entries are shown by address
+  // and status only; an account id, name and picture belong to accepted hosts.
+  if (status !== "accepted") return { email, is_owner: false, status };
   const known = KNOWN_DIRECTORY[email.toLowerCase()];
   return {
-    user_id: known ? `u_${email}` : undefined,
+    user_id: `u_${email}`,
     email,
     name: known?.name,
     avatar_url: known?.avatar_url,
@@ -337,9 +345,17 @@ const DEMO_BLANK = "co_host_emails must not contain a blank address";
 const trimEcma = (value: string) => value.replace(/^\s+|\s+$/g, "");
 
 /**
- * The demo's answer to a list, by the server's rules with "domain-confirmed
- * holder" meaning an address of the demo directory: own address, already a
- * host, invited (directory addresses only), or not added. Throws the server's
+ * PAC-149: the demo's stand-in for the server's well-formedness test (the
+ * team invitation's rule, src/api/teams.ts TEAM_EMAIL_RE), on the trimmed,
+ * lowercased address. The server's own test is stricter; the demo only needs
+ * "malformed is not_added, everything else is invited".
+ */
+const DEMO_WELL_FORMED = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * The demo's answer to a list, by the server's rules (PAC-149: by address
+ * only, no account check): own address, already a host, invited (every
+ * well-formed address), or not added (malformed only). Throws the server's
  * 422 for a blank entry, or for a list longer than 5 that names someone who is
  * not a current host (the owner counts as one). Nothing is changed on a throw.
  */
@@ -367,7 +383,7 @@ function demoCoHostPlan(
       kept.set(key, host);
       return { email, outcome: "already_host" };
     }
-    if (KNOWN_DIRECTORY[key]) {
+    if (DEMO_WELL_FORMED.test(key)) {
       if (!invited.has(key)) invited.set(key, buildHostFromEmail(email, "pending"));
       return { email, outcome: "invited" };
     }
@@ -376,7 +392,12 @@ function demoCoHostPlan(
   });
   const removed = currentCoHosts
     .filter((h) => !kept.has(h.email.toLowerCase()))
-    .map((h) => ({ user_id: h.user_id ?? `u_${h.email}`, email: h.email, status: h.status }));
+    // PAC-149 (contract §2.5): a removed item carries user_id only when accepted.
+    .map((h) =>
+      h.status === "accepted" && h.user_id
+        ? { user_id: h.user_id, email: h.email, status: h.status }
+        : { email: h.email, status: h.status },
+    );
   return {
     hosts: [...currentCoHosts.filter((h) => kept.has(h.email.toLowerCase())), ...invited.values()],
     changes: {

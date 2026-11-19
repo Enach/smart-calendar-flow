@@ -43,21 +43,24 @@ export function HostAvatars({ hosts, size = "sm", overlap = false, showPending =
     <div className="flex items-center">
       {hosts.map((h, i) => {
         const pending = showPending && h.status === "pending";
+        // PAC-149 (spec §3.4, §3.7): a pending invitation is to an address, so
+        // its chip names the address and never a name or picture, even if one
+        // were sent — what the owner sees must not depend on accounts.
         return (
           <div
             key={h.email + i}
             className={`group relative ${overlap && i > 0 ? "-ml-2" : i > 0 ? "ml-1" : ""}`}
-            title={pending ? `${h.name || h.email} — awaiting acceptance` : h.name || h.email}
+            title={pending ? `${h.email} — awaiting acceptance` : h.name || h.email}
           >
             <div
               className={`flex items-center justify-center rounded-full font-semibold ring-2 ring-card ${SIZE[size]} ${paletteFor(h.email)} ${
                 pending ? "opacity-70 ring-muted-foreground/30 grayscale-[40%]" : ""
               }`}
             >
-              {h.avatar_url ? (
+              {h.avatar_url && !pending ? (
                 <img src={h.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
               ) : (
-                initials(h.name, h.email)
+                initials(pending ? undefined : h.name, h.email)
               )}
             </div>
             {pending && (

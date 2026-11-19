@@ -284,14 +284,17 @@ describe("messages (contract §5.3)", () => {
     await waitFor(() =>
       expect(results()).toEqual([
         "Link updated.",
-        "2 co-hosts invited — they can accept from Paceday.",
+        "2 co-hosts invited. Paceday doesn't email invitations, so let them know.",
         "Removed 1 co-host.",
-        "1 address couldn't be added as a co-host.",
-        "c@nowhere.io couldn't be added as a co-host.",
+        "1 address wasn't a valid email address.",
+        "c@nowhere.io isn't a valid email address.",
       ]),
     );
     expect(success).not.toHaveBeenCalled();
-    for (const line of results()) expect(line.replace(/\S+@\S+/g, "ADDR")).not.toMatch(/sent|email|no paceday account/i);
+    // PAC-149 (spec §3.7): the summary now says Paceday does *not* email
+    // invitations; what stays forbidden is a claim that something was sent or
+    // anything about whether an address has a Paceday account.
+    for (const line of results()) expect(line.replace(/\S+@\S+/g, "ADDR")).not.toMatch(/\bsent\b|\bemailed\b|paceday account|can accept from paceday/i);
   });
 
   it("AC-12: an answer of zero invited says zero, though the editor's own diff would say one", async () => {
@@ -355,8 +358,8 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
     addCoHost("c@nowhere.io");
     save();
 
-    await waitFor(() => expect(results()).toContain("c@nowhere.io couldn't be added as a co-host."));
-    expect(results()).toContain("1 co-host invited — they can accept from Paceday.");
+    await waitFor(() => expect(results()).toContain("c@nowhere.io isn't a valid email address."));
+    expect(results()).toContain("1 co-host invited. Paceday doesn't email invitations, so let them know.");
     await waitFor(() => expect(getLink).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(chipEmails()).toEqual(["b@co.com"]));
     const cached = client.getQueryData<{ owned: SchedulingLink[] }>(schedulingLinkKeys.links);
@@ -462,8 +465,8 @@ describe("after a save that keeps the editor open (contract §5.4)", () => {
       expect(results()).toEqual([
         "Link created.",
         "0 co-hosts invited.",
-        "1 address couldn't be added as a co-host.",
-        "c@nowhere.io couldn't be added as a co-host.",
+        "1 address wasn't a valid email address.",
+        "c@nowhere.io isn't a valid email address.",
       ]),
     );
     expect(success).not.toHaveBeenCalled();
@@ -502,7 +505,7 @@ describe("review minors (M5, M6)", () => {
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New" } });
     addCoHost("c@nowhere.io");
     save(/create link/i);
-    await waitFor(() => expect(results()).toContain("c@nowhere.io couldn't be added as a co-host."));
+    await waitFor(() => expect(results()).toContain("c@nowhere.io isn't a valid email address."));
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New title" } });
     save();

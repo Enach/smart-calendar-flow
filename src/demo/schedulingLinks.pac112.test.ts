@@ -1,7 +1,8 @@
 /**
  * PAC-112 AC-26 / contract §5.5: the demo create and update answer the same
- * co_host_changes as the server, by the rules of contract §2 and §3.3, with
- * "domain-confirmed holder" meaning an address of the demo directory.
+ * co_host_changes as the server, by the rules of contract §2 and §3.3.
+ * PAC-149: by address only — every well-formed address is invited, and
+ * not_added means a malformed entry (the directory is no account check).
  */
 import { describe, expect, it } from "vitest";
 
@@ -17,15 +18,15 @@ const coHosts = (id: string) =>
   demoSchedulingLinksOps.getLink(id).hosts.filter((h) => !h.is_owner).map((h) => `${h.email}:${h.status}`);
 
 describe("demo co-host list (PAC-112)", () => {
-  it("create: directory addresses are invited, unknown ones not added, the owner's own address reported and kept accepted (AC-11, AC-15)", () => {
+  it("create: well-formed addresses are invited, malformed ones not added, the owner's own address reported and kept accepted (AC-11, AC-15; PAC-149)", () => {
     const out = demoSchedulingLinksOps.createLink({
-      ...BASE, co_host_emails: ["bob@co.com", "c@nowhere.io", "Alex@Demo.Paceday.com", "BOB@co.com"],
+      ...BASE, co_host_emails: ["bob@co.com", "not-an-address", "Alex@Demo.Paceday.com", "BOB@co.com"],
     });
     expect(out.co_host_list_sent).toBe(true);
     expect(out.co_host_changes).toEqual({
       addresses: [
         { email: "bob@co.com", outcome: "invited" },
-        { email: "c@nowhere.io", outcome: "not_added" },
+        { email: "not-an-address", outcome: "not_added" },
         { email: "Alex@Demo.Paceday.com", outcome: "own_address" },
         { email: "BOB@co.com", outcome: "invited" },
       ],
@@ -34,7 +35,7 @@ describe("demo co-host list (PAC-112)", () => {
       removed_count: 0,
       not_added_count: 1,
     });
-    // No pending host is invented for the unknown address; the owner stays accepted.
+    // No pending host is invented for the malformed entry; the owner stays accepted.
     expect(coHosts(out.link.id)).toEqual(["bob@co.com:pending"]);
     const owner = out.link.hosts.find((h) => h.is_owner);
     expect(owner).toMatchObject({ email: OWNER, status: "accepted" });
@@ -48,7 +49,7 @@ describe("demo co-host list (PAC-112)", () => {
 
   it("update: keeps listed hosts with their status, invites, removes the unlisted, and an emptied list removes the last one (AC-2, AC-4)", () => {
     const { link } = demoSchedulingLinksOps.createLink({ ...BASE, co_host_emails: ["sarah@co.com", "bob@co.com"] });
-    demoSchedulingLinksOps.updateLink(link.id, { co_host_emails: ["Sarah@co.com", "emma@co.com", "zz@nowhere.io"] });
+    demoSchedulingLinksOps.updateLink(link.id, { co_host_emails: ["Sarah@co.com", "emma@co.com", "zz@nowhere"] });
     expect(coHosts(link.id)).toEqual(["sarah@co.com:pending", "emma@co.com:pending"]);
 
     const emptied = demoSchedulingLinksOps.updateLink(link.id, { co_host_emails: [] });

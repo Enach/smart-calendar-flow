@@ -15,7 +15,11 @@ function result(c: SchedulingLinkCoHostChanges | undefined, sent = true): Schedu
   return { link: LINK, co_host_changes: c, co_host_list_sent: sent };
 }
 
-const FORBIDDEN = /sent|email|no paceday account/i;
+// PAC-112 forbade "email" outright; PAC-149 (spec §3.7) makes the summary say
+// that Paceday does *not* email invitations, and names a not_added entry as not
+// a valid email address. What stays forbidden is any claim that something was
+// sent or emailed, or that an address has (or lacks) a Paceday account.
+const FORBIDDEN = /\bsent\b|\bemailed\b|paceday account|can accept from paceday/i;
 
 describe("coHostsChanged (contract §5.1)", () => {
   it("compares sets of addresses ignoring case and order", () => {
@@ -36,18 +40,18 @@ describe("saveSummary (contract §5.3, AC-12)", () => {
     const lines = saveSummary(result(changes({ invited_count: 2, removed_count: 1, not_added_count: 1 })), false);
     expect(lines).toEqual([
       "Link updated.",
-      "2 co-hosts invited — they can accept from Paceday.",
+      "2 co-hosts invited. Paceday doesn't email invitations, so let them know.",
       "Removed 1 co-host.",
-      "1 address couldn't be added as a co-host.",
+      "1 address wasn't a valid email address.",
     ]);
   });
 
   it("singular and plural forms", () => {
     expect(saveSummary(result(changes({ invited_count: 1, removed_count: 2, not_added_count: 2 })), true)).toEqual([
       "Link created.",
-      "1 co-host invited — they can accept from Paceday.",
+      "1 co-host invited. Paceday doesn't email invitations, so let them know.",
       "Removed 2 co-hosts.",
-      "2 addresses couldn't be added as a co-host.",
+      "2 addresses weren't valid email addresses.",
     ]);
   });
 
@@ -68,7 +72,7 @@ describe("saveSummary (contract §5.3, AC-12)", () => {
     expect(CO_HOST_TEXT.fallback).toBe("Paceday couldn't confirm which co-hosts were added — check the co-host list.");
   });
 
-  it("never says sent, email or no Paceday account", () => {
+  it("never says sent, emailed or anything about a Paceday account", () => {
     const all = [
       ...saveSummary(result(changes({ invited_count: 3, removed_count: 3, not_added_count: 3 })), true),
       ...saveSummary(result(undefined), true),
@@ -93,7 +97,7 @@ describe("outcomeLines (contract §5.3, AC-11)", () => {
       }),
     );
     expect(lines).toEqual([
-      "c@nowhere.io couldn't be added as a co-host.",
+      "c@nowhere.io isn't a valid email address.",
       "a@acme.com is your own address — you're the link's owner.",
     ]);
     expect(outcomeLines(undefined)).toEqual([]);
