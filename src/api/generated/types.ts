@@ -7489,7 +7489,8 @@ export interface components {
             id: string;
             /** Format: uuid */
             teamId: string;
-            /** Format: email */
+            /** @description The stored form of the invited address, written by the one address normaliser of AddTeamPersonRequest.email (PAC-129 §3.0). No `format: email` (PAC-138): the normaliser (net/mail) accepts addresses such as `a&b@x.example` or `pat@x.y`, so a stricter pattern here would refuse an invitation the server already created.
+             *      */
             inviteeEmail: string;
             /** Format: uuid */
             invitedBy: string;
@@ -7563,10 +7564,8 @@ export interface components {
             /** @description Joined from users.name via COALESCE(...,''), and tagged omitempty — so a user with no name causes the key to be OMITTED, not sent as "".
              *      */
             name?: string;
-            /**
-             * Format: email
-             * @description Joined from users.email, also omitempty.
-             */
+            /** @description Joined from users.email, also omitempty. No `format: email` (PAC-138, as TeamPerson.email since PAC-129 contract 1.1, B-1): a response may not apply a stricter pattern than the server's address normaliser (net/mail), which accepts addresses such as `a&b@x.example` or `pat@x.y`.
+             *      */
             email?: string;
         };
         /** @description PAC-129 (spec §3.10). The cap refusal of inviteTeamMember for an address not yet on the team; the same text as addTeamPerson's limit refusal.

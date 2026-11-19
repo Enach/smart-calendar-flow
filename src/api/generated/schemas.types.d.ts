@@ -3485,7 +3485,7 @@ export type TeamMember = {
    */
   name?: string;
   /**
-   * Joined from users.email, also omitempty.
+   * Joined from users.email, also omitempty. No `format: email` (PAC-138, as TeamPerson.email since PAC-129 contract 1.1, B-1): a response may not apply a stricter pattern than the server's address normaliser (net/mail), which accepts addresses such as `a&b@x.example` or `pat@x.y`.
    */
   email?: string;
 }
@@ -3544,6 +3544,9 @@ export type TeamFullError = { error: "this team is full; ask its owner to remove
 export type TeamInvite = {
   id: string;
   teamId: string;
+  /**
+   * The stored form of the invited address, written by the one address normaliser of AddTeamPersonRequest.email (PAC-129 §3.0). No `format: email` (PAC-138): the normaliser (net/mail) accepts addresses such as `a&b@x.example` or `pat@x.y`, so a stricter pattern here would refuse an invitation the server already created.
+   */
   inviteeEmail: string;
   invitedBy: string;
   /**

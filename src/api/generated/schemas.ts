@@ -608,7 +608,7 @@ export type TeamAnalytics = __TypedOpenapi.Schemas.TeamAnalytics;
 export const TeamAnalytics = z.strictObject({ week_start: z.iso.date(), avg_meeting_minutes: z.number().int(), avg_focus_minutes: z.number().int(), member_breakdown: z.array(MemberAnalyticsSummary), people: z.array(TeamAnalyticsPerson) });
 
 export type TeamMember = __TypedOpenapi.Schemas.TeamMember;
-export const TeamMember = z.strictObject({ teamId: z.uuid(), userId: z.uuid(), role: z.enum(["owner", "member"]), joinedAt: z.iso.datetime(), name: z.string().optional(), email: z.email().optional() });
+export const TeamMember = z.strictObject({ teamId: z.uuid(), userId: z.uuid(), role: z.enum(["owner", "member"]), joinedAt: z.iso.datetime(), name: z.string().optional(), email: z.string().optional() });
 
 export type TeamPersonRole = __TypedOpenapi.Schemas.TeamPersonRole;
 export const TeamPersonRole = z.enum(["owner", "member"]);
@@ -626,7 +626,7 @@ export type TeamFullError = __TypedOpenapi.Schemas.TeamFullError;
 export const TeamFullError = z.strictObject({ error: z.literal("this team is full; ask its owner to remove someone before you accept") });
 
 export type TeamInvite = __TypedOpenapi.Schemas.TeamInvite;
-export const TeamInvite = z.strictObject({ id: z.uuid(), teamId: z.uuid(), inviteeEmail: z.email(), invitedBy: z.uuid(), token: z.string(), status: z.enum(["pending", "accepted", "declined", "expired"]), createdAt: z.iso.datetime(), expiresAt: z.iso.datetime() });
+export const TeamInvite = z.strictObject({ id: z.uuid(), teamId: z.uuid(), inviteeEmail: z.string(), invitedBy: z.uuid(), token: z.string(), status: z.enum(["pending", "accepted", "declined", "expired"]), createdAt: z.iso.datetime(), expiresAt: z.iso.datetime() });
 
 export type TeamInviteOutcome = __TypedOpenapi.Schemas.TeamInviteOutcome;
 export const TeamInviteOutcome = z.enum(["added_and_invited", "invited", "already_pending", "already_member"]);
