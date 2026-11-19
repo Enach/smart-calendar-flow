@@ -175,7 +175,10 @@ export function LinkEditDrawer({ open, onOpenChange, link }: LinkEditDrawerProps
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
-  const [slugDirty, setSlugDirty] = useState(false);
+  // PAC-139: an existing link's slug is the server's, never derived from the
+  // title. Dirty from the first render, so a drawer mounted already open on a
+  // link does not let the title-to-slug effect overwrite the hydrated slug.
+  const [slugDirty, setSlugDirty] = useState(() => !!link);
   const [durations, setDurations] = useState<number[]>([30]);
   const [days, setDays] = useState<Weekday[]>(["mon", "tue", "wed", "thu", "fri"]);
   const [windowStart, setWindowStart] = useState("09:00");

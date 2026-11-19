@@ -123,18 +123,38 @@ export function __resetMonitoringStatusForTests(): void {
 
 // An email-shaped run of characters inside a URL path or query segment, raw
 // or with "@" percent-encoded. Segment boundaries are / ? # & = so the rest of
-// the URL (route shape, team id) stays readable.
-const EMAIL_IN_URL = /[^/?#&=\s]+(?:@|%40)[^/?#&=\s]+/gi;
+// the URL (route shape, team id) stays readable. The local part is lazy, so
+// the first "@" of a segment decides: "ivan@mail.ru,react@1.2.3" is one
+// address-bearing segment, not a package.
+const EMAIL_IN_URL = /[^/?#&=\s]+?(?:@|%40)([^/?#&=\s]+)/gi;
+
+// PAC-139: the only segments left alone are pkg@version ones, where what
+// follows "@" is a version (1.2.3, 18.3.1-beta, v2.0.0+build.5) or a common
+// dist-tag (latest, next, ...). Everything else is redacted, user@localhost too,
+// including IDN (xn--), Unicode and percent-encoded domains: when in doubt the
+// address goes, because under-redaction is the worse failure.
+// A pre-release or build suffix only after a full x.y.z: 7-eleven.com and
+// 2.5-cms.co are domains, not versions.
+const PKG_VERSION = /^v?\d+(?:\.\d+)*$|^v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i;
+const PKG_DIST_TAG = /^(?:latest|next|beta|alpha|canary|rc|stable|dev|experimental|insiders|nightly)$/i;
+// Sentence punctuation after an address in a console message stays visible.
+const TRAILING_PUNCTUATION = /[.,:;!?)\]'"]+$/;
 
 /** Replaces every email-shaped segment of a URL with "[email]". */
 export function redactEmailsInUrl(url: string): string {
-  return url.replace(EMAIL_IN_URL, "[email]");
+  return url.replace(EMAIL_IN_URL, (match: string, domain: string) => {
+    const tail = TRAILING_PUNCTUATION.exec(domain)?.[0] ?? "";
+    const bare = domain.slice(0, domain.length - tail.length);
+    if (PKG_VERSION.test(bare) || PKG_DIST_TAG.test(bare)) return match;
+    return `[email]${tail}`;
+  });
 }
 
 /**
  * PAC-129 review: fetch, xhr and navigation breadcrumbs record request and
  * page URLs, and team and Manager routes put an address in the path. Every
- * URL-bearing field of a breadcrumb is redacted before it is kept.
+ * URL-bearing field of a breadcrumb, and every string a console breadcrumb
+ * logged (data.arguments), is redacted before it is kept.
  */
 export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb {
   const data = breadcrumb.data;
@@ -142,6 +162,10 @@ export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcru
     const next: Record<string, unknown> = { ...data };
     for (const key of ["url", "from", "to"]) {
       if (typeof next[key] === "string") next[key] = redactEmailsInUrl(next[key] as string);
+    }
+    // PAC-139: console breadcrumbs keep the logged values in data.arguments.
+    if (Array.isArray(next.arguments)) {
+      next.arguments = next.arguments.map((arg: unknown) => (typeof arg === "string" ? redactEmailsInUrl(arg) : arg));
     }
     breadcrumb = { ...breadcrumb, data: next };
   }

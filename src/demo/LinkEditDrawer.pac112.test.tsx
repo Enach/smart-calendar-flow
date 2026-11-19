@@ -39,6 +39,12 @@ const chipEmails = () =>
   screen.queryAllByRole("button", { name: /^Remove / }).map((b) => (b.getAttribute("aria-label") ?? "").replace(/^Remove /, ""));
 const save = (name = /save changes/i) => fireEvent.click(screen.getByRole("button", { name }));
 
+// PAC-139: the AC-26 create-then-edit journey renders the whole drawer twice
+// and waits on three answers; under a full parallel run it once passed 5 s.
+// Its waits are event-driven, so a longer bound only matters on a loaded box.
+const SLOW_WAIT = 4_000;
+const SLOW_TEST = 20_000;
+
 let success: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
@@ -66,7 +72,7 @@ describe("demo mode follows the same rules (contract §5.5, AC-26)", () => {
     addCoHost("bob@co.com");
     addCoHost("c@nowhere.io");
     save(/create link/i);
-    expect(await screen.findByText("c@nowhere.io couldn't be added as a co-host.")).toBeInTheDocument();
+    expect(await screen.findByText("c@nowhere.io couldn't be added as a co-host.", {}, { timeout: SLOW_WAIT })).toBeInTheDocument();
     const results = Array.from(screen.getByRole("status", { name: "Save results" }).querySelectorAll("p")).map((p) => p.textContent);
     expect(results).toEqual([
       "Link created.",
@@ -76,15 +82,15 @@ describe("demo mode follows the same rules (contract §5.5, AC-26)", () => {
     ]);
     // Announced once, by the live region: no toast while the editor stays open (M6).
     expect(success).not.toHaveBeenCalled();
-    await waitFor(() => expect(chipEmails()).toEqual(["bob@co.com"]));
+    await waitFor(() => expect(chipEmails()).toEqual(["bob@co.com"]), { timeout: SLOW_WAIT });
 
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Demo PAC-112 renamed" } });
     save();
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false), { timeout: SLOW_WAIT });
     const owned = demoSchedulingLinksOps.listLinks().owned;
     expect(owned).toHaveLength(before + 1);
     expect(owned.filter((l) => l.title.startsWith("Demo PAC-112")).map((l) => l.title)).toEqual(["Demo PAC-112 renamed"]);
-  });
+  }, SLOW_TEST);
 
   it("AC-26 (AC-14): the demo owner's address is refused as a chip", async () => {
     wireDemo();
