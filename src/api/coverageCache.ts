@@ -3,20 +3,13 @@
  *
  * The raw `api.freebusy` is fine for one-off lookups, but the link drawer,
  * public booking page, NLP suggestions, and event detail panel all hit it
- * repeatedly with overlapping email sets. This module:
- *
- *   1. Memoises responses for ~5 minutes (in-memory + sessionStorage so a
- *      reload doesn't re-spam the backend during onboarding).
- *   2. Exposes small RSVP helpers (`rsvpCountsAsBusy`, `activeParticipants`).
+ * repeatedly with overlapping email sets. This module memoises responses for
+ * ~5 minutes (in-memory + sessionStorage so a reload doesn't re-spam the
+ * backend during onboarding).
  */
 
 import { api } from "@/api/client";
-import type {
-  CoverageStatus,
-  FreeBusyResponse,
-  ParticipantCoverage,
-  RsvpStatus,
-} from "@/api/types";
+import type { CoverageStatus, FreeBusyResponse } from "@/api/types";
 
 const TTL_MS = 5 * 60 * 1000;
 const STORAGE_KEY = "paceday:freebusy-cache:v1";
@@ -111,27 +104,4 @@ export async function getCoverageMap(emails: string[]): Promise<Map<string, { st
     map.set(p.email.toLowerCase(), { status: p.status });
   }
   return map;
-}
-
-// ---------- RSVP / "Google-style" busy logic ----------
-
-/** Whether a bare RSVP value makes its attendee block a candidate slot. */
-export function rsvpCountsAsBusy(rsvp?: RsvpStatus): boolean {
-  return rsvp !== "declined";
-}
-
-/**
- * Filter a participant set to those whose calendar should actually exclude
- * candidate slots — strips declined invitees and unknown-coverage emails.
- */
-export function activeParticipants(
-  participants: ParticipantCoverage[],
-  rsvps?: Map<string, RsvpStatus>,
-): ParticipantCoverage[] {
-  return participants.filter((p) => {
-    if (p.status === "unknown") return false;
-    const r = rsvps?.get(p.email.toLowerCase());
-    if (r === "declined") return false;
-    return true;
-  });
 }

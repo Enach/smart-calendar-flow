@@ -7,7 +7,7 @@ import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/useAuth";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import { ScoreBar } from "@/components/ScoreBar";
-import { bestScore } from "@/lib/scoreBar";
+import { scoreRange } from "@/lib/scoreBar";
 import type { SuggestedSlot } from "@/api/types";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
@@ -61,7 +61,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
   const [searching, setSearching] = useState(false);
   const [searched, setSearched] = useState(false);
   const [slots, setSlots] = useState<SuggestedSlot[]>([]);
-  const best = bestScore(slots);
+  const range = scoreRange(slots);
   // PAC-133 OQ-6: attendees whose availability the server could not read.
   // Their missing time did not constrain the slots, so they are never shown as free.
   const [unknownAttendees, setUnknownAttendees] = useState<string[]>([]);
@@ -320,7 +320,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
                       <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                         Score
                       </span>
-                      <ScoreBar score={s.score} best={best} />
+                      <ScoreBar score={s.score} range={range} />
                     </div>
                   </div>
                   {!!s.reasons?.length && (

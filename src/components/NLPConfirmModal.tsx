@@ -4,7 +4,7 @@ import { X, Calendar, Clock, Users, Loader2 } from "lucide-react";
 import type { ParseResult } from "@/api/types";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
 import { ScoreBar } from "@/components/ScoreBar";
-import { bestScore } from "@/lib/scoreBar";
+import { scoreRange } from "@/lib/scoreBar";
 import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
@@ -26,7 +26,7 @@ function fmtTime(iso: string, tf: TimeFormat) {
 export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NLPConfirmModalProps) {
   const tf = useTimeFormat();
   const slots = (parseResult.suggested_slots ?? []).slice(0, 3);
-  const best = bestScore(slots);
+  const range = scoreRange(slots);
   const [selected, setSelected] = useState(0);
 
   return (
@@ -99,7 +99,7 @@ export function NLPConfirmModal({ parseResult, loading, onClose, onConfirm }: NL
                         <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                           Score
                         </span>
-                        <ScoreBar score={s.score} best={best} />
+                        <ScoreBar score={s.score} range={range} />
                       </div>
                     </div>
                     {!!s.reasons?.length && (
