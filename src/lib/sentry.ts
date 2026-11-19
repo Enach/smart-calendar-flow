@@ -139,6 +139,7 @@ const URL_SEGMENT = /[^/?#&=\s]+/g;
 // bounded whatever is logged.
 export const REDACT_MAX_STRING = 8192;
 export const TRUNCATED_STRING_MARKER = "…[truncated]";
+const TRUNCATED = "[Truncated]";
 
 // PAC-139: the only segments left alone are pkg@version ones, where what
 // follows "@" is a version (1.2.3, 18.3.1-beta, v2.0.0+build.5) or a common
@@ -166,13 +167,41 @@ function emailDomain(segment: string): string | null {
   return null;
 }
 
+// The segment boundaries URL_SEGMENT uses: / ? # & = and whitespace.
+const SEGMENT_BOUNDARY = /[/?#&=\s]/;
+
+/**
+ * PAC-145 review: the longest prefix of url, at most maxLength long, that ends
+ * on a segment boundary, so no segment (and no address) is ever cut in half.
+ * null when the first maxLength characters are all one segment.
+ */
+function cutAtSegmentBoundary(url: string, maxLength: number): string | null {
+  // The character just past the limit is a boundary: the last kept segment
+  // is whole.
+  if (SEGMENT_BOUNDARY.test(url[maxLength])) return url.slice(0, maxLength);
+  for (let i = maxLength - 1; i >= 0; i--) {
+    if (SEGMENT_BOUNDARY.test(url[i])) return url.slice(0, i + 1);
+  }
+  return null;
+}
+
 /**
  * Replaces every email-shaped segment of a URL with "[email]". A string longer
  * than maxLength (REDACT_MAX_STRING; tests pass Infinity to time the scan
- * alone) is cut and marked first.
+ * alone) is first cut back to the last segment boundary within the limit,
+ * dropping the partial segment, and marked "…[truncated]" after the scan; one
+ * with no boundary within the limit is "[Truncated]" whole.
  */
 export function redactEmailsInUrl(url: string, maxLength: number = REDACT_MAX_STRING): string {
-  if (url.length > maxLength) url = url.slice(0, maxLength) + TRUNCATED_STRING_MARKER;
+  if (url.length > maxLength) {
+    const head = cutAtSegmentBoundary(url, maxLength);
+    if (head === null) return TRUNCATED;
+    return scanEmails(head) + TRUNCATED_STRING_MARKER;
+  }
+  return scanEmails(url);
+}
+
+function scanEmails(url: string): string {
   return url.replace(URL_SEGMENT, (segment: string) => {
     const domain = emailDomain(segment);
     if (domain === null) return segment;
@@ -191,18 +220,38 @@ export function redactEmailsInUrl(url: string, maxLength: number = REDACT_MAX_ST
 export const CONSOLE_ARG_MAX_DEPTH = 4;
 // PAC-145: how many entries of one object, array, Map or Set are kept.
 export const CONSOLE_ARG_MAX_BREADTH = 100;
-// PAC-145 review: the total number of values redactConsoleArgument visits for
-// one argument, whatever its shape. Depth and breadth alone do not bound the
-// work: shared objects multiply (a DAG of 6 objects x 16 keys took 3.5 s).
-export const CONSOLE_ARG_NODE_BUDGET = 1500;
+// PAC-145 review: the total number of values visited for one console call,
+// shared by all its arguments, whatever their shape. Depth and breadth alone
+// do not bound the work: shared objects multiply (a DAG of 6 objects x 16 keys
+// took 3.5 s).
+export const CONSOLE_CALL_NODE_BUDGET = 1500;
+// PAC-145 review: the total number of string characters scanned for one
+// console call, keys included (100 arguments x 1500 strings of 100k
+// characters took 20 s with a per-argument budget only).
+export const CONSOLE_CALL_CHAR_BUDGET = 65536;
 // PAC-145 review: how many arguments of one console call are kept.
 export const CONSOLE_MAX_ARGUMENTS = 100;
 
-const TRUNCATED = "[Truncated]";
-
 interface RedactionWalk {
   nodes: number;
+  chars: number;
   ancestors: WeakSet<object>;
+}
+
+function newWalk(): RedactionWalk {
+  return { nodes: 0, chars: 0, ancestors: new WeakSet() };
+}
+
+/**
+ * A string, redacted, within what is left of the call's character budget
+ * (CONSOLE_CALL_CHAR_BUDGET). "[Truncated]" once that is spent.
+ */
+function redactString(value: string, w: RedactionWalk): string {
+  const left = CONSOLE_CALL_CHAR_BUDGET - w.chars;
+  if (left <= 0) return TRUNCATED;
+  const limit = Math.min(REDACT_MAX_STRING, left);
+  w.chars += Math.min(value.length, limit);
+  return redactEmailsInUrl(value, limit);
 }
 
 function constructorName(value: object): string {
@@ -215,9 +264,19 @@ function constructorName(value: object): string {
 }
 
 function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
-  if (w.nodes >= CONSOLE_ARG_NODE_BUDGET) return TRUNCATED;
+  if (w.nodes >= CONSOLE_CALL_NODE_BUDGET) return TRUNCATED;
   w.nodes++;
-  if (typeof value === "string") return redactEmailsInUrl(value);
+  if (typeof value === "string") return redactString(value, w);
+  try {
+    return walkValue(value, depth, w);
+  } catch {
+    // A revoked Proxy throws on any inspection (instanceof, Array.isArray);
+    // it costs this value, not the rest of the argument.
+    return "[Unreadable]";
+  }
+}
+
+function walkValue(value: unknown, depth: number, w: RedactionWalk): unknown {
   if (typeof value === "function") return "[Function]";
   if (value === null || typeof value !== "object") return value;
   if (w.ancestors.has(value)) return "[Circular]";
@@ -252,7 +311,7 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
     if (Array.isArray(value)) {
       const out: unknown[] = [];
       for (let i = 0; i < value.length; i++) {
-        if (i >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_ARG_NODE_BUDGET) {
+        if (i >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_CALL_NODE_BUDGET) {
           out.push(TRUNCATED);
           break;
         }
@@ -266,7 +325,7 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
       // is never copied.
       const out: unknown[] = [];
       for (const [k, v] of value) {
-        if (out.length >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_ARG_NODE_BUDGET) {
+        if (out.length >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_CALL_NODE_BUDGET) {
           out.push(TRUNCATED);
           break;
         }
@@ -277,7 +336,7 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
     if (value instanceof Set) {
       const out: unknown[] = [];
       for (const v of value) {
-        if (out.length >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_ARG_NODE_BUDGET) {
+        if (out.length >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_CALL_NODE_BUDGET) {
           out.push(TRUNCATED);
           break;
         }
@@ -296,14 +355,16 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
     } else if (constructorName(value) !== "Object") {
       out.__type = constructorName(value);
     }
-    // Own enumerable keys, read lazily with a counter: Object.keys would
-    // allocate every key of a huge object first. Getters run here, eagerly, as
-    // they would in Sentry's serialiser; the breadth bound and the node budget
-    // bound how many of them run.
+    // Own enumerable keys, read with a counter that stops at the bound.
+    // for...in avoids Object.keys' upfront array, but it is not truly lazy
+    // in V8: an object with very many keys still has its key list built when
+    // the loop starts. What the bound does limit is the reads, getters and
+    // recursion. Getters run here, eagerly, as they would in Sentry's
+    // serialiser; the breadth bound and the node budget bound how many run.
     let kept = 0;
     for (const key in value) {
       if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-      if (kept >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_ARG_NODE_BUDGET) {
+      if (kept >= CONSOLE_ARG_MAX_BREADTH || w.nodes >= CONSOLE_CALL_NODE_BUDGET || w.chars >= CONSOLE_CALL_CHAR_BUDGET) {
         out[TRUNCATED] = true;
         break;
       }
@@ -314,7 +375,7 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
       } catch {
         v = "[Unreadable]";
       }
-      out[redactEmailsInUrl(key)] = next(v);
+      out[redactString(key, w)] = next(v);
     }
     return out;
   } finally {
@@ -326,11 +387,33 @@ function walk(value: unknown, depth: number, w: RedactionWalk): unknown {
 
 /**
  * PAC-145 test seam: redactConsoleArgument's result and the number of values
- * it visited, which never exceeds CONSOLE_ARG_NODE_BUDGET.
+ * it visited, which never exceeds CONSOLE_CALL_NODE_BUDGET.
  */
 export function redactConsoleArgumentCounted(value: unknown): { value: unknown; nodes: number } {
-  const w: RedactionWalk = { nodes: 0, ancestors: new WeakSet() };
+  const w = newWalk();
   return { value: walk(value, 0, w), nodes: w.nodes };
+}
+
+/**
+ * PAC-145 review: every argument of one console call, redacted under one
+ * shared node budget and one shared character budget; at most
+ * CONSOLE_MAX_ARGUMENTS of them. Also the test seam for those budgets.
+ */
+export function redactConsoleArgumentsCounted(args: unknown[]): { value: unknown[]; nodes: number; chars: number } {
+  const w = newWalk();
+  const value: unknown[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (i >= CONSOLE_MAX_ARGUMENTS) {
+      value.push(TRUNCATED);
+      break;
+    }
+    try {
+      value.push(walk(args[i], 0, w));
+    } catch {
+      value.push("[Unreadable]");
+    }
+  }
+  return { value, nodes: w.nodes, chars: w.chars };
 }
 
 /**
@@ -340,14 +423,15 @@ export function redactConsoleArgumentCounted(value: unknown): { value: unknown; 
  * returns. The result is a fresh plain value; the logged object is never
  * mutated.
  *
- * The work is bounded per argument: at most CONSOLE_ARG_NODE_BUDGET values
- * visited, CONSOLE_ARG_MAX_DEPTH levels, CONSOLE_ARG_MAX_BREADTH entries per
+ * The work is bounded: at most CONSOLE_CALL_NODE_BUDGET values visited and
+ * CONSOLE_CALL_CHAR_BUDGET string characters scanned (shared by all the
+ * arguments of a call in redactBreadcrumb), CONSOLE_ARG_MAX_DEPTH levels, CONSOLE_ARG_MAX_BREADTH entries per
  * container, REDACT_MAX_STRING characters per string, each scanned in linear
  * time. Typed arrays, buffers, DOM nodes and window are summarised, never
  * walked. Whatever a bound cuts off becomes "[Truncated]" (a cut string ends
  * in "…[truncated]"), never passed through unread. A cycle becomes
- * "[Circular]", a function "[Function]", a throwing getter or toJSON
- * "[Unreadable]". Getters and toJSON methods are invoked, eagerly, as Sentry's
+ * "[Circular]", a function "[Function]", a throwing getter or toJSON, or a
+ * revoked Proxy, "[Unreadable]". Getters and toJSON methods are invoked, eagerly, as Sentry's
  * own serialiser would; the bounds above limit how many run.
  */
 export function redactConsoleArgument(value: unknown): unknown {
@@ -370,10 +454,7 @@ export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcru
     }
     // PAC-139: console breadcrumbs keep the logged values in data.arguments.
     if (Array.isArray(next.arguments)) {
-      const args = next.arguments as unknown[];
-      const kept = args.slice(0, CONSOLE_MAX_ARGUMENTS).map((arg: unknown) => redactConsoleArgument(arg));
-      if (args.length > CONSOLE_MAX_ARGUMENTS) kept.push(TRUNCATED);
-      next.arguments = kept;
+      next.arguments = redactConsoleArgumentsCounted(next.arguments as unknown[]).value;
     }
     breadcrumb = { ...breadcrumb, data: next };
   }

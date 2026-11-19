@@ -11,7 +11,8 @@ import * as Sentry from "@sentry/react";
 import {
   CONSOLE_ARG_MAX_BREADTH,
   CONSOLE_ARG_MAX_DEPTH,
-  CONSOLE_ARG_NODE_BUDGET,
+  CONSOLE_CALL_CHAR_BUDGET,
+  CONSOLE_CALL_NODE_BUDGET,
   CONSOLE_MAX_ARGUMENTS,
   REDACT_MAX_STRING,
   TRUNCATED_STRING_MARKER,
@@ -19,6 +20,7 @@ import {
   redactBreadcrumb,
   redactConsoleArgument,
   redactConsoleArgumentCounted,
+  redactConsoleArgumentsCounted,
   redactEmailsInUrl,
 } from "./sentry";
 
@@ -227,7 +229,7 @@ describe("PAC-145: console breadcrumb object and Error arguments", () => {
 });
 
 describe("PAC-145 review: bounded work", () => {
-  it("visits at most CONSOLE_ARG_NODE_BUDGET values of a DAG of shared objects", () => {
+  it("visits at most CONSOLE_CALL_NODE_BUDGET values of a DAG of shared objects", () => {
     // 6 levels x 16 keys all pointing at the next level: 16^6 paths, and
     // 3.5 s before the budget.
     let level: Record<string, unknown> = { email: "sam@acme.example" };
@@ -237,8 +239,8 @@ describe("PAC-145 review: bounded work", () => {
       level = next;
     }
     const { value, nodes } = redactConsoleArgumentCounted(level);
-    expect(nodes).toBeLessThanOrEqual(CONSOLE_ARG_NODE_BUDGET);
-    expect(nodes).toBe(CONSOLE_ARG_NODE_BUDGET); // the budget, not the shape, stopped it
+    expect(nodes).toBeLessThanOrEqual(CONSOLE_CALL_NODE_BUDGET);
+    expect(nodes).toBe(CONSOLE_CALL_NODE_BUDGET); // the budget, not the shape, stopped it
     expect(JSON.stringify(value)).toContain("[Truncated]");
     expect(JSON.stringify(value)).not.toContain("acme.example");
   });
@@ -247,7 +249,7 @@ describe("PAC-145 review: bounded work", () => {
     const wide = Array.from({ length: 50 }, () => Object.fromEntries(Array.from({ length: 50 }, (_, i) => [`k${i}`, `u${i}@acme.example`])));
     for (const v of [wide, new Map(wide.map((o, i) => [i, o])), new Set(wide), { a: wide, b: wide }]) {
       const { value, nodes } = redactConsoleArgumentCounted(v);
-      expect(nodes).toBeLessThanOrEqual(CONSOLE_ARG_NODE_BUDGET);
+      expect(nodes).toBeLessThanOrEqual(CONSOLE_CALL_NODE_BUDGET);
       expect(JSON.stringify(value)).not.toContain("acme.example");
     }
   });
@@ -443,18 +445,75 @@ describe("PAC-145 review: string redaction is linear and capped", () => {
     expect(redactEmailsInUrl(nearCap)).toBe("a".repeat(REDACT_MAX_STRING - 20) + " [email]");
   });
 
-  it("cuts a string longer than REDACT_MAX_STRING, and marks the cut", () => {
+  it("cuts a string longer than REDACT_MAX_STRING at a segment boundary, and marks the cut", () => {
     const long = "sam@acme.example " + "b".repeat(200_000);
-    const out = redactEmailsInUrl(long);
-    expect(out.startsWith("[email] ")).toBe(true);
-    expect(out.endsWith(TRUNCATED_STRING_MARKER)).toBe(true);
-    expect(out.length).toBeLessThanOrEqual(REDACT_MAX_STRING + TRUNCATED_STRING_MARKER.length);
-    // An address straddling the cut is not left half-visible as an address.
-    // An address the cut splits is still redacted, not left half-visible.
-    const straddle = "b".repeat(REDACT_MAX_STRING - 6) + " sam@acme.example";
-    const cut = redactEmailsInUrl(straddle);
-    expect(cut).toContain(" [email]");
-    expect(cut).not.toContain("sam@");
-    expect(redactEmailsInUrl("x".repeat(REDACT_MAX_STRING))).toBe("x".repeat(REDACT_MAX_STRING));
+    expect(redactEmailsInUrl(long)).toBe("[email] " + TRUNCATED_STRING_MARKER);
+    const fits = "x".repeat(REDACT_MAX_STRING);
+    expect(redactEmailsInUrl(fits)).toBe(fits);
+  });
+
+  it("never leaves part of an address that straddles the cut", () => {
+    for (const pad of [8180, 8185, REDACT_MAX_STRING - 6, REDACT_MAX_STRING - 1]) {
+      const straddle = "x".repeat(pad) + " jean.dupont@acme.example";
+      const out = redactEmailsInUrl(straddle);
+      // The partial last segment is dropped, not kept half-visible.
+      expect(out, `pad ${pad}`).toBe("x".repeat(pad) + " " + TRUNCATED_STRING_MARKER);
+      expect(out).not.toContain("jean");
+    }
+    // The limit falls exactly at the end of the address: it is whole, and
+    // redacted.
+    const exact = "x".repeat(REDACT_MAX_STRING - 25) + " jean.dupont@acme.example" + " tail";
+    expect(redactEmailsInUrl(exact)).toBe("x".repeat(REDACT_MAX_STRING - 25) + " [email]" + TRUNCATED_STRING_MARKER);
+    // In a URL, the boundaries are the path and query separators.
+    const url = "/api/teams/t1/people/" + "q".repeat(REDACT_MAX_STRING - 30) + "?to=jean.dupont@acme.example";
+    expect(redactEmailsInUrl(url)).not.toContain("jean");
+  });
+
+  it("replaces a string with no segment boundary within the limit entirely", () => {
+    expect(redactEmailsInUrl("a".repeat(REDACT_MAX_STRING + 1))).toBe("[Truncated]");
+    expect(redactEmailsInUrl("jean.dupont@acme.example" + "z".repeat(20_000))).toBe("[Truncated]");
+  });
+});
+
+describe("PAC-145 re-review: one budget per console call", () => {
+  it("shares the node and character budgets across all the arguments of a call", () => {
+    // 100 arguments x 1500 strings of 100k characters: 20 s with a
+    // per-argument budget.
+    const big = "y".repeat(100_000) + " sam@acme.example";
+    const args = Array.from({ length: 100 }, () => Array.from({ length: 1500 }, () => big));
+    const { value, nodes, chars } = redactConsoleArgumentsCounted(args);
+    expect(nodes).toBeLessThanOrEqual(CONSOLE_CALL_NODE_BUDGET);
+    expect(chars).toBeLessThanOrEqual(CONSOLE_CALL_CHAR_BUDGET);
+    expect(value).toHaveLength(100);
+    expect(value.at(-1)).toBe("[Truncated]"); // the budget was spent before the last argument
+    expect(JSON.stringify(value)).not.toContain("acme.example");
+  });
+
+  it("spends the node budget once per call, not once per argument", () => {
+    const wide = Array.from({ length: 100 }, (_, i) => i);
+    const { value, nodes } = redactConsoleArgumentsCounted(Array.from({ length: 50 }, () => wide));
+    expect(nodes).toBe(CONSOLE_CALL_NODE_BUDGET);
+    expect(value.at(-1)).toBe("[Truncated]");
+  });
+
+  it("redactBreadcrumb uses the shared budgets", () => {
+    const big = "sam@acme.example " + "y".repeat(50_000);
+    const out = redactBreadcrumb({ category: "console", data: { arguments: Array.from({ length: 20 }, () => big) } }).data!.arguments as unknown[];
+    const scanned = out.filter((a) => a !== "[Truncated]");
+    // 64k characters of budget, 8192 per string at most: 8 strings scanned.
+    expect(scanned.length).toBe(CONSOLE_CALL_CHAR_BUDGET / REDACT_MAX_STRING);
+    expect(JSON.stringify(out)).not.toContain("acme.example");
+  });
+});
+
+describe("PAC-145 re-review: a revoked Proxy", () => {
+  it("costs only its own value, not the argument or the breadcrumb", () => {
+    const { proxy, revoke } = Proxy.revocable({ email: "sam@acme.example" }, {});
+    revoke();
+    const out = redactBreadcrumb({
+      category: "console",
+      data: { arguments: ["failed for pat@ext.example", proxy, { ok: "lee@acme.example", bad: proxy }] },
+    }).data!.arguments;
+    expect(out).toEqual(["failed for [email]", "[Unreadable]", { ok: "[email]", bad: "[Unreadable]" }]);
   });
 });
