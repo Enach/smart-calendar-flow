@@ -234,20 +234,26 @@ export const schedulingLinkKeys = {
  * later server). The archive is then unavailable: nothing is shown from it and
  * no erasure is promised. Never a reason to fall back to other data.
  */
-/**
- * PAC-122 SF-093: one booking of the owner's link, as the server sends it
- * (SchedulingLinkBookingRecord). Nothing is added: no invented title, slug or
- * hosts.
- */
-export interface LinkBooking {
+interface LinkBookingBase {
   id: string;
   start: string;
   end: string;
   duration_minutes: number;
-  booker_name: string;
-  booker_email: string;
   notes?: string;
 }
+
+/**
+ * PAC-122 SF-093: one booking of the owner's link, as the server sends it
+ * (SchedulingLinkBookingRecord). Nothing is added: no invented title, slug or
+ * hosts.
+ *
+ * PAC-134 (contract md 5): an operator may erase a booker's address on a live
+ * link. The erased booking is an explicit state (`erased_at` set, name and
+ * email null, no notes), never a blank or an old value.
+ */
+export type LinkBooking =
+  | (LinkBookingBase & { booker_name: string; booker_email: string; erased_at?: undefined })
+  | (LinkBookingBase & { booker_name: null; booker_email: null; erased_at: string; notes?: undefined });
 
 /**
  * PAC-122 SF-093: the bookings answer is not the contract's array of
@@ -493,15 +499,29 @@ export const schedulingLinksApi = {
         const raw = await requestApi<unknown>("GET", `/scheduling-links/${id}/bookings`);
         const parsed = BookingRecordList.safeParse(raw);
         if (!parsed.success) throw new BookingsUnreadableError();
-        return parsed.data.map((b) => ({
-          id: b.id,
-          start: b.start_time,
-          end: b.end_time,
-          duration_minutes: Math.round((new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
-          booker_name: b.booker_name,
-          booker_email: b.booker_email,
-          ...(b.notes ? { notes: b.notes } : {}),
-        }));
+        return parsed.data.map((b): LinkBooking => {
+          const base = {
+            id: b.id,
+            start: b.start_time,
+            end: b.end_time,
+            duration_minutes: Math.round((new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
+          };
+          // PAC-134 (contract md 5): name and email are null if and only if
+          // booker_erased_at is present, and an erased booking's notes are
+          // blank. Any other combination is a contract violation and makes
+          // the whole answer unreadable, like any other.
+          if (b.booker_erased_at !== undefined) {
+            if (b.booker_name !== null || b.booker_email !== null || b.notes !== "") throw new BookingsUnreadableError();
+            return { ...base, booker_name: null, booker_email: null, erased_at: b.booker_erased_at };
+          }
+          if (b.booker_name === null || b.booker_email === null) throw new BookingsUnreadableError();
+          return {
+            ...base,
+            booker_name: b.booker_name,
+            booker_email: b.booker_email,
+            ...(b.notes ? { notes: b.notes } : {}),
+          };
+        });
       }),
 
   /**
