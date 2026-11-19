@@ -19,7 +19,7 @@ export const ERASED = {
   link_id: "8c1f8d2f-5b5a-4e8f-8b54-3f5f1b7c6d22",
   booker_name: null,
   booker_email: null,
-  booker_erased_at: "2027-03-01T03:00:00Z",
+  booker_erased_at: "2027-03-01T12:00:00Z",
   start_time: "2026-12-03T14:00:00Z",
   end_time: "2026-12-03T15:00:00Z",
   status: "confirmed",

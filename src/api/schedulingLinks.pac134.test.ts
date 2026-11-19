@@ -45,7 +45,7 @@ describe("PAC-134 listBookings with an erased live booking", () => {
         duration_minutes: 60,
         booker_name: null,
         booker_email: null,
-        erased_at: "2027-03-01T03:00:00Z",
+        erased_at: "2027-03-01T12:00:00Z",
       },
     ]);
     // A non-erased booking carries no erased state at all.

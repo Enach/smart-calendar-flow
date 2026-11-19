@@ -228,12 +228,6 @@ export const schedulingLinkKeys = {
   archivedLink: (linkId: string) => ["scheduling-link-archive", linkId] as const,
 };
 
-/**
- * PAC-40 (contract section 7, challenge K4-7): the archive answered 200 but its
- * body does not match the generated schema (for example a field added by a
- * later server). The archive is then unavailable: nothing is shown from it and
- * no erasure is promised. Never a reason to fall back to other data.
- */
 interface LinkBookingBase {
   id: string;
   start: string;
@@ -269,6 +263,12 @@ export class BookingsUnreadableError extends Error {
 
 const BookingRecordList = SchedulingLinkBookingRecordSchema.array();
 
+/**
+ * PAC-40 (contract section 7, challenge K4-7): the archive answered 200 but its
+ * body does not match the generated schema (for example a field added by a
+ * later server). The archive is then unavailable: nothing is shown from it and
+ * no erasure is promised. Never a reason to fall back to other data.
+ */
 export class ArchiveUnavailableError extends Error {
   constructor() {
     super("archive unavailable");
