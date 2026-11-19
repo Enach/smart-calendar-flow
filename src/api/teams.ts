@@ -16,10 +16,8 @@ import type { components } from "./generated/types";
 import { z as zod } from "zod";
 import {
   TeamAnalytics as TeamAnalyticsSchema,
-  TeamDetail as GeneratedTeamDetailSchema,
-  TeamInvite as GeneratedTeamInviteSchema,
-  TeamInviteResult as GeneratedTeamInviteResultSchema,
-  TeamMember as GeneratedTeamMemberSchema,
+  TeamDetail as TeamDetailSchema,
+  TeamInviteResult as TeamInviteResultSchema,
   TeamPerson as TeamPersonSchema,
   TeamSlotList as TeamSlotListSchema,
 } from "./generated/schemas";
@@ -166,23 +164,6 @@ function timeFromMinutes(value: number): string {
   const minutes = (value % 60).toString().padStart(2, "0");
   return hours + ":" + minutes;
 }
-
-/**
- * Response parsing must never refuse an address the server accepted. The
- * contract still marks `TeamInvite.inviteeEmail` and `TeamMember.email`
- * `format: email`, which zod's email check reads more strictly than the
- * server's normaliser (net/mail): `a&b@x.example` and `pat@x.y` are valid
- * there and refused here, after the write committed. These two derived
- * schemas keep every other rule of the generated ones (strict objects, all
- * keys) and read those two addresses as strings. Request validation is
- * unchanged (validateTeamEmail).
- */
-const TeamDetailSchema = GeneratedTeamDetailSchema.extend({
-  members: zod.array(GeneratedTeamMemberSchema.extend({ email: zod.string().optional() })),
-});
-const TeamInviteResultSchema = GeneratedTeamInviteResultSchema.extend({
-  invitation: GeneratedTeamInviteSchema.extend({ inviteeEmail: zod.string() }).nullable(),
-});
 
 type TeamPersonWire = zod.infer<typeof TeamPersonSchema>;
 
