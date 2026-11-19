@@ -3722,7 +3722,9 @@ export interface paths {
         };
         /**
          * Bookings made on a link (owner only).
-         * @description Returns the raw `storage.Booking` rows, ordered by `start_time DESC`, never null, cancelled bookings included. NOTE the field names differ from the public booking confirmation DTO (`start_time`/`end_time` here vs `start`/`end` there). A deleted link answers 404 to every caller, owner included (PAC-40 AC-6, D-9); its owner reads its bookings through `getArchivedSchedulingLink`. A live or paused link never holds an erased booking (erasure applies only to deleted links), so `booker_name` and `booker_email` here are always the values the booker typed.
+         * @description Returns the raw `storage.Booking` rows, ordered by `start_time DESC`, never null, cancelled bookings included. NOTE the field names differ from the public booking confirmation DTO (`start_time`/`end_time` here vs `start`/`end` there). A deleted link answers 404 to every caller, owner included (PAC-40 AC-6, D-9); its owner reads its bookings through `getArchivedSchedulingLink`.
+         *
+         *     PAC-134: a live or paused link CAN hold an erased booking. The automatic erasure (PAC-40) still touches deleted links only, but an operator's erasure of one person's address (`paceday-operator erase-address`, GDPR Art. 17) erases that person's bookings on any link, live, paused or deleted. An erased booking is shown as erased, the way the archive shows one: `booker_erased_at` is present and `booker_name` and `booker_email` are null (never the empty strings the database keeps), and `notes` is the empty string. Every other field is unchanged by the erasure, so the booking still occupies its time and still counts in `uses_count`. A booking that was not erased has the same keys and values as before PAC-134 (JSON-equal; key order is not part of the contract): both strings are the values the booker typed and `booker_erased_at` is absent (not null), so a client that predates PAC-134 parses every answer that holds no erased booking. Such a client fails to parse an answer that holds one; the operator runbook therefore makes "the web release that reads erased live bookings is deployed" a precondition of running the erasure (contracts/features/PAC-134.md section 5).
          */
         get: operations["listSchedulingLinkBookings"];
         put?: never;
@@ -4595,7 +4597,7 @@ export interface components {
             erasure_due_at: string | null;
             /**
              * Format: date-time
-             * @description When this link's bookings were last erased (the latest `booker_erased_at` among its bookings). Null when none has been erased. Always set with `erasure_state: erased`; also set alongside `awaiting_erasure` when a booking arrived after an earlier erasure.
+             * @description When this link's bookings were last erased (the latest `booker_erased_at` among its bookings). Null when none has been erased. Always set with `erasure_state: erased`; also set alongside `awaiting_erasure` when a booking arrived after an earlier erasure, or when an operator's erasure of one person's address (PAC-134) erased some but not all of the link's bookers.
              */
             erased_at: string | null;
         };
@@ -4620,7 +4622,7 @@ export interface components {
             end_time: string;
             /** @description Same values as `SchedulingLinkBookingRecord.status`, cancelled included. */
             status: string;
-            /** @description Kept at erasure (spec D-11; if the owner answers OQ-8 "yes", notes become erasable too, which is a contract change). Always present, possibly the empty string. */
+            /** @description Kept by the automatic erasure (spec D-11; if the owner answers OQ-8 "yes", notes become erasable too, which is a contract change). Blanked to the empty string by an operator's erasure of the booker's address (PAC-134 OQ-2): an erased booking whose notes are empty may have had notes. Always present, possibly the empty string. */
             notes: string;
             /** Format: date-time */
             created_at: string;
@@ -4707,7 +4709,7 @@ export interface components {
         };
         /** @description PAC-40 copy hook. Whether this deployment erases bookers' names and emails from deleted links, and after how long. Carried by `listArchivedSchedulingLinks` only (not by `listSchedulingLinks`, whose consumers decode it as a map of arrays). The web builds the delete confirmation from it (spec §3.2 last bullet, AC-25): it promises erasure ONLY when `enabled` is true, and while the policy is not loaded (or the read failed) it does not promise erasure. `enabled` is a property of the server build, not an operator setting (no environment variable changes it; a deployment does not opt out of the owner's decision): false only in a build that ships the deleted state and the archive without the erasure job (PR split, contracts/features/PAC-40.md §6), true in every build that has the job. */
         BookerErasurePolicy: {
-            /** @description True when the erasure job (spec §3.5) runs in this build. While false, no archived link has an `erasure_due_at` and no booking is ever erased. */
+            /** @description True when the erasure job (spec §3.5) runs in this build. While false, no archived link has an `erasure_due_at` and the job erases no booking. It describes the automatic job only: an operator's erasure of one person's address (PAC-134) erases that person's bookings whatever `enabled` is. */
             enabled: boolean;
             /** @description Days after the link's last booking end at which erasure becomes due (90 x 24 hours; owner decision 2026-10-27). Sent whatever `enabled` is, so the figure the copy quotes is pinned by the contract, not by web text. A different value is a contract change. */
             retention_days: number;
@@ -6573,21 +6575,28 @@ export interface components {
              */
             my_status?: "pending" | "accepted" | "declined";
         };
-        /** @description Raw backend/storage/scheduling_links.go Booking row, returned by GET /api/scheduling-links/{id}/bookings. Field names differ from PublicBookingConfirmation. */
+        /** @description One booking of a live or paused link, returned by GET /api/scheduling-links/{id}/bookings. Field names differ from PublicBookingConfirmation. Two shapes (PAC-134): a booking whose booker was not erased carries `booker_name` and `booker_email` as typed and no `booker_erased_at`; an ERASED booking (an operator erased its booker's address, contracts/features/PAC-134.md) carries `booker_erased_at` and null `booker_name` and `booker_email`, with `notes` blanked. Erased is explicit and cannot be confused with a value, as in `ArchivedSchedulingLinkBooking` (a booker cannot submit a missing name or email, so null is never a typed value). */
         SchedulingLinkBookingRecord: {
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             link_id: string;
-            booker_name: string;
-            booker_email: string;
+            /** @description As typed by the booker; null if and only if `booker_erased_at` is present. */
+            booker_name: string | null;
+            /** @description As stored at booking time (trimmed, letter case kept; SF-005: not validated); null if and only if `booker_erased_at` is present. */
+            booker_email: string | null;
+            /**
+             * Format: date-time
+             * @description Present only on an erased booking (PAC-134): when the operator's erasure removed this booker's name, email and notes, UTC. Absent, never null, on every other booking, so an answer with no erased booking is JSON-equal to what it was before PAC-134.
+             */
+            booker_erased_at?: string;
             /** Format: date-time */
             start_time: string;
             /** Format: date-time */
             end_time: string;
             /** @description DB default is `confirmed`. `cancelled` rows are excluded from conflict checks but still count in the link's `uses_count` (PAC-40 D-6). No API path sets `cancelled` today. */
             status: string;
-            /** @description No omitempty - always present, possibly the empty string. */
+            /** @description No omitempty - always present, possibly the empty string. The empty string on an erased booking (PAC-134 blanks the notes with the name and email: they are the erased person's own words). */
             notes: string;
             /** Format: date-time */
             created_at: string;
