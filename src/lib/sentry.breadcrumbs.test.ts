@@ -58,6 +58,12 @@ describe("redactBreadcrumb", () => {
       "ivan@mail.ru,react@1.2.3",
       "react@1.2.3,ivan@mail.ru",
       "user@localhost",
+      // A domain that starts with a digit and a hyphen is not a version.
+      "x@7-eleven.com",
+      "x@1-800-flowers.com",
+      "x@3-dsystems.com",
+      "x@2.5-cms.co",
+      "x@1+foo.com",
     ];
     for (const addr of cases) {
       expect(redactEmailsInUrl(`/api/teams/t1/people/${addr}?x=1`)).toBe("/api/teams/t1/people/[email]?x=1");
@@ -72,6 +78,7 @@ describe("redactBreadcrumb", () => {
       "https://unpkg.com/@sentry/react@8.1.0/build/index.js",
       "https://esm.sh/zod@3.23.8-beta.1?target=es2022",
       "https://unpkg.com/lodash@latest/lodash.js",
+      "https://cdn.example/npm/react@18/index.js",
       "https://cdn.example/npm/pkg@1.2.3/index.js",
       "https://cdn.example/npm/pkg@18.3.1-beta/index.js",
       "https://cdn.example/npm/pkg@v2.0.0+build.5/index.js",

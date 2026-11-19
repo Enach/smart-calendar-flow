@@ -133,7 +133,9 @@ const EMAIL_IN_URL = /[^/?#&=\s]+?(?:@|%40)([^/?#&=\s]+)/gi;
 // dist-tag (latest, next, ...). Everything else is redacted, user@localhost too,
 // including IDN (xn--), Unicode and percent-encoded domains: when in doubt the
 // address goes, because under-redaction is the worse failure.
-const PKG_VERSION = /^v?\d+(?:\.\d+)*(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i;
+// A pre-release or build suffix only after a full x.y.z: 7-eleven.com and
+// 2.5-cms.co are domains, not versions.
+const PKG_VERSION = /^v?\d+(?:\.\d+)*$|^v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i;
 const PKG_DIST_TAG = /^(?:latest|next|beta|alpha|canary|rc|stable|dev|experimental|insiders|nightly)$/i;
 // Sentence punctuation after an address in a console message stays visible.
 const TRAILING_PUNCTUATION = /[.,:;!?)\]'"]+$/;
