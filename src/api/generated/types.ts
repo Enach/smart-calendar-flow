@@ -9270,7 +9270,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description The account's current session generation could not be read (PAC-71), or (PAC-122 SF-072) the user row could not be read: only a missing row is the 404. Body `{"error":"internal error"}`; no Set-Cookie (spec AC-48). */
+            /** @description The account's current session generation could not be read (PAC-71), or (PAC-122 SF-072) the user row could not be read: only a missing row is the 404. Also (PAC-142 SF-113) when the user's organisation could not be read: never a 200 with `org` left out, which reads as "no organisation"; an organisation that no longer exists is still answered as none. Body `{"error":"internal error"}`; no Set-Cookie (spec AC-48). */
             500: {
                 headers: {
                     [name: string]: unknown;
