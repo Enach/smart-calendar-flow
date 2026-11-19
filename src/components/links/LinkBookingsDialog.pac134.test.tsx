@@ -55,9 +55,10 @@ describe("PAC-134 LinkBookingsDialog", () => {
     expect(items[1]).toContainElement(erased);
     expect(erased).toHaveTextContent(`Name and email erased on ${formatArchiveDate(ERASED.booker_erased_at)}`);
     expect(erased.textContent).toMatch(/^Name and email erased on .*Mar 1, 2027$/);
-    expect(items[1]).toHaveTextContent("60 min");
+    const lines = items[1].querySelectorAll("p");
+    expect(lines).toHaveLength(2); // time range and the erased line; no notes line
+    expect(lines[1].textContent).toBe(`Name and email erased on ${formatArchiveDate(ERASED.booker_erased_at)} · 60 min`);
     expect(items[1].textContent).not.toMatch(/null|undefined|@/);
-    expect(items[1].querySelectorAll("p")).toHaveLength(2);
   });
 
   it("a list without an erased booking renders exactly as before (no erased marker)", async () => {
