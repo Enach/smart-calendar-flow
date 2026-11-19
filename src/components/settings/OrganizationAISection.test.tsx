@@ -316,3 +316,67 @@ describe("OrganizationAISection (PAC-75)", () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 });
+
+// PAC-148 (spec §3.7 and §6; contract md 6): the web learns membership only
+// from the server: `ai_status.inOrganization`, the organisation AI read, and
+// the step-up options' membership 403. A user the server does not count as a
+// member (a consumer-domain squatter, or an account whose association ended
+// at migration 043) is offered no organisation AI and no step-up, whatever
+// their address. Regression pins: today's code already behaves this way.
+describe("OrganizationAISection (PAC-148, a user who is not a member)", () => {
+  const MEMBERSHIP_403 = { error: "org membership required" };
+
+  function serveNonMember(orgAIRead: () => Response) {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      sent.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === `${API}/organization/ai` && method === "GET") return orgAIRead();
+      if (url.startsWith(`${API}/admin/sso/stepup/options`)) return json(MEMBERSHIP_403, 403);
+      return json({ error: "unexpected " + method + " " + url }, 599);
+    });
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    sent.length = 0;
+    assigned.length = 0;
+    vi.stubGlobal("fetch", fetchMock);
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { origin: "https://app.paceday.test", href: "https://app.paceday.test/settings", search: "", assign: (v: string) => assigned.push(v) },
+    });
+  });
+  afterEach(() => Object.defineProperty(window, "location", { configurable: true, value: realLocation }));
+  afterAll(() => vi.unstubAllGlobals());
+
+  it.each(["/settings", "/settings?stepup=granted&purpose=llm_org_key_write"])(
+    "inOrganization false and the options 403: Settings shows neither section and asks only for the SSO options (%s)",
+    async (path) => {
+      serveNonMember(() => json(configured));
+      const { container } = renderAt(path, false);
+      await waitFor(() => expect(sent.length).toBe(1));
+      // Let any further request the sections would make go out before asserting there is none.
+      await new Promise((r) => setTimeout(r, 20));
+      expect(sent).toEqual([{ method: "GET", url: `${API}/admin/sso/stepup/options`, body: undefined }]);
+      expect(container).toBeEmptyDOMElement();
+      expect(screen.queryByTestId("org-ai-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("org-ai-stepup-outcome")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("sso-stepup-options-error")).not.toBeInTheDocument();
+      expect(assigned).toEqual([]);
+    },
+  );
+
+  it("the organisation AI read answers the membership 403: no section, no Edit, no step-up, no write", async () => {
+    serveNonMember(() => json(MEMBERSHIP_403, 403));
+    const { container } = renderAt("/settings", true);
+    await waitFor(() => expect(sent.some((c) => c.url === `${API}/organization/ai`)).toBe(true));
+    await waitFor(() => expect(sent.some((c) => c.url === `${API}/admin/sso/stepup/options`)).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(sent.every((c) => c.method === "GET")).toBe(true);
+    expect(sent.some((c) => c.url.includes("purpose=llm_org_key_write"))).toBe(false);
+    expect(assigned).toEqual([]);
+  });
+});
