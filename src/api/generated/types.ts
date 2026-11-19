@@ -2761,6 +2761,7 @@ export interface paths {
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): that materialisation is a granting site: a formal member is matched to `{email}` only when that member's account holds `{email}` DOMAIN-CONFIRMED (case-insensitive); a formal member whose address is unconfirmed is not matched, and the answer is the one for an address with no roster entry.
          *     PAC-130 (spec §3.5, D-4, D-6, AC-5, AC-18): the materialised roster row is written with `member_user_id` null (before PAC-130 it stored the formal member's account), behind the same DOMAIN-CONFIRMED entry check. No patch writes, refreshes or erases a link; a link kept by migration 042 is left as it is. The 200 never carries a link, and for an address that is not visible to the caller it is the same whether or not an account holds the address (spec O-3).
          *     PAC-129 (spec §3.9, D-13, AC-31): with `team_id`, an address that has no assignment of the caller on this team, is not matched to a formal member, and is a person ADDED to this team is refused with the 422 "this person was added to the team without Paceday access; add them with Add person to track 1:1s". Nothing is written: no roster row and no assignment. The check runs after the body is validated. Without `team_id` nothing changes.
+         *     PAC-150 (silent-failures SF-114): a storage error in any read of that match (the roster entry, the team's formal members, the DOMAIN-CONFIRMED holder lookup, the added-person read) is the 500 {"error":"internal error"}, logged and reported without the address, and nothing is written. Before PAC-150 a failed holder lookup was read as "not matched", so the answer was the 404.
          *
          */
         patch: operations["patchManagerTeamMember"];
@@ -2784,6 +2785,7 @@ export interface paths {
          * @description Creates nothing on any calendar. Returns a relative URL of the form `/app?attendees=<email>&duration=30&title=1%3A1+with+<display_name>` plus `&date=<suggested_date>` when supplied (query params are Go url.Values-encoded, so alphabetically ordered). An empty body is accepted (io.EOF is tolerated).
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the roster entry this operation may materialise for a formal team member follows the same DOMAIN-CONFIRMED rule as patchManagerTeamMember, and since PAC-130 it is written with `member_user_id` null (spec D-6, AC-18).
          *     PAC-129 (spec §3.9, D-13, AC-31): the same refusal as patchManagerTeamMember for a person added to the team who has no roster entry on it: the 422 below, no roster row, no assignment, no prefill URL.
+         *     PAC-150 (silent-failures SF-114): the same match as patchManagerTeamMember, so a storage error in any of its reads is the 500 {"error":"internal error"}, never the 404, and nothing is written.
          *
          */
         post: operations["scheduleManagerOneOnOne"];
@@ -11658,7 +11660,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain "not found" — no such member in scope. */
+            /** @description text/plain "not found" — no such member in scope: no roster entry of the caller for `{email}` (in this team, with `team_id`), and, with `team_id`, no formal member matched (PAC-71) and no person added to the team. Only a genuine no-match: a failed read while matching is the 500 (PAC-150). */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -11721,7 +11723,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["JsonForbidden"];
-            /** @description text/plain "not found". */
+            /** @description text/plain "not found" — no such member in scope, as for patchManagerTeamMember. Only a genuine no-match: a failed read while matching is the 500 (PAC-150). */
             404: {
                 headers: {
                     [name: string]: unknown;
