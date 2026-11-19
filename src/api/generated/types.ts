@@ -14,7 +14,10 @@ export interface paths {
         /**
          * List the SSO configurations belonging to the caller's org
          * @description Any member of the org may call it (unchanged by PAC-22; restricting
-         *     who may read is out of PAC-22's scope, spec §5). Since PAC-22 the
+         *     who may read is out of PAC-22's scope, spec §5). Since PAC-148 (spec
+         *     D-1, D-3, AC-4; G-5) "member" is the organisation membership rule
+         *     stated on listOrgMembers, applied at this read; a caller outside it
+         *     gets the 403, whatever association is stored. Since PAC-22 the
          *     response is an SsoProviderList: a named container, not a bare array
          *     (spec §3.7), whose items never carry the client secret or a signing
          *     certificate under any name, nor anything derived from either, whoever
@@ -71,7 +74,12 @@ export interface paths {
          *     1. Membership: the caller must belong to an org, and the org is always
          *        the caller's own; nothing in the body chooses it. Otherwise 403
          *        `org membership required`, or `org not found` when the org row is
-         *        gone. Decided before the body is read, so before every 400, and
+         *        gone. Since PAC-148 (spec D-1, D-3, AC-4) "belong" is the
+         *        organisation membership rule stated on listOrgMembers, applied at
+         *        this read: a caller with a stored association that fails it
+         *        (unconfirmed, at a consumer-list domain, or in another domain's
+         *        organisation) gets `org membership required`, before every other
+         *        step, exactly as a caller with no association. Decided before the body is read, so before every 400, and
          *        before the break-glass check, so a break-glass email with no org
          *        gets this same 403. It carries no `stepup_url`.
          *     2. Body, each refusal a 400 that stores nothing and consumes no grant.
@@ -340,7 +348,13 @@ export interface paths {
          *
          *     0. The `sso_stepup_state` cookie is present, unexpired, untampered,
          *        matches `state`, and is bound to the session's user and current
-         *        org; else `state_mismatch`.
+         *        org; else `state_mismatch`. Since PAC-148 (spec D-3, AC-4) the
+         *        "current org" is the organisation the user BELONGS to under the
+         *        organisation membership rule stated on listOrgMembers, decided at
+         *        this request: a user whose stored association fails it has no
+         *        current org, so even a validly signed state naming that
+         *        association's organisation is `state_mismatch` and no grant is
+         *        issued.
          *     1. The authorization code is exchanged and the ID token verified
          *        (signature, audience, issuer, expiry). A provider `error`, a
          *        missing `code` or any failure here gives `token_invalid`.
@@ -514,7 +528,9 @@ export interface paths {
          * Delete the SSO provider for the caller's org domain
          * @description Same gate as createSsoProvider, in the same order (spec §4.2), with no
          *     body to check: membership (403 `org membership required` / `org not
-         *     found`), then the `{domain}` segment (as the router yields it, see
+         *     found`; since PAC-148 the organisation membership rule stated on
+         *     listOrgMembers, so a stored association that fails it is refused here
+         *     and nothing is deleted, AC-4), then the `{domain}` segment (as the router yields it, see
          *     below; not trimmed) must equal the caller's org domain exactly, case-insensitive for
          *     ASCII letters only; any other difference, including non-ASCII case
          *     folding, is a different domain (createSsoProvider's DOMAIN MATCH,
@@ -1257,6 +1273,11 @@ export interface paths {
          *     Since PAC-71 the response carries `addressStanding`, so the web app's
          *     Settings can say that an unconfirmed address cannot accept
          *     invitations yet (spec §3 "What standing allows").
+         *     Since PAC-148 (spec §3.1, D-1, AC-1, AC-3) `org` is present only
+         *     when the account BELONGS to an organisation under the organisation
+         *     membership rule stated on listOrgMembers; a stored association that
+         *     fails the rule is answered as no organisation (no `org`), and no
+         *     organisation is read for it.
          *
          */
         get: operations["getCurrentUser"];
@@ -2956,7 +2977,63 @@ export interface paths {
         };
         /**
          * List users in the caller's organization
-         * @description Returns all `users` rows sharing the caller's `org_id`, ordered by `created_at` ascending. If the caller cannot be loaded, or has no `org_id`, the handler returns 200 with `[]` rather than an error. PAC-130 (spec §3.1, D-1, AC-17): the set of accounts this list returns to a caller IS rule (b) of the Manager visibility rule (ManagerRosterMember.is_paceday_user): both use one definition, so narrowing this list (follow-up PAC-148, which owns this endpoint's own exposure for consumer domains) narrows Manager visibility with it. The Manager read does not inherit this handler's fallback: a failure to load the caller there is the 500, never "no organisation".
+         * @description Returns the accounts that BELONG to the caller's organisation (the
+         *     organisation membership rule below), the caller included, ordered by
+         *     `created_at` ascending. A caller that belongs to no organisation gets
+         *     `[]`.
+         *
+         *     **Organisation membership (PAC-148, spec §3.1, §3.2, D-1, D-3; contract
+         *     `contracts/features/PAC-148.md` §2).** This is the one statement of the
+         *     rule; every other operation that answers or acts on membership points
+         *     here. An account belongs to an organisation only while all three hold:
+         *     (1) its `addressStanding` is `domain_confirmed` (PAC-71: the identity
+         *     provider that bound it is the domain's own: Google Workspace for that
+         *     domain, an Entra tenant that verified it, or the domain's SSO issuer);
+         *     (2) the domain of its stored address is not on the consumer list (the
+         *     running release's generic-domain list, which PAC-148 extends with
+         *     Microsoft's personal-account domains); and (3) the organisation's stored
+         *     domain equals the domain of its stored address, exactly. The domain of
+         *     an address is the text after its first `@`, with surrounding Unicode
+         *     white space removed and lower-cased (none when there is no `@`): the
+         *     derivation that named the organisation when it was created.
+         *     Every other account belongs to NO organisation, whatever association is
+         *     stored (by an older release, an operator step, a fixture or a restore
+         *     rehearsal). The rule is applied at every read, by every operation that
+         *     answers or acts on membership: this list (and so rule (b) of the
+         *     Manager visibility rule, ManagerRosterMember.is_paceday_user),
+         *     getCurrentUser's `org`, `AIStatus.inOrganization`, getOrganizationAI,
+         *     patchOrganizationAI, confirmOrganizationAI, every AI call that would use
+         *     the organisation's AI (the parse, including MCP's parse tool through
+         *     it, a meeting-brief refresh, the provider probe), listSsoProviders,
+         *     createSsoProvider, deleteSsoProvider, startSsoAdminStepup,
+         *     getSsoStepupOptions and ssoAdminStepupCallback. An account that does not
+         *     belong is answered exactly as an account with no organisation: `[]`
+         *     here, no `org`, `inOrganization` false, the membership 403
+         *     (SsoWriteMembershipRequired), no use of the organisation's AI or
+         *     policy, `state_mismatch` at the step-up callback.
+         *     After every successful sign-in the stored association is brought in
+         *     line: an account that qualifies joins its address's domain's
+         *     organisation (created on first join); one that does not leaves any
+         *     organisation, and its organisation-AI confirmations end with it (PAC-87).
+         *     Whether it qualifies is decided from its own standing, address and the
+         *     consumer list before anything keyed on the domain is read, so a caller
+         *     that does not qualify causes no organisation to be looked up or created.
+         *     Before PAC-148 every account joined its address's domain's organisation
+         *     at any standing, unless the domain was on the 21-entry consumer list, so
+         *     anyone signing in with an address at an unlisted consumer provider
+         *     listed every Paceday account there (PAC-130 O-11).
+         *
+         *     For a caller that belongs to no organisation the answer, and the work
+         *     done to produce it, are the same whatever accounts exist at its
+         *     address's domain (spec AC-1).
+         *
+         *     PAC-130 (spec §3.1, D-1, AC-17): the set of accounts this list returns
+         *     to a caller IS rule (b) of the Manager visibility rule
+         *     (ManagerRosterMember.is_paceday_user): both use one definition, so
+         *     PAC-148's narrowing of this list narrows Manager visibility with it
+         *     (PAC-148 D-9). The Manager read does not take this list's `[]` for a
+         *     missing caller row: a failure to load the caller there is the 500,
+         *     never "no organisation".
          */
         get: operations["listOrgMembers"];
         put?: never;
@@ -2977,6 +3054,7 @@ export interface paths {
         /**
          * Read the caller's organisation's AI configuration
          * @description NEW-llm-bring-your-own Part 2 (spec `docs/specs/NEW-llm-bring-your-own-part2.md` §3.2, P2-AC-7). The organisation is the caller's, never a parameter, so no caller can name another organisation (P2-AC-8).
+         *     **Membership (PAC-148, spec D-1, D-3, AC-4; G-4).** "The caller's organisation", "member" and "no organisation" on this operation, on patchOrganizationAI, on confirmOrganizationAI and in `AIStatus` mean the organisation membership rule stated on listOrgMembers, applied at each request: a caller whose stored association fails it (not domain-confirmed, at a consumer-list domain, or in another domain's organisation) is answered as a caller with no organisation (the membership 403), and no AI call of theirs uses the organisation's configuration, key or personal-keys policy, even with a stored confirmation.
          *     **Every member reads the same bytes.** The answer depends only on the organisation's stored configuration, never on the caller: not on whether the caller is an administrator (Paceday stores no admin role; PAC-50's proof exists only around a write), not on whether the caller holds a live grant, is on the break-glass list, has confirmed, or just made the last change (parent spec D-7, P2-AC-7). Per-caller state (whether the caller's confirmation covers the current provider) is on the caller's settings read (`AIStatus`), not here. The consent period (PAC-87) is not a property of this answer: see OrganizationAIConfiguration `configurationVersion`.
          *     The key is NEVER returned (owner O-7, PAC-24): `keySet` is the only thing a reader learns about it. An organisation that never set a configuration answers `configured: false`, `keySet: false`, `personalKeysAllowed: true`, `configurationVersion: 0` and no `provider`. An organisation whose configuration was removed (`provider: ""`) answers the same except that `configurationVersion` is the removal's version (never `0` again; versions are never reused within an organisation, contract revision 3, spec P2-D17) and `personalKeysAllowed` and `updatedAt` are as stored. A client keeps the `configurationVersion` it displayed: patchOrganizationAI names it as the state the change was made from, confirmOrganizationAI as the state the member was shown (PAC-87: the confirmation covers that state's provider).
          *     Checks: membership (403), then 200. Read-only: nothing is consumed, written or recorded.
@@ -4306,7 +4384,7 @@ export interface components {
              * @enum {string}
              */
             configuration?: "own" | "organization";
-            /** @description Whether the caller belongs to an organisation. Lets a client offer "use my organisation's AI" only to a member (spec AC-21; Part 2). Says nothing else about the organisation.
+            /** @description Whether the caller belongs to an organisation. Lets a client offer "use my organisation's AI" only to a member (spec AC-21; Part 2). Says nothing else about the organisation. Since PAC-148 (spec D-1, D-3, AC-4) "belongs" is the organisation membership rule stated on listOrgMembers, decided at this read: false for a caller whose stored association fails it, and then the rest of this object is decided as for a caller with no organisation (a stored `organization` choice is row 6, `nothing_configured`; the organisation's personal-keys policy does not bind the caller).
              *      */
             inOrganization: boolean;
             /** @description Present exactly when `configured` is false; absent exactly when it is true. Why AI does not work for the caller and who can turn it on: the same reason the caller's parse, brief refresh and probe `{}` give (spec AC-8, AC-40).
@@ -4992,7 +5070,8 @@ export interface components {
              *     `domain_confirmed` address acts as a person at the granting sites
              *     (team-invite acceptance, scheduling-link co-host invitations,
              *     the manager's member add, roster import and roster entries,
-             *     break-glass); an `unconfirmed` one works fully for its own user
+             *     break-glass, and, since PAC-148, organisation membership: see
+             *     listOrgMembers); an `unconfirmed` one works fully for its own user
              *     but resolves to nobody there. It changes only when the account
              *     binds (sign-in) or through the operator procedure; never on an
              *     ordinary sign-in, a connect or a refusal.
@@ -5000,9 +5079,19 @@ export interface components {
              * @enum {string}
              */
             addressStanding: "domain_confirmed" | "unconfirmed";
-            /** @description Present only when the user has an org_id AND the org row loads
-             *     (json tag "org,omitempty"). org_id itself is `json:"-"` and never
-             *     serialized.
+            /** @description Present only when the user BELONGS to an organisation AND the org
+             *     row loads (json tag "org,omitempty"). org_id itself is `json:"-"`
+             *     and never serialized.
+             *     Since PAC-148 (spec §3.1, §3.2, D-1, D-3; G-3) "belongs" is the
+             *     organisation membership rule stated on listOrgMembers, applied at
+             *     this read: `addressStanding` is `domain_confirmed`, the address's
+             *     domain is not on the consumer list, and the organisation is the one
+             *     for the address's domain. A stored association that fails it
+             *     (written by an older release, an operator step, a fixture) gives no
+             *     `org`, and the organisation row is not read. Before PAC-148 any
+             *     stored association was shown, so an account at a consumer domain,
+             *     or one bound on mailbox evidence, learned whether and since when
+             *     an organisation existed for its domain. The shape is unchanged.
              *      */
             org?: components["schemas"]["OrgSummary"];
             /** Format: date-time */
@@ -5592,7 +5681,7 @@ export interface components {
             cadence_custom_days: number | null;
             /** Format: date-time */
             last_one_on_one_at: string | null;
-            /** @description PAC-130 (spec §3.1, D-1, D-5, AC-4, AC-10, AC-17): true iff the entry's address is VISIBLE ON PACEDAY to the caller, decided at read time. It is visible when some account whose stored address equals the entry's address ignoring letter case, at ANY address standing, is (a) a Paceday member (a team_members row, owner or member; never a person added under PAC-129) of a team the caller is also a Paceday member of, in either role, or (b) an account the organisation member list (listOrgMembers, GET /api/org/members) returns to the caller. Rule (b) IS that list, not a separate organisation rule: whatever narrows the list (follow-up PAC-148) narrows (b) with it, and until then (b) carries the list's exposure for consumer domains missing from the generic-domain list. An account outside (a) and (b) is never consulted, so the value is the same for an address no account holds and for one held only outside them. true does not promise figures (see getManagerRoster's branches), false does NOT mean "has no Paceday account", and a client must not say so. Always true for source "formal" (a co-member by construction); always false for source "added" (PAC-129). Before PAC-130: true iff a stored member_user_id was set, which revealed account existence for any address.
+            /** @description PAC-130 (spec §3.1, D-1, D-5, AC-4, AC-10, AC-17): true iff the entry's address is VISIBLE ON PACEDAY to the caller, decided at read time. It is visible when some account whose stored address equals the entry's address ignoring letter case, at ANY address standing, is (a) a Paceday member (a team_members row, owner or member; never a person added under PAC-129) of a team the caller is also a Paceday member of, in either role, or (b) an account the organisation member list (listOrgMembers, GET /api/org/members) returns to the caller. Rule (b) IS that list, not a separate organisation rule: whatever narrows the list narrows (b) with it. Since PAC-148 (spec §3.6, D-9) the list holds only accounts that belong to the caller's organisation under the organisation membership rule stated on listOrgMembers (domain-confirmed, not at a consumer-list domain, in the organisation of their address's domain), and only when the caller belongs to one: a caller that is not domain-confirmed, or is at a consumer domain, has an empty (b), and an unconfirmed account at the caller's own company domain is outside (b) (estimated, unless (a) holds). No Paceday figure moves: such an entry goes from "no data" to the estimate, the answer for an address no account holds. (Before PAC-148, (b) carried the list's exposure for consumer domains missing from the generic-domain list.) An account outside (a) and (b) is never consulted, so the value is the same for an address no account holds and for one held only outside them. true does not promise figures (see getManagerRoster's branches), false does NOT mean "has no Paceday account", and a client must not say so. Always true for source "formal" (a co-member by construction); always false for source "added" (PAC-129). Before PAC-130: true iff a stored member_user_id was set, which revealed account existence for any address.
              *      */
             is_paceday_user: boolean;
             /** @description Never null — the handler substitutes a zero-valued MemberWeekStats when the engine returns nil (a person added to the team: no calendar read). A failed engine read is the 500, never zeroes (PAC-122 SF-040).
@@ -5820,7 +5909,7 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
-        /** @description storage.User as returned by GET /api/org/members. */
+        /** @description storage.User as returned by GET /api/org/members: an account that belongs to the caller's organisation under PAC-148's membership rule (listOrgMembers). The fields are unchanged by PAC-148. */
         OrgMember: {
             /** Format: uuid */
             id: string;
@@ -5829,8 +5918,11 @@ export interface components {
             name: string;
             /** @description camelCase, unlike most other fields in this domain. May be "". */
             avatarUrl: string;
-            /** @description The identity/calendar provider the user signed in with, e.g. `google` or `microsoft`. Not constrained by an enum in Go. */
-            provider: string;
+            /**
+             * @description The provider of the account's FIRST sign-in: the same `users.provider` column, and the same three values, as CurrentUserResponse.provider. Resolved by PAC-148 (spec D-8; the x-uncertain this property carried, PAC-35 non-blocking 2): the column has no CHECK constraint (migration 006, `TEXT NOT NULL DEFAULT 'google'`), and its only writer is the account insert of storage.ResolveSignIn, whose `FirstProvider` is one of three literals: `google` (Google sign-in), `microsoft` (Microsoft sign-in) and `sso` (SSO sign-in); storage.UpsertUser has no production caller, and tests and the e2e seed write `google`. No migration adds a constraint.
+             * @enum {string}
+             */
+            provider: "google" | "microsoft" | "sso";
             org?: components["schemas"]["Org"];
             /** Format: date-time */
             createdAt: string;
@@ -7036,6 +7128,18 @@ export interface components {
              *        sign-in. A company domain is never "generic". No SSO row is
              *        read and no lookup is made for any consumer domain, so an SSO
              *        row for one of them never applies.
+             *        PAC-148 (spec §3.3, D-4, AC-11) adds Microsoft's personal-account
+             *        domains to the list: hotmail.fr, hotmail.co.uk, hotmail.de,
+             *        hotmail.it, hotmail.es, hotmail.be, live.fr, live.co.uk,
+             *        live.de, live.it, live.nl, live.be, outlook.fr, outlook.de,
+             *        outlook.it, outlook.es and windowslive.com (each admitted only
+             *        if, when the plan is written, its MX resolves only to the
+             *        Outlook.com consumer host `*.olc.protection.outlook.com`; the
+             *        plan records any entry dropped by that rule). Each is
+             *        "generic" like outlook.com until PAC-77; before PAC-148 they
+             *        took the MX path and answered "choose". The list is also the
+             *        consumer list of the organisation membership rule
+             *        (listOrgMembers).
              *        Paceday has no password sign-in and no password or
              *        registration route. A client never shows a password form for
              *        any value of this field ("generic" included); builds older
@@ -7377,7 +7481,11 @@ export interface components {
             error: "sso_write_requires_fresh_login";
         };
         /** @description The caller has no org (or its org row is gone). Checked before
-         *     anything else, including break-glass. No `stepup_url`: there is no org
+         *     anything else, including break-glass. Since PAC-148 (spec D-1, D-3)
+         *     "has no org" means the caller belongs to no organisation under the
+         *     organisation membership rule stated on listOrgMembers, decided at the
+         *     request: a stored association that fails the rule is refused with
+         *     `org membership required`, like no association at all. No `stepup_url`: there is no org
          *     to step up for. Also the 403 of getSsoStepupOptions and of
          *     startSsoAdminStepup (the latter always with `org membership
          *     required`), and (NEW-llm-bring-your-own Part 2) of getOrganizationAI,
@@ -8039,7 +8147,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description "org membership required" — the user has no org_id (also returned when the user lookup errors). */
+            /** @description "org membership required" — the user belongs to no organisation under the PAC-148 membership rule (listOrgMembers): no stored association, or one that fails the rule (also returned when the user lookup errors; PAC-148 does not change that). */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -8234,7 +8342,10 @@ export interface operations {
             /** @description `org membership required`: the caller has no org, or its org row
              *     is gone (this operation does not distinguish the second case as
              *     `org not found`), so there is no org domain to step up for. No
-             *     state cookie is set. (Assumed by the factory at stage 2, pending
+             *     state cookie is set, and nothing is redirected to a provider.
+             *     Since PAC-148 (spec D-1, D-3, AC-4; G-6) "has no org" includes a
+             *     caller whose stored association fails the organisation
+             *     membership rule stated on listOrgMembers. (Assumed by the factory at stage 2, pending
              *     owner confirmation; spec "Decisions", D-1.) The body is
              *     SsoWriteMembershipRequired, the same schema as the membership 403
              *     of getSsoStepupOptions and of the SSO writes, so a generated
@@ -8423,7 +8534,9 @@ export interface operations {
             /** @description The caller has no org (`org membership required`, also when the
              *     user lookup fails) or its org row is gone (`org not found`): there
              *     is no org domain to step up for (as at the start, spec §9 D-1, and
-             *     as at step 1 of the SSO writes). The body is
+             *     as at step 1 of the SSO writes). Since PAC-148 (spec D-1, D-3,
+             *     AC-4) "has no org" includes a caller whose stored association
+             *     fails the organisation membership rule stated on listOrgMembers. The body is
              *     SsoWriteMembershipRequired; it carries no `stepup_url`. A client
              *     offers no step-up entry point to such a caller (spec AC-25).
              *      */
@@ -11961,7 +12074,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Org members, or `[]` when the caller has no organization. The `org` property is never populated by this endpoint — storage.GetOrgMembers does not hydrate it, so it is always omitted. */
+            /** @description The accounts that belong to the caller's organisation, or `[]` when the caller belongs to no organisation or its users row does not exist (an account deleted under a live session, PAC-148 D-8: such an account belongs to nothing, so `[]` is the true answer). The `org` property is never populated by this endpoint — storage.GetOrgMembers does not hydrate it, so it is always omitted. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -11979,7 +12092,7 @@ export interface operations {
                     "text/plain": components["schemas"]["MiddlewareUnauthorized"];
                 };
             };
-            /** @description Database error. Body: `{"error":"internal"}`, served as application/json (until PAC-21 was finished it was this same JSON literal with a text/plain Content-Type). The detail is written to the server log and Sentry only (PAC-21). */
+            /** @description Database error: the caller's users row could not be read (any failure other than the row not existing; PAC-148 D-8, API-047, SF-075: before PAC-148 this answered `200 []`, indistinguishable from "no organisation"), or the member read failed. Never `[]` for a fault. Body: `{"error":"internal"}`, served as application/json (until PAC-21 was finished it was this same JSON literal with a text/plain Content-Type). The detail is written to the server log and Sentry only (PAC-21). */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -12017,7 +12130,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description The caller has no organisation (`org membership required`, also when the user lookup fails) or its organisation row is gone (`org not found`). The body is SsoWriteMembershipRequired, the schema of every membership 403 (PAC-50). A client shows no organisation AI section to such a caller (spec P2-AC-9, P2-AC-30); it knows in advance from `Settings.aiStatus.inOrganization`.
+            /** @description The caller has no organisation (`org membership required`, also when the user lookup fails; since PAC-148 also when its stored association fails the organisation membership rule stated on listOrgMembers) or its organisation row is gone (`org not found`). The body is SsoWriteMembershipRequired, the schema of every membership 403 (PAC-50). A client shows no organisation AI section to such a caller (spec P2-AC-9, P2-AC-30); it knows in advance from `Settings.aiStatus.inOrganization`.
              *      */
             403: {
                 headers: {
@@ -12082,7 +12195,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description Not permitted, configuration unchanged (P2-AC-1, P2-AC-2, P2-AC-17). Exactly one variant of OrganizationAIWriteForbiddenResponse, told apart by `error`: `org membership required` / `org not found` (no organisation; no step-up offered); `organization_ai_write_requires_admin_stepup` (with how to start the step-up for this purpose; a live grant of another purpose is left unconsumed); or `organization_ai_write_requires_fresh_login` (a break-glass address with a stale session, or with a session that already made one organisation-AI change, spec P2-D13). 403 because the request is understood and the caller is not permitted (RFC 9110 §15.5.4), as PAC-50.
+            /** @description Not permitted, configuration unchanged (P2-AC-1, P2-AC-2, P2-AC-17). Exactly one variant of OrganizationAIWriteForbiddenResponse, told apart by `error`: `org membership required` / `org not found` (no organisation, under PAC-148's membership rule (listOrgMembers); no step-up offered); `organization_ai_write_requires_admin_stepup` (with how to start the step-up for this purpose; a live grant of another purpose is left unconsumed); or `organization_ai_write_requires_fresh_login` (a break-glass address with a stale session, or with a session that already made one organisation-AI change, spec P2-D13). 403 because the request is understood and the caller is not permitted (RFC 9110 §15.5.4), as PAC-50.
              *      */
             403: {
                 headers: {
@@ -12155,7 +12268,7 @@ export interface operations {
                     "text/plain": components["schemas"]["PlainTextError"];
                 };
             };
-            /** @description No organisation (`org membership required`) or its row is gone (`org not found`): SsoWriteMembershipRequired. Nothing recorded (P2-AC-9).
+            /** @description No organisation (`org membership required`; since PAC-148 also a stored association that fails the organisation membership rule stated on listOrgMembers) or its row is gone (`org not found`): SsoWriteMembershipRequired. Nothing recorded (P2-AC-9).
              *      */
             403: {
                 headers: {

@@ -344,7 +344,7 @@ export type Org = __TypedOpenapi.Schemas.Org;
 export const Org = z.strictObject({ id: z.uuid(), name: z.string(), domain: z.string(), createdAt: z.iso.datetime() });
 
 export type OrgMember = __TypedOpenapi.Schemas.OrgMember;
-export const OrgMember = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.string(), org: Org.optional(), createdAt: z.iso.datetime() });
+export const OrgMember = z.strictObject({ id: z.uuid(), email: z.email(), name: z.string(), avatarUrl: z.string(), provider: z.enum(["google", "microsoft", "sso"]), org: Org.optional(), createdAt: z.iso.datetime() });
 
 export type OrganizationAIConfiguration = __TypedOpenapi.Schemas.OrganizationAIConfiguration;
 export const OrganizationAIConfiguration = z.strictObject({ configured: z.boolean(), provider: z.enum(["openai", "anthropic", "azure_openai", "bedrock", "vertex"]).optional(), model: z.string().optional(), baseUrl: z.string().optional(), azureEndpoint: z.string().optional(), azureDeployment: z.string().optional(), azureApiVersion: z.string().optional(), awsRegion: z.string().optional(), keySet: z.boolean(), personalKeysAllowed: z.boolean(), configurationVersion: z.number().int().min(0), updatedAt: z.iso.datetime().optional(), changeableBy: z.literal("organization_admin") });
