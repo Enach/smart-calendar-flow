@@ -25,7 +25,7 @@ import type { FormalTeam } from "@/api/teams";
 import { MemberRow, TeamTab } from "./Team";
 
 const NOTE = "Meeting time estimated from your calendar. Focus time is shown only for Paceday members of your teams who share it.";
-const BADGE_TITLE = "Visible on Paceday: a Paceday member of one of your teams, or of your organisation";
+const BADGE_MEANING = "Visible on Paceday: a Paceday member of one of your teams, or of your organisation";
 
 function withClient(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -85,7 +85,11 @@ describe("PAC-130 AC-14: 'On Paceday' only from the server's flag", () => {
       row(member({ source, is_paceday_user: true }));
       const badge = screen.getByTestId("manager-paceday-badge");
       expect(badge).toHaveTextContent(/^On Paceday$/);
-      expect(badge).toHaveAttribute("title", BADGE_TITLE);
+      // The meaning reaches keyboard and screen-reader users: the badge is
+      // focusable and described, not hidden in a hover-only title.
+      expect(badge).toHaveAttribute("tabindex", "0");
+      expect(badge).not.toHaveAttribute("title");
+      expect(badge).toHaveAccessibleDescription(BADGE_MEANING);
     });
 
     it(`source ${source}: flag false shows no badge, whatever the address`, () => {

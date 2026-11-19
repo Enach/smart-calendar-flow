@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactElement } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -28,6 +28,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
   DialogContent,
@@ -996,13 +997,7 @@ export function MemberRow({
                   Paceday" to the viewer, never "has an account"; the client
                   never infers it. */}
               {member.is_paceday_user && !added && (
-                <span
-                  className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary"
-                  title="Visible on Paceday: a Paceday member of one of your teams, or of your organisation"
-                  data-testid="manager-paceday-badge"
-                >
-                  On Paceday
-                </span>
+                <PacedayBadge />
               )}
             </div>
             <div className="truncate text-[11px] text-muted-foreground">{member.email}</div>
@@ -1139,6 +1134,40 @@ export function MemberRow({
 
       {expanded && analytics && !added && <InlineAnalytics data={analytics} />}
     </li>
+  );
+}
+
+const PACEDAY_BADGE_MEANING = "Visible on Paceday: a Paceday member of one of your teams, or of your organisation";
+
+/**
+ * PAC-130 (spec D-1): "On Paceday" means visible on Paceday to the viewer.
+ * The meaning is a focusable tooltip plus an sr-only description (the
+ * CoverageBadge pattern), so keyboard, touch and screen-reader users get it.
+ * The description sits beside the badge, so the badge's text stays "On Paceday".
+ */
+function PacedayBadge() {
+  const id = useId();
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            tabIndex={0}
+            aria-describedby={id}
+            className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary"
+            data-testid="manager-paceday-badge"
+          >
+            On Paceday
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-xs text-xs">
+          {PACEDAY_BADGE_MEANING}
+        </TooltipContent>
+      </Tooltip>
+      <span id={id} className="sr-only">
+        {PACEDAY_BADGE_MEANING}
+      </span>
+    </TooltipProvider>
   );
 }
 
