@@ -552,7 +552,7 @@ export function TeamTab({
   return (
     <>
       {teamState.status === "degraded" && (
-        <div role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <div role="status" className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="manager-degraded-banner">
           Some calendar analytics are unavailable. All {team.length} team members remain visible.
         </div>
       )}
@@ -983,7 +983,7 @@ export function MemberRow({
       : 0;
 
   return (
-    <li className="px-5 py-4">
+    <li className="px-5 py-4" data-testid={`manager-member-row-${member.email}`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-center">
         <div className="flex min-w-0 items-center gap-3 md:w-[30%]">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-foreground">
@@ -992,8 +992,17 @@ export function MemberRow({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-sm font-semibold text-foreground">{member.display_name}</span>
+              {/* PAC-130 (spec D-1, D-8): the server's flag means "visible on
+                  Paceday" to the viewer, never "has an account"; the client
+                  never infers it. */}
               {member.is_paceday_user && !added && (
-                <span className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary">On Paceday</span>
+                <span
+                  className="rounded bg-primary/12 px-1.5 py-0.5 text-[9px] font-semibold text-primary"
+                  title="Visible on Paceday: a Paceday member of one of your teams, or of your organisation"
+                  data-testid="manager-paceday-badge"
+                >
+                  On Paceday
+                </span>
               )}
             </div>
             <div className="truncate text-[11px] text-muted-foreground">{member.email}</div>
@@ -1098,7 +1107,9 @@ export function MemberRow({
             ) : member.data_available && analytics && weekMeasured ? (
               <>
                 <div className="flex items-baseline justify-end gap-1.5">
-                  <span className="text-2xl font-semibold text-primary">{fmtMin(focusMin)}</span>
+                  <span className="text-2xl font-semibold text-primary" data-testid={`manager-member-focus-${member.email}`}>
+                    {fmtMin(focusMin)}
+                  </span>
                   <TrendArrow pct={trendPct} />
                 </div>
                 <div className="text-[10px] text-muted-foreground">focus this week</div>
@@ -1160,8 +1171,10 @@ function InlineAnalytics({ data }: { data: MemberAnalytics }) {
   return (
     <div className="mt-4 rounded-xl border border-border bg-background/60 p-4">
       {!data.is_paceday_user && (
-        <p className="mb-2 text-[11px] italic text-muted-foreground">
-          Meeting time estimated; focus vs free time not available for non-Paceday users.
+        // PAC-130 (contract §5): exact text; it must never say or imply that
+        // the person has no Paceday account.
+        <p className="mb-2 text-[11px] italic text-muted-foreground" data-testid="manager-estimate-note">
+          Meeting time estimated from your calendar. Focus time is shown only for Paceday members of your teams who share it.
         </p>
       )}
       <div className="flex h-32 items-end gap-1.5">

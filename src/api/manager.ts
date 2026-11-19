@@ -489,7 +489,9 @@ export const managerApi = {
       custom_cadence_days: input.custom_cadence_days,
       last_one_on_one: null,
       source: "manual",
-      is_paceday_user: /paceday\.com$/i.test(email),
+      // PAC-130 (spec D-8, AC-14): the demo never guesses the flag from a
+      // domain. "On Paceday" means visible to the viewer, not "has an account".
+      is_paceday_user: false,
       data_available: !/gmail\.com|yahoo\.com|icloud\.com|me\.com|proton/i.test(email),
       added_at: new Date().toISOString(),
     };
