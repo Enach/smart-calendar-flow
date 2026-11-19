@@ -10,6 +10,7 @@ import { UI_LOCALE } from "@/lib/locale";
 import { useTimeFormat } from "@/contexts/TimeFormatContext";
 import { formatTime, type TimeFormat } from "@/lib/timeFormat";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
+import { formatArchiveDate } from "@/components/links/ArchiveFormat";
 
 interface LinkBookingsDialogProps {
   open: boolean;
@@ -77,9 +78,21 @@ export function LinkBookingsDialog({ open, onOpenChange, link }: LinkBookingsDia
             {bookings.map((b) => (
               <li key={b.id} className="rounded-lg border border-border bg-card px-3 py-2">
                 <p className="text-sm font-medium text-foreground">{formatRange(b.start, b.end, tf)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {b.booker_name} · {b.booker_email} · {b.duration_minutes} min
-                </p>
+                {b.erased_at !== undefined ? (
+                  // PAC-134: an operator erased this booker's address. The
+                  // archive's wording (ArchivedLinkDialog), never a blank.
+                  <p className="text-xs text-muted-foreground">
+                    <span data-testid="link-booking-erased" className="italic text-foreground">
+                      Name and email erased on {formatArchiveDate(b.erased_at)}
+                    </span>
+                    {" · "}
+                    {b.duration_minutes} min
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {b.booker_name} · {b.booker_email} · {b.duration_minutes} min
+                  </p>
+                )}
                 {b.notes && <p className="mt-1 text-xs text-muted-foreground">{b.notes}</p>}
               </li>
             ))}
