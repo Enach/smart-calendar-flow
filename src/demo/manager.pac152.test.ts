@@ -9,12 +9,12 @@
  * - the roster's this_week / last_week are the same figures as the analytics,
  *   and focus_trend_pct is the server's TrendPct of the two focus figures.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { managerApi, type MemberAnalytics } from "@/api/manager";
 import type { ManagerMemberWire } from "@/contracts/managerTeam";
 import { teamsApi } from "@/api/teams";
-import { demoManagerOps, SEED_MEMBERS } from "./manager";
+import { demoManagerOps, SEED_MEMBERS, trendPct } from "./manager";
 import { demoTeamsOps } from "./teams";
 
 const TEAM = "t1";
@@ -41,30 +41,44 @@ function serverTrendPct(current: number, prior: number): number {
   const t = ((current - prior) / prior) * 100;
   if (t > 200) return 200;
   if (t < -200) return -200;
-  return Math.round(t * 10) / 10;
+  const x = t * 10; // Go's math.Round: halves away from zero.
+  return (x < 0 ? -Math.floor(-x + 0.5) : Math.floor(x + 0.5)) / 10;
 }
+
+// CI runs in UTC, where a UTC-derived week start is still a Monday; pin a
+// timezone east of UTC so the week-start test can fail.
+let savedTZ: string | undefined;
+beforeAll(() => {
+  savedTZ = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+});
+afterAll(() => {
+  if (savedTZ === undefined) delete process.env.TZ;
+  else process.env.TZ = savedTZ;
+});
 
 beforeEach(() => {
   localStorage.clear();
 });
 
 describe("PAC-152: unflagged demo rows take the estimate branch", () => {
-  it("Miguel and Tom (and every scanned row) show no focus, and free time is 2400 minus meetings", () => {
+  it("Miguel and Tom show no focus, and free time is 2400 minus meetings", () => {
     seedRoster();
-    const rows = demoManagerOps.analytics("", TEAM);
-    expect(rows.length).toBe(SEED_MEMBERS.length);
-    for (const row of rows) {
-      expect(row.is_paceday_user).toBe(false);
-      for (const w of row.weeks) {
+    for (const email of ["miguel.alvarez@co.com", "tom.becker@co.com"]) {
+      const a = analyticsOf(email);
+      expect(a.is_paceday_user).toBe(false);
+      expect(a.weeks.some((w) => w.meeting_minutes > 0)).toBe(true);
+      for (const w of a.weeks) {
         expect(w.focus_minutes).toBe(0);
         expect(w.free_minutes).toBe(Math.max(0, 2400 - w.meeting_minutes));
       }
     }
-    // The ticket's two names, explicitly.
-    for (const email of ["miguel.alvarez@co.com", "tom.becker@co.com"]) {
-      const a = analyticsOf(email);
-      expect(a.weeks.some((w) => w.meeting_minutes > 0)).toBe(true);
-      expect(a.weeks.every((w) => w.focus_minutes === 0)).toBe(true);
+  });
+
+  it("every unflagged row has no focus", () => {
+    seedRoster();
+    for (const row of demoManagerOps.analytics("", TEAM).filter((r) => !r.is_paceday_user)) {
+      expect(row.weeks.every((w) => w.focus_minutes === 0)).toBe(true);
     }
   });
 
@@ -88,7 +102,6 @@ describe("PAC-152: unflagged demo rows take the estimate branch", () => {
 describe("PAC-152: a flagged demo row keeps its Paceday figures", () => {
   it("focus is shown and free time is what is left after meetings and focus", () => {
     seedRoster();
-    managerApi.updateMember("sarah.chen@co.com", { is_paceday_user: true });
     const a = analyticsOf("sarah.chen@co.com");
     expect(a.is_paceday_user).toBe(true);
     for (const w of a.weeks) {
@@ -117,7 +130,7 @@ describe("PAC-152: the roster's week figures are the analytics' figures", () => 
   it("a flagged row's trend is the server's TrendPct of its two focus figures", () => {
     seedRoster();
     const trends: number[] = [];
-    for (const m of SEED_MEMBERS) {
+    for (const m of SEED_MEMBERS.filter((x) => x.data_available)) {
       managerApi.updateMember(m.email, { is_paceday_user: true });
       const wire = wireOf(m.email);
       expect(wire.this_week.focus_minutes).toBeGreaterThan(0);
@@ -138,22 +151,36 @@ describe("PAC-152: the roster's week figures are the analytics' figures", () => 
   });
 });
 
-describe("PAC-152: the Teams demo does not borrow an estimate's zero focus", () => {
-  it("a Paceday team member with an unflagged Manager row keeps focus time in team analytics", () => {
+describe("PAC-152: Teams rows take the Manager week only from a flagged row", () => {
+  function setup() {
     teamsApi.setCurrentUserEmail("you@paceday.com");
     const teamId = teamsApi.createTeam("Demo squad").id;
+    const rowOf = () => demoTeamsOps.teamAnalytics(teamId).rows.find((r) => r.email === "you@paceday.com")!;
+    return { teamId, rowOf };
+  }
+
+  it("an unflagged Manager row lends nothing: meetings and focus are the team's own", () => {
+    const { rowOf } = setup();
+    const own = rowOf();
     managerApi.addMember({ email: "you@paceday.com", cadence: "weekly" });
-    const managed = analyticsOf("you@paceday.com");
-    expect(managed.is_paceday_user).toBe(false);
-    const view = demoTeamsOps.teamAnalytics(teamId);
-    const week = managed.weeks.find((w) => w.week_start === view.week_start);
-    // The Manager week is found, so the team row reads its meeting time...
-    expect(week).toBeDefined();
-    const row = view.rows.find((r) => r.email === "you@paceday.com")!;
-    expect(row.meeting_minutes).toBe(week!.meeting_minutes);
-    // ...but not its estimate's zero focus.
+    expect(analyticsOf("you@paceday.com").is_paceday_user).toBe(false);
+    const row = rowOf();
     expect(row.kind).toBe("paceday");
+    expect(row.meeting_minutes).toBe(own.meeting_minutes);
+    expect(row.focus_minutes).toBe(own.focus_minutes);
     expect(row.focus_minutes).toBeGreaterThan(0);
+  });
+
+  it("a flagged Manager row lends both its meetings and its focus", () => {
+    const { teamId, rowOf } = setup();
+    managerApi.addMember({ email: "you@paceday.com", cadence: "weekly" });
+    managerApi.updateMember("you@paceday.com", { is_paceday_user: true });
+    const view = demoTeamsOps.teamAnalytics(teamId);
+    const week = analyticsOf("you@paceday.com").weeks.find((w) => w.week_start === view.week_start);
+    expect(week).toBeDefined();
+    const row = rowOf();
+    expect(row.meeting_minutes).toBe(week!.meeting_minutes);
+    expect(row.focus_minutes).toBe(week!.focus_minutes);
   });
 });
 
@@ -163,5 +190,64 @@ describe("PAC-152: demo Manager weeks start on a Monday, like the server's", () 
     for (const w of analyticsOf("a@co.example").weeks) {
       expect(new Date(`${w.week_start}T12:00:00Z`).getUTCDay()).toBe(1);
     }
+  });
+});
+
+describe("PAC-152: an added (PAC-129) row is never measured", () => {
+  it("all zeroes and data_available false, on the analytics and the roster", () => {
+    seedRoster();
+    managerApi.updateMember("sarah.chen@co.com", { source: "added" });
+    const a = analyticsOf("sarah.chen@co.com");
+    expect(a.data_available).toBe(false);
+    for (const w of a.weeks) {
+      expect(w).toMatchObject({ focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false });
+    }
+    const zero = { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: false };
+    expect(wireOf("sarah.chen@co.com").this_week).toEqual(zero);
+    expect(wireOf("sarah.chen@co.com").last_week).toEqual(zero);
+  });
+});
+
+describe("PAC-152: trendPct is engine.TrendPct", () => {
+  it("0 when both are 0, 200 when only the prior is 0", () => {
+    expect(trendPct(0, 0)).toBe(0);
+    expect(trendPct(5, 0)).toBe(200);
+  });
+
+  it("caps at +200 and -200", () => {
+    expect(trendPct(1000, 100)).toBe(200);
+    expect(trendPct(300, 100)).toBe(200);
+    expect(trendPct(-500, 100)).toBe(-200);
+  });
+
+  it("rounds halves away from zero, like Go's math.Round", () => {
+    // (60 - 64) / 64 * 100 = -6.25 -> -6.3 (Math.round would give -6.2).
+    expect(trendPct(60, 64)).toBe(-6.3);
+    // (68 - 64) / 64 * 100 = 6.25 -> 6.3.
+    expect(trendPct(68, 64)).toBe(6.3);
+  });
+});
+
+describe("PAC-152: scan-confirm stores the seeds as detected", () => {
+  it("each selected seed is source auto with its own flag and data", () => {
+    seedRoster();
+    const team = managerApi.listTeam();
+    for (const seed of SEED_MEMBERS) {
+      const m = team.find((x) => x.email === seed.email)!;
+      expect(m).toMatchObject({
+        source: "auto",
+        is_paceday_user: seed.is_paceday_user,
+        data_available: seed.data_available,
+      });
+    }
+    // So the "On Paceday" branch does appear in the demo.
+    expect(demoManagerOps.analytics("", TEAM).some((a) => a.is_paceday_user && a.weeks.some((w) => w.focus_minutes > 0))).toBe(true);
+  });
+
+  it("an address already on the roster is not overwritten", () => {
+    managerApi.addMember({ email: "miguel.alvarez@co.com", cadence: "monthly" });
+    seedRoster();
+    const m = managerApi.listTeam().find((x) => x.email === "miguel.alvarez@co.com")!;
+    expect(m.source).toBe("manual");
   });
 });

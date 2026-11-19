@@ -83,13 +83,17 @@ function isoDaysAgo(days: number): string {
 /** The server's working week for the estimate (5 days x 8h). */
 const DEMO_WORK_MINUTES_PER_WEEK = 2400;
 
-/** engine.TrendPct (clockwise-like backend/engine/manager.go). */
-function trendPct(current: number, prior: number): number {
+/**
+ * engine.TrendPct (clockwise-like backend/engine/manager.go). Go's math.Round
+ * rounds halves away from zero; Math.round rounds them up, so round |x|.
+ */
+export function trendPct(current: number, prior: number): number {
   if (prior === 0) return current === 0 ? 0 : 200;
   const t = ((current - prior) / prior) * 100;
   if (t > 200) return 200;
   if (t < -200) return -200;
-  return Math.round(t * 10) / 10;
+  const x = t * 10;
+  return (Math.sign(x) * Math.round(Math.abs(x))) / 10;
 }
 
 function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
@@ -172,9 +176,24 @@ function mockScanPreview(teamId: string): ScanPreview {
 function mockConfirmScan(teamId: string, emails: string[]): ScanConfirmation {
   const selected = new Set(emails.map((email) => email.trim().toLowerCase()));
   let assigned = 0;
+  const present = new Set(managerApi.listTeam().map((m) => m.email));
   for (const member of SEED_MEMBERS) {
     if (!selected.has(member.email)) continue;
-    managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+    if (present.has(member.email)) {
+      managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+    } else {
+      // PAC-152: a detected person is stored as the server's confirm stores
+      // it, source "auto", with the seed's own flag and data (not as a manual
+      // add, which would erase the "On Paceday" branch from the demo).
+      managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+      managerApi.updateMember(member.email, {
+        source: "auto",
+        is_paceday_user: member.is_paceday_user,
+        data_available: member.data_available,
+        last_one_on_one: member.last_one_on_one,
+        added_at: member.added_at,
+      });
+    }
     assigned += 1;
   }
   return { team_id: teamId, assigned, skipped: Math.max(0, selected.size - assigned), total: managerApi.listTeam().length };
