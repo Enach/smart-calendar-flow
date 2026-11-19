@@ -46,12 +46,36 @@ describe("redactBreadcrumb", () => {
     expect(redactEmailsInUrl("ask Sam.Lee@Mail.Acme.Example.")).toBe("ask [email].");
   });
 
+  it("PAC-139 review: redacts IDN, Unicode, percent-encoded and unusual domains", () => {
+    const cases = [
+      "user@example.xn--p1ai",
+      "ivan%40mail.xn--p1ai",
+      "ivan@почта.рф",
+      "user@例え.テスト",
+      "ivan%40%D0%BF%D0%BE%D1%87%D1%82%D0%B0.%D1%80%D1%84",
+      "sam%40acme%2Ecom",
+      "sam@acme.com-backup",
+      "ivan@mail.ru,react@1.2.3",
+      "react@1.2.3,ivan@mail.ru",
+      "user@localhost",
+    ];
+    for (const addr of cases) {
+      expect(redactEmailsInUrl(`/api/teams/t1/people/${addr}?x=1`)).toBe("/api/teams/t1/people/[email]?x=1");
+      expect(redactEmailsInUrl(`/app?attendees=${addr}&duration=30`)).toBe("/app?attendees=[email]&duration=30");
+      expect(redactBreadcrumb({ category: "console", data: { arguments: [addr] } }).data!.arguments).toEqual(["[email]"]);
+    }
+  });
+
   it("PAC-139: leaves pkg@version URL segments alone", () => {
     for (const url of [
       "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js",
       "https://unpkg.com/@sentry/react@8.1.0/build/index.js",
       "https://esm.sh/zod@3.23.8-beta.1?target=es2022",
       "https://unpkg.com/lodash@latest/lodash.js",
+      "https://cdn.example/npm/pkg@1.2.3/index.js",
+      "https://cdn.example/npm/pkg@18.3.1-beta/index.js",
+      "https://cdn.example/npm/pkg@v2.0.0+build.5/index.js",
+      "https://cdn.example/npm/pkg%401.2.3/index.js",
     ]) {
       expect(redactEmailsInUrl(url)).toBe(url);
       expect(redactBreadcrumb({ category: "fetch", data: { url } }).data!.url).toBe(url);

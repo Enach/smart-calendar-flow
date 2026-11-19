@@ -123,15 +123,29 @@ export function __resetMonitoringStatusForTests(): void {
 
 // An email-shaped run of characters inside a URL path or query segment, raw
 // or with "@" percent-encoded. Segment boundaries are / ? # & = so the rest of
-// the URL (route shape, team id) stays readable. The domain must end in an
-// alphabetic label (".example", ".com"), so a pkg@version segment such as
-// react@18.3.1 or lodash@latest is left alone (PAC-139), and trailing
-// punctuation in a console message is not swallowed.
-const EMAIL_IN_URL = /[^/?#&=\s]+(?:@|%40)[^/?#&=\s]*\.[a-z]{2,}(?![a-z0-9-])/gi;
+// the URL (route shape, team id) stays readable. The local part is lazy, so
+// the first "@" of a segment decides: "ivan@mail.ru,react@1.2.3" is one
+// address-bearing segment, not a package.
+const EMAIL_IN_URL = /[^/?#&=\s]+?(?:@|%40)([^/?#&=\s]+)/gi;
+
+// PAC-139: the only segments left alone are pkg@version ones, where what
+// follows "@" is a version (1.2.3, 18.3.1-beta, v2.0.0+build.5) or a common
+// dist-tag (latest, next, ...). Everything else is redacted, user@localhost too,
+// including IDN (xn--), Unicode and percent-encoded domains: when in doubt the
+// address goes, because under-redaction is the worse failure.
+const PKG_VERSION = /^v?\d+(?:\.\d+)*(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?$/i;
+const PKG_DIST_TAG = /^(?:latest|next|beta|alpha|canary|rc|stable|dev|experimental|insiders|nightly)$/i;
+// Sentence punctuation after an address in a console message stays visible.
+const TRAILING_PUNCTUATION = /[.,:;!?)\]'"]+$/;
 
 /** Replaces every email-shaped segment of a URL with "[email]". */
 export function redactEmailsInUrl(url: string): string {
-  return url.replace(EMAIL_IN_URL, "[email]");
+  return url.replace(EMAIL_IN_URL, (match: string, domain: string) => {
+    const tail = TRAILING_PUNCTUATION.exec(domain)?.[0] ?? "";
+    const bare = domain.slice(0, domain.length - tail.length);
+    if (PKG_VERSION.test(bare) || PKG_DIST_TAG.test(bare)) return match;
+    return `[email]${tail}`;
+  });
 }
 
 /**
