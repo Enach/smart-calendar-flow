@@ -13,14 +13,19 @@ vi.hoisted(() => {
   (window as Window & { __API_BASE_URL__?: string }).__API_BASE_URL__ = "https://api.paceday.test/api";
 });
 
-const state = vi.hoisted(() => ({ settings: undefined as unknown }));
+const state = vi.hoisted(() => ({ settings: undefined as unknown, orgAIEnabled: [] as boolean[] }));
 
 vi.mock("@/components/Navbar", () => ({ Navbar: () => null }));
 vi.mock("@/components/ServerStatusBanner", () => ({ ServerStatusBanner: () => null }));
 vi.mock("@/components/WorkCalendarConnection", () => ({ WorkCalendarConnection: () => null }));
 vi.mock("@/components/PersonalCalendarsSection", () => ({ PersonalCalendarsSection: () => null }));
 vi.mock("@/components/ConferencingSection", () => ({ ConferencingSection: () => null }));
-vi.mock("@/components/settings/OrganizationAISection", () => ({ OrganizationAISection: () => null }));
+// The stub mirrors the real section's gate (it renders nothing unless
+// `inOrganization`), so the page's prop is observable (PAC-148).
+vi.mock("@/components/settings/OrganizationAISection", () => ({
+  OrganizationAISection: ({ inOrganization }: { inOrganization: boolean }) =>
+    inOrganization ? <section data-testid="org-ai-section" /> : null,
+}));
 vi.mock("@/components/settings/SsoAdminStepupSection", () => ({ SsoAdminStepupSection: () => null }));
 // PAC-71's sign-in address notice reads the auth context; not under test here.
 vi.mock("@/components/settings/AddressStandingNotice", () => ({ AddressStandingNotice: () => null }));
@@ -28,8 +33,12 @@ vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({ data: state.settings, isLoading: false, refetch: async () => ({ data: state.settings }) }),
   useUpdateSettings: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+// Records `enabled`: the hook issues GET /organization/ai only when it is true.
 vi.mock("@/hooks/useOrganizationAI", () => ({
-  useOrganizationAI: () => ({ data: { personalKeysAllowed: false } }),
+  useOrganizationAI: (enabled: boolean) => {
+    state.orgAIEnabled.push(enabled);
+    return { data: enabled ? { personalKeysAllowed: false } : undefined };
+  },
 }));
 
 import SettingsPage from "./Settings";
@@ -121,5 +130,49 @@ describe("PAC-87 Settings, a member in row 9", () => {
     expect(screen.queryByTestId("ai-use-org")).not.toBeInTheDocument();
     expect(notice.textContent).not.toMatch(WORDS);
     expect(screen.queryByTestId("ai-runs-on-org")).not.toBeInTheDocument();
+  });
+});
+
+// PAC-148 (spec §3.7 and §6; contract md 6): the page takes membership from
+// the server's `aiStatus.inOrganization` alone. A non-member with a stored
+// "organization" choice (row 6) is offered no organisation AI: the
+// organisation AI read is never enabled, the choice list has no enabled
+// organisation option, and the organisation AI section is not shown.
+describe("PAC-148 Settings, a user who is not a member", () => {
+  const row6 = {
+    configured: false,
+    inOrganization: false,
+    notConfigured: {
+      reason: "nothing_configured",
+      enablers: ["user"],
+      message: "AI features are off: no AI provider is set up. Add your own API key in Settings.",
+    },
+  };
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "unexpected" }), { status: 599 }));
+    state.orgAIEnabled.length = 0;
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  it("never enables the organisation AI read, offers no organisation option, and shows no organisation AI section", async () => {
+    state.settings = settings(row6, "organization");
+    renderPage();
+    const select = (await screen.findByText("AI provider")).closest("label, div")!.querySelector("select")!;
+    expect(select).not.toBeNull();
+    expect(select.value).toBe("organization");
+    const options = Array.from(select.options);
+    for (const o of options) {
+      if (/organi[sz]ation/i.test(o.textContent ?? "")) throw new Error(`organisation wording offered: ${o.textContent}`);
+    }
+    expect(options.filter((o) => o.value === "organization").map((o) => ({ label: o.textContent, disabled: o.disabled }))).toEqual([
+      { label: "No provider chosen", disabled: true },
+    ]);
+    expect(screen.queryByTestId("org-ai-section")).not.toBeInTheDocument();
+    expect(state.orgAIEnabled.length).toBeGreaterThan(0);
+    expect(state.orgAIEnabled.every((e) => e === false)).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/organization/ai"))).toBe(false);
   });
 });

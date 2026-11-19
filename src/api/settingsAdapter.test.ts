@@ -8,7 +8,8 @@ import {
   validateLunchWithinWorkingHours,
   workingHoursCapacity,
 } from "@/lib/schedulingPresets";
-import { editKey, keyIsSetFor, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
+import { editKey, keyIsSetFor, providerOptions, providerSwitch, removeSavedKey } from "@/lib/aiProviders";
+import { AIStatus } from "@/api/generated/schemas";
 import type { Settings } from "./types";
 
 const base = {
@@ -522,5 +523,39 @@ describe("AI settings", () => {
     });
     // Row 10 (not configured): unchanged, the stored provider is named.
     expect(llmTestBody({ ...read, llm_provider: "openai", ai_status: { configured: false, inOrganization: true } })).toEqual({ llmProvider: "openai", llmModel: read.llm_model ?? "" });
+  });
+});
+
+// PAC-148 (spec §3.7 and §6; contract md 6): membership is the server's
+// `aiStatus.inOrganization`, read as sent. For a non-member with a stored
+// "organization" choice the server answers row 6 (`nothing_configured`, only
+// the user can turn AI on); the adapter keeps that answer, invents no
+// membership, and the choice list then offers no organisation option.
+// Regression pin: today's code already behaves this way.
+describe("PAC-148 a user who is not a member", () => {
+  const row6 = {
+    configured: false,
+    inOrganization: false,
+    notConfigured: {
+      reason: "nothing_configured" as const,
+      enablers: ["user" as const],
+      message: "AI features are off: no AI provider is set up. Add your own API key in Settings.",
+    },
+  };
+
+  it("keeps the server's row 6 for a stored organisation choice, and offers no organisation option", () => {
+    const read = normalizeSettings({ ...patchPayload, llmProvider: "organization", aiStatus: row6 });
+    expect(read.llm_provider).toBe("organization");
+    expect(read.ai_status).toEqual(row6);
+    expect(AIStatus.parse(read.ai_status)).toEqual(row6);
+    const options = providerOptions(read.llm_provider, { inOrganization: read.ai_status?.inOrganization });
+    for (const o of options) expect(o.label).not.toMatch(/organi[sz]ation/i);
+    expect(options.find((o) => o.value === "organization")).toEqual({ value: "organization", label: "No provider chosen", disabled: true });
+  });
+
+  it("sends no membership back: an unchanged read patches nothing", () => {
+    const read = normalizeSettings({ ...patchPayload, llmProvider: "organization", aiStatus: row6 });
+    expect(settingsPatchBody({ ...read }, read)).toEqual({});
+    expect(settingsPatchBody({ ...read, ai_status: { ...row6, inOrganization: true } }, read)).toEqual({});
   });
 });

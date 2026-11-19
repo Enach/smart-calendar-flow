@@ -327,3 +327,40 @@ describe("SsoAdminStepupSection (PAC-75)", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+// PAC-148 (spec §3.7 and §6; contract md 6): the step-up entry is offered
+// only on the server's say-so. A user whose association fails PAC-148's rule
+// gets the options' membership 403, and the section shows nothing; it reads
+// no address, no /api/auth/me and no member list to decide otherwise.
+// Regression pin: today's code already behaves this way.
+describe("SsoAdminStepupSection (PAC-148, a user who is not a member)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.removeItem("paceday:demo");
+    assigned.length = 0;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { origin: "https://app.paceday.test", href: "https://app.paceday.test/settings", search: "", assign: (v: string) => assigned.push(v) },
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(window, "location", { configurable: true, value: realLocation });
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("decides from the options' membership 403 alone: nothing shown, one request, no navigation", async () => {
+    serveOptions(403, { error: "org membership required" });
+    const { container, qc } = renderAt();
+    await optionsFailed(qc);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock.mock.calls.map(([url, init]) => [String(url), init?.method ?? "GET"])).toEqual([
+      ["https://api.paceday.test/api/admin/sso/stepup/options", "GET"],
+    ]);
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(assigned).toEqual([]);
+  });
+});
