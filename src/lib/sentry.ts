@@ -150,11 +150,85 @@ export function redactEmailsInUrl(url: string): string {
   });
 }
 
+// PAC-145: how far into a logged object redactConsoleArgument looks. Sentry
+// itself serialises breadcrumb data only 3 levels deep (normalizeDepth), so
+// anything below this bound would not be shown anyway; it is replaced rather
+// than passed through unread.
+export const CONSOLE_ARG_MAX_DEPTH = 6;
+// PAC-145: how many entries of one object or array are kept (Sentry keeps
+// 1000, normalizeMaxBreadth). Bounds the work on a huge logged value.
+export const CONSOLE_ARG_MAX_BREADTH = 200;
+
+function constructorName(value: object): string {
+  const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+  return typeof name === "string" && name !== "" ? name : "Object";
+}
+
+/**
+ * PAC-145: a console argument with every string in it redacted, at any depth
+ * up to CONSOLE_ARG_MAX_DEPTH: values and keys of plain objects, array items,
+ * and an Error's name, message, stack, cause and own properties. The result is
+ * a fresh plain value; the logged object is never mutated. A cycle becomes
+ * "[Circular]", anything deeper than the bound "[Truncated]", a function
+ * "[Function]" and a DOM node "[NodeName]", so nothing is kept unread.
+ */
+export function redactConsoleArgument(value: unknown, depth = 0, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") return redactEmailsInUrl(value);
+  if (typeof value === "function") return "[Function]";
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  if (depth >= CONSOLE_ARG_MAX_DEPTH) return "[Truncated]";
+  if (typeof Node !== "undefined" && value instanceof Node) return `[${value.nodeName}]`;
+  seen.add(value);
+  try {
+    const next = (v: unknown) => redactConsoleArgument(v, depth + 1, seen);
+    if (Array.isArray(value)) {
+      const out = value.slice(0, CONSOLE_ARG_MAX_BREADTH).map(next);
+      if (value.length > CONSOLE_ARG_MAX_BREADTH) out.push("[Truncated]");
+      return out;
+    }
+    const out: Record<string, unknown> = {};
+    if (value instanceof Error) {
+      // Not enumerable, so the own-key walk below would miss them; Sentry
+      // serialises them.
+      out.name = next(value.name);
+      out.message = next(value.message);
+      if (value.stack !== undefined) out.stack = next(value.stack);
+      if ("cause" in value && value.cause !== undefined) out.cause = next(value.cause);
+    } else if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? "Invalid Date" : value.toISOString();
+    } else if (value instanceof Map) {
+      return next(Object.fromEntries(value));
+    } else if (value instanceof Set) {
+      return next([...value]);
+    } else if (constructorName(value) !== "Object") {
+      out.__type = constructorName(value);
+    }
+    const keys = Object.keys(value);
+    for (const key of keys.slice(0, CONSOLE_ARG_MAX_BREADTH)) {
+      let v: unknown;
+      try {
+        v = (value as Record<string, unknown>)[key];
+      } catch {
+        v = "[Unreadable]";
+      }
+      out[redactEmailsInUrl(key)] = next(v);
+    }
+    if (keys.length > CONSOLE_ARG_MAX_BREADTH) out["[Truncated]"] = keys.length - CONSOLE_ARG_MAX_BREADTH;
+    return out;
+  } finally {
+    // Only ancestors count as a cycle: the same object logged twice side by
+    // side is shown twice.
+    seen.delete(value);
+  }
+}
+
 /**
  * PAC-129 review: fetch, xhr and navigation breadcrumbs record request and
  * page URLs, and team and Manager routes put an address in the path. Every
- * URL-bearing field of a breadcrumb, and every string a console breadcrumb
- * logged (data.arguments), is redacted before it is kept.
+ * URL-bearing field of a breadcrumb, and every value a console breadcrumb
+ * logged (data.arguments), strings inside objects and Errors included
+ * (PAC-145), is redacted before it is kept.
  */
 export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb {
   const data = breadcrumb.data;
@@ -165,7 +239,7 @@ export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcru
     }
     // PAC-139: console breadcrumbs keep the logged values in data.arguments.
     if (Array.isArray(next.arguments)) {
-      next.arguments = next.arguments.map((arg: unknown) => (typeof arg === "string" ? redactEmailsInUrl(arg) : arg));
+      next.arguments = next.arguments.map((arg: unknown) => redactConsoleArgument(arg));
     }
     breadcrumb = { ...breadcrumb, data: next };
   }
