@@ -251,7 +251,7 @@ export type InviteEmailRequest = __TypedOpenapi.Schemas.InviteEmailRequest;
 export const InviteEmailRequest = z.object({ email: z.email(), name: z.string().optional() }).catchall(z.unknown());
 
 export type InviteSchedulingLinkHostRequest = __TypedOpenapi.Schemas.InviteSchedulingLinkHostRequest;
-export const InviteSchedulingLinkHostRequest = z.strictObject({ email: z.email() });
+export const InviteSchedulingLinkHostRequest = z.strictObject({ email: z.string() });
 
 export type LLMApiKeysSet = __TypedOpenapi.Schemas.LLMApiKeysSet;
 export const LLMApiKeysSet = z.strictObject({ openai: z.boolean(), anthropic: z.boolean(), azure_openai: z.boolean(), bedrock: z.boolean(), vertex: z.boolean() });
@@ -494,7 +494,7 @@ export type SchedulingErrorResponse = __TypedOpenapi.Schemas.SchedulingErrorResp
 export const SchedulingErrorResponse = z.strictObject({ error: z.string() });
 
 export type SchedulingLinkHost = __TypedOpenapi.Schemas.SchedulingLinkHost;
-export const SchedulingLinkHost = z.strictObject({ user_id: z.uuid(), email: z.email(), name: z.string().optional(), avatar_url: z.string().optional(), is_owner: z.boolean(), status: z.enum(["pending", "accepted", "declined"]) });
+export const SchedulingLinkHost = z.strictObject({ user_id: z.uuid().optional(), email: z.string(), name: z.string().optional(), avatar_url: z.string().optional(), is_owner: z.boolean(), status: z.enum(["pending", "accepted", "declined"]) });
 
 export type SchedulingLink = __TypedOpenapi.Schemas.SchedulingLink;
 export const SchedulingLink = z.strictObject({ id: z.uuid(), owner_id: z.uuid(), title: z.string(), slug: z.string(), durations: z.array(z.number().int()), days: z.array(z.enum(["sun", "mon", "tue", "wed", "thu", "fri", "sat"])), window_start: z.string(), window_end: z.string(), buffer_before: z.number().int().min(0), buffer_after: z.number().int().min(0), min_notice_minutes: z.number().int().min(0), booking_horizon_days: z.number().int().min(1).max(365), refusal_message: BookingRefusalMessage, time_zone: z.string(), usage_type: z.enum(["reusable", "recurring", "single_use"]), max_uses: z.number().int().optional(), uses_count: z.number().int().min(0), active: z.boolean(), hosts: z.array(SchedulingLinkHost), created_at: z.iso.datetime(), is_owner: z.boolean(), my_status: z.enum(["pending", "accepted", "declined"]).optional() });
@@ -506,7 +506,7 @@ export type SchedulingLinkCoHostOutcome = __TypedOpenapi.Schemas.SchedulingLinkC
 export const SchedulingLinkCoHostOutcome = z.strictObject({ email: z.string(), outcome: z.enum(["invited", "already_host", "own_address", "not_added"]) });
 
 export type SchedulingLinkRemovedHost = __TypedOpenapi.Schemas.SchedulingLinkRemovedHost;
-export const SchedulingLinkRemovedHost = z.strictObject({ user_id: z.uuid(), email: z.string(), status: z.enum(["pending", "accepted", "declined"]) });
+export const SchedulingLinkRemovedHost = z.strictObject({ user_id: z.uuid().optional(), email: z.string(), status: z.enum(["pending", "accepted", "declined"]) });
 
 export type SchedulingLinkCoHostChanges = __TypedOpenapi.Schemas.SchedulingLinkCoHostChanges;
 export const SchedulingLinkCoHostChanges = z.strictObject({ addresses: z.array(SchedulingLinkCoHostOutcome), removed: z.array(SchedulingLinkRemovedHost), invited_count: z.number().int().min(0), removed_count: z.number().int().min(0), not_added_count: z.number().int().min(0) });
@@ -528,9 +528,6 @@ export const SchedulingLinkHostInvite = z.strictObject({ link_id: z.uuid(), link
 
 export type SchedulingLinkHostLimitError = __TypedOpenapi.Schemas.SchedulingLinkHostLimitError;
 export const SchedulingLinkHostLimitError = z.strictObject({ error: z.literal("this link has reached its limit of 5 co-hosts; remove a co-host before inviting another") });
-
-export type SchedulingLinkHostRecord = __TypedOpenapi.Schemas.SchedulingLinkHostRecord;
-export const SchedulingLinkHostRecord = z.strictObject({ id: z.uuid(), link_id: z.uuid(), user_id: z.uuid(), status: z.enum(["pending", "accepted", "declined"]), invited_at: z.iso.datetime(), responded_at: z.iso.datetime().optional() });
 
 export type SchedulingLinkInviteResponse = __TypedOpenapi.Schemas.SchedulingLinkInviteResponse;
 export const SchedulingLinkInviteResponse = z.strictObject({ status: z.enum(["accepted", "declined"]) });

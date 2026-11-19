@@ -15,7 +15,13 @@ function result(c: SchedulingLinkCoHostChanges | undefined, sent = true): Schedu
   return { link: LINK, co_host_changes: c, co_host_list_sent: sent };
 }
 
-const FORBIDDEN = /sent|email|no paceday account/i;
+// PAC-112: never say sent, email or anything about a Paceday account. PAC-149
+// (spec §3.7) sanctions exactly two phrases that mention email — the "doesn't
+// email invitations" sentence and "valid email address(es)" — so those are
+// removed first and the original rule applies to everything else.
+const FORBIDDEN = /sen[dt]|email|paceday account/i;
+const unsanctioned = (line: string) =>
+  line.replace(/\S+@\S+/g, "ADDR").replace(CO_HOST_TEXT.noEmail, "").replace(/valid email address(es)?/g, "");
 
 describe("coHostsChanged (contract §5.1)", () => {
   it("compares sets of addresses ignoring case and order", () => {
@@ -36,18 +42,18 @@ describe("saveSummary (contract §5.3, AC-12)", () => {
     const lines = saveSummary(result(changes({ invited_count: 2, removed_count: 1, not_added_count: 1 })), false);
     expect(lines).toEqual([
       "Link updated.",
-      "2 co-hosts invited — they can accept from Paceday.",
+      "2 co-hosts invited. Paceday doesn't email invitations, so let them know.",
       "Removed 1 co-host.",
-      "1 address couldn't be added as a co-host.",
+      "1 address wasn't a valid email address.",
     ]);
   });
 
   it("singular and plural forms", () => {
     expect(saveSummary(result(changes({ invited_count: 1, removed_count: 2, not_added_count: 2 })), true)).toEqual([
       "Link created.",
-      "1 co-host invited — they can accept from Paceday.",
+      "1 co-host invited. Paceday doesn't email invitations, so let them know.",
       "Removed 2 co-hosts.",
-      "2 addresses couldn't be added as a co-host.",
+      "2 addresses weren't valid email addresses.",
     ]);
   });
 
@@ -68,14 +74,14 @@ describe("saveSummary (contract §5.3, AC-12)", () => {
     expect(CO_HOST_TEXT.fallback).toBe("Paceday couldn't confirm which co-hosts were added — check the co-host list.");
   });
 
-  it("never says sent, email or no Paceday account", () => {
+  it("never says sent, email or anything about a Paceday account, beyond the two PAC-149 phrases", () => {
     const all = [
       ...saveSummary(result(changes({ invited_count: 3, removed_count: 3, not_added_count: 3 })), true),
       ...saveSummary(result(undefined), true),
       ...outcomeLines(changes({ addresses: [{ email: "x@y.io", outcome: "not_added" }, { email: "me@y.io", outcome: "own_address" }] })),
     ];
     // The address itself is not wording; check the text around it.
-    for (const line of all) expect(line.replace(/\S+@\S+/g, "ADDR")).not.toMatch(FORBIDDEN);
+    for (const line of all) expect(unsanctioned(line)).not.toMatch(FORBIDDEN);
   });
 });
 
@@ -93,7 +99,7 @@ describe("outcomeLines (contract §5.3, AC-11)", () => {
       }),
     );
     expect(lines).toEqual([
-      "c@nowhere.io couldn't be added as a co-host.",
+      "c@nowhere.io isn't a valid email address.",
       "a@acme.com is your own address — you're the link's owner.",
     ]);
     expect(outcomeLines(undefined)).toEqual([]);

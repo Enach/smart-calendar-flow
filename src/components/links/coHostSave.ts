@@ -17,6 +17,12 @@ export const CO_HOST_TEXT = {
   baselineFailed:
     "Co-hosts can't be edited right now because the current list couldn't be loaded. Reopen the editor to try again.",
   fallback: "Paceday couldn't confirm which co-hosts were added — check the co-host list.",
+  /**
+   * PAC-149 (spec §3.7, contract §5): an invitation is to an address, and
+   * Paceday sends no email. The sentence promises nothing about when, or
+   * whether, the invitee sees it.
+   */
+  noEmail: "Paceday doesn't email invitations, so let them know.",
 } as const;
 
 const lower = (email: string) => email.trim().toLowerCase();
@@ -41,7 +47,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  * `Link created.` / `Link updated.`, then — when the save carried the list —
  * the invited count (always, zero included), the removed count when > 0 and
  * the not-added count when > 0; or the fallback sentence when the answer has
- * no report.
+ * no report. PAC-149: `not_added` means only "not a well-formed address" — the
+ * server no longer looks addresses up, so nothing here depends on accounts.
  */
 export function saveSummary(result: SchedulingLinkSaveResult, created: boolean): string[] {
   const lines = [created ? "Link created." : "Link updated."];
@@ -51,11 +58,15 @@ export function saveSummary(result: SchedulingLinkSaveResult, created: boolean):
   lines.push(
     changes.invited_count === 0
       ? "0 co-hosts invited."
-      : `${plural(changes.invited_count, "co-host", "co-hosts")} invited — they can accept from Paceday.`,
+      : `${plural(changes.invited_count, "co-host", "co-hosts")} invited. ${CO_HOST_TEXT.noEmail}`,
   );
   if (changes.removed_count > 0) lines.push(`Removed ${plural(changes.removed_count, "co-host", "co-hosts")}.`);
   if (changes.not_added_count > 0) {
-    lines.push(`${plural(changes.not_added_count, "address", "addresses")} couldn't be added as a co-host.`);
+    lines.push(
+      changes.not_added_count === 1
+        ? "1 address wasn't a valid email address."
+        : `${changes.not_added_count} addresses weren't valid email addresses.`,
+    );
   }
   return lines;
 }
@@ -75,7 +86,7 @@ export function outcomeLines(changes: SchedulingLinkCoHostChanges | undefined): 
     seen.add(key);
     out.push(
       outcome === "not_added"
-        ? `${email} couldn't be added as a co-host.`
+        ? `${email} isn't a valid email address.`
         : `${email} is your own address — you're the link's owner.`,
     );
   }

@@ -64,7 +64,12 @@ describe("demo mode follows the same rules (contract §5.5, AC-26)", () => {
     vi.spyOn(schedulingLinksApi, "getLink").mockImplementation(async (id) => demoSchedulingLinksOps.getLink(id));
   }
 
-  it("AC-26 (AC-11, AC-12, AC-24): a demo create names the unknown address, stays open, then edits the created link", async () => {
+  it("AC-26 (AC-12; PAC-149 AC-11): a demo create invites every well-formed address, closes, and creates one link", async () => {
+    // PAC-149: the demo no longer treats its directory as an account check, so
+    // an address outside it is invited like any other; the editor only accepts
+    // well-formed chips, so nothing is not_added and the editor closes. The
+    // stay-open-then-edit rule (AC-24) is pinned against a mocked server in
+    // src/components/links/LinkEditDrawer.pac112.test.tsx.
     wireDemo();
     const before = demoSchedulingLinksOps.listLinks().owned.length;
     const { onOpenChange } = renderDrawer("alex@demo.paceday.com");
@@ -72,24 +77,17 @@ describe("demo mode follows the same rules (contract §5.5, AC-26)", () => {
     addCoHost("bob@co.com");
     addCoHost("c@nowhere.io");
     save(/create link/i);
-    expect(await screen.findByText("c@nowhere.io couldn't be added as a co-host.", {}, { timeout: SLOW_WAIT })).toBeInTheDocument();
-    const results = Array.from(screen.getByRole("status", { name: "Save results" }).querySelectorAll("p")).map((p) => p.textContent);
-    expect(results).toEqual([
-      "Link created.",
-      "1 co-host invited — they can accept from Paceday.",
-      "1 address couldn't be added as a co-host.",
-      "c@nowhere.io couldn't be added as a co-host.",
-    ]);
-    // Announced once, by the live region: no toast while the editor stays open (M6).
-    expect(success).not.toHaveBeenCalled();
-    await waitFor(() => expect(chipEmails()).toEqual(["bob@co.com"]), { timeout: SLOW_WAIT });
-
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Demo PAC-112 renamed" } });
-    save();
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false), { timeout: SLOW_WAIT });
+    expect(success).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(success.mock.calls[0])).toContain("2 co-hosts invited. Paceday doesn't email invitations, so let them know.");
+    expect(JSON.stringify(success.mock.calls[0])).not.toContain("valid email address");
     const owned = demoSchedulingLinksOps.listLinks().owned;
     expect(owned).toHaveLength(before + 1);
-    expect(owned.filter((l) => l.title.startsWith("Demo PAC-112")).map((l) => l.title)).toEqual(["Demo PAC-112 renamed"]);
+    const created = owned.find((l) => l.title === "Demo PAC-112");
+    expect(created?.hosts.filter((h) => !h.is_owner).map((h) => `${h.email}:${h.status}`)).toEqual([
+      "bob@co.com:pending",
+      "c@nowhere.io:pending",
+    ]);
   }, SLOW_TEST);
 
   it("AC-26 (AC-14): the demo owner's address is refused as a chip", async () => {
