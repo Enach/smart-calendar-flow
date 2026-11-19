@@ -554,3 +554,30 @@ describe("review minor 7: Cancel resets the add form", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+describe("PAC-139: a team's second owner has the owner controls", () => {
+  // Olive is listed first; Alex is the team's second owner.
+  const ALEX = person("alex@co.example", { display_name: "Alex", kind: "paceday", role: "owner" });
+  const TWO_OWNERS: FormalTeam = { ...TEAM, members: [OWNER, MAX, ALEX, PAT, SAM] };
+
+  it("ProtectedHoursTab and Manage members show add, invite and remove to the second owner", () => {
+    vi.spyOn(teamsApi, "currentUserEmail").mockReturnValue(OWNER.email);
+    renderWithClient(
+      <AsUser email="Alex@Co.Example">
+        <ProtectedHoursTab team={TWO_OWNERS} onChanged={() => {}} />
+      </AsUser>,
+    );
+    expect(screen.getByTestId("team-add-person-open")).toBeInTheDocument();
+    expect(screen.getByTestId("team-invite-open")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Manage members" }));
+    expect(screen.getByRole("button", { name: "Remove Pat" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite Pat to Paceday" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove Alex" })).not.toBeInTheDocument();
+  });
+
+  it("ManageMembersSheet gives the second owner the remove and invite controls", () => {
+    renderWithClient(<ManageMembersSheet me={ALEX.email} open onOpenChange={() => {}} team={TWO_OWNERS} onChanged={() => {}} onInvite={() => {}} />);
+    expect(screen.getByRole("button", { name: "Remove Max" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite Pat to Paceday" })).toBeInTheDocument();
+  });
+});

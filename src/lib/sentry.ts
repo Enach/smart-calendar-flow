@@ -123,8 +123,11 @@ export function __resetMonitoringStatusForTests(): void {
 
 // An email-shaped run of characters inside a URL path or query segment, raw
 // or with "@" percent-encoded. Segment boundaries are / ? # & = so the rest of
-// the URL (route shape, team id) stays readable.
-const EMAIL_IN_URL = /[^/?#&=\s]+(?:@|%40)[^/?#&=\s]+/gi;
+// the URL (route shape, team id) stays readable. The domain must end in an
+// alphabetic label (".example", ".com"), so a pkg@version segment such as
+// react@18.3.1 or lodash@latest is left alone (PAC-139), and trailing
+// punctuation in a console message is not swallowed.
+const EMAIL_IN_URL = /[^/?#&=\s]+(?:@|%40)[^/?#&=\s]*\.[a-z]{2,}(?![a-z0-9-])/gi;
 
 /** Replaces every email-shaped segment of a URL with "[email]". */
 export function redactEmailsInUrl(url: string): string {
@@ -134,7 +137,8 @@ export function redactEmailsInUrl(url: string): string {
 /**
  * PAC-129 review: fetch, xhr and navigation breadcrumbs record request and
  * page URLs, and team and Manager routes put an address in the path. Every
- * URL-bearing field of a breadcrumb is redacted before it is kept.
+ * URL-bearing field of a breadcrumb, and every string a console breadcrumb
+ * logged (data.arguments), is redacted before it is kept.
  */
 export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcrumb {
   const data = breadcrumb.data;
@@ -142,6 +146,10 @@ export function redactBreadcrumb(breadcrumb: Sentry.Breadcrumb): Sentry.Breadcru
     const next: Record<string, unknown> = { ...data };
     for (const key of ["url", "from", "to"]) {
       if (typeof next[key] === "string") next[key] = redactEmailsInUrl(next[key] as string);
+    }
+    // PAC-139: console breadcrumbs keep the logged values in data.arguments.
+    if (Array.isArray(next.arguments)) {
+      next.arguments = next.arguments.map((arg: unknown) => (typeof arg === "string" ? redactEmailsInUrl(arg) : arg));
     }
     breadcrumb = { ...breadcrumb, data: next };
   }

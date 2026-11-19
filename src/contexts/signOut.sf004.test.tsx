@@ -56,11 +56,17 @@ async function failSignOut(fail: () => void = () => fetchMock.mockRejectedValueO
   return screen.findByRole("alert");
 }
 
-async function signedIn() {
+async function signedIn(timeout?: number) {
   fetchMock.mockResolvedValueOnce(jsonResponse({ id: "1", email: "a@x.com", name: "A" }));
   renderApp();
-  await screen.findByText("user:a@x.com");
+  await screen.findByText("user:a@x.com", {}, timeout ? { timeout } : undefined);
 }
+
+// PAC-139: "Retry succeeds" waits on three answers in a row and once passed
+// 5 s under a full parallel run. The waits are event-driven; the longer bounds
+// only matter on a loaded box.
+const SLOW_WAIT = 4_000;
+const SLOW_TEST = 20_000;
 
 function logoutCalls() {
   return fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/auth/logout"));
@@ -122,19 +128,19 @@ describe("SF-004: a failed sign-out is not shown as signed out", () => {
   });
 
   it("signs out and clears the alert when Retry succeeds", async () => {
-    await signedIn();
+    await signedIn(SLOW_WAIT);
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     fireEvent.click(screen.getByRole("button", { name: "sign out" }));
-    await screen.findByRole("alert");
+    await screen.findByRole("alert", {}, { timeout: SLOW_WAIT });
 
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     fireEvent.click(screen.getByRole("button", { name: /retry sign-out/i }));
 
-    await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"));
+    await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"), { timeout: SLOW_WAIT });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByTestId("where")).toHaveTextContent(/^\/$/);
     expect(logoutCalls()).toHaveLength(2);
-  });
+  }, SLOW_TEST);
 
   it("keeps the alert when Retry fails again", async () => {
     await signedIn();

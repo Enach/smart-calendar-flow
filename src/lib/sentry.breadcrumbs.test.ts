@@ -28,6 +28,36 @@ describe("redactBreadcrumb", () => {
     expect(redactEmailsInUrl("/api/teams/t1/availability?date=2030-03-04")).toBe("/api/teams/t1/availability?date=2030-03-04");
   });
 
+  it("PAC-139: redacts the string arguments of a console breadcrumb and keeps the others", () => {
+    const err = { name: "Error" };
+    const out = redactBreadcrumb({
+      category: "console",
+      level: "error",
+      message: "remove failed for sam@acme.example 404",
+      data: { logger: "console", arguments: ["remove failed for", "sam@acme.example", 404, err, "/api/teams/t1/people/pat%40ext.example"] },
+    });
+    expect(out.message).toBe("remove failed for [email] 404");
+    expect(out.data).toEqual({ logger: "console", arguments: ["remove failed for", "[email]", 404, err, "/api/teams/t1/people/[email]"] });
+    expect(out.data!.arguments[3]).toBe(err);
+  });
+
+  it("PAC-139: an address followed by punctuation in free text is still redacted", () => {
+    expect(redactEmailsInUrl("failed for sam@acme.example: 500")).toBe("failed for [email]: 500");
+    expect(redactEmailsInUrl("ask Sam.Lee@Mail.Acme.Example.")).toBe("ask [email].");
+  });
+
+  it("PAC-139: leaves pkg@version URL segments alone", () => {
+    for (const url of [
+      "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js",
+      "https://unpkg.com/@sentry/react@8.1.0/build/index.js",
+      "https://esm.sh/zod@3.23.8-beta.1?target=es2022",
+      "https://unpkg.com/lodash@latest/lodash.js",
+    ]) {
+      expect(redactEmailsInUrl(url)).toBe(url);
+      expect(redactBreadcrumb({ category: "fetch", data: { url } }).data!.url).toBe(url);
+    }
+  });
+
   it("is installed as beforeBreadcrumb", () => {
     initSentry({ VITE_SENTRY_DSN: "https://publickey@o1.ingest.example.test/1", MODE: "production" });
     expect(vi.mocked(Sentry.init).mock.calls[0][0]).toMatchObject({ beforeBreadcrumb: redactBreadcrumb });
