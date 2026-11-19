@@ -32,6 +32,29 @@ describe("PAC-149 AC-11: the pending chip", () => {
     expect(container.querySelector("img")).toBeNull();
   });
 
+  it("a declined entry is shown by address and status only, even when a name and picture are present (spec §3.4, D-6)", () => {
+    const { container } = render(
+      <HostAvatars
+        hosts={[{ email: "dee@co.com", name: "Dee Clined", avatar_url: "https://img.test/d.png", is_owner: false, status: "declined" }]}
+      />,
+    );
+    expect(titles(container)).toEqual(["dee@co.com"]);
+    expect(container.textContent).toBe("DE");
+    expect(container.innerHTML).not.toContain("Dee Clined");
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("with showPending off, a pending entry is still shown by address only", () => {
+    const { container } = render(
+      <HostAvatars
+        showPending={false}
+        hosts={[{ email: "alice@co.com", name: "Alice Martin", avatar_url: "https://img.test/a.png", is_owner: false, status: "pending" }]}
+      />,
+    );
+    expect(titles(container)).toEqual(["alice@co.com"]);
+    expect(container.querySelector("img")).toBeNull();
+  });
+
   it("an accepted host keeps its name and picture (unchanged)", () => {
     const { container } = render(
       <HostAvatars

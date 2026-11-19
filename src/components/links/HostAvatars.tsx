@@ -43,24 +43,27 @@ export function HostAvatars({ hosts, size = "sm", overlap = false, showPending =
     <div className="flex items-center">
       {hosts.map((h, i) => {
         const pending = showPending && h.status === "pending";
-        // PAC-149 (spec §3.4, §3.7): a pending invitation is to an address, so
-        // its chip names the address and never a name or picture, even if one
-        // were sent — what the owner sees must not depend on accounts.
+        // PAC-149 (spec §3.4, D-6, §3.7): pending and declined entries are shown
+        // by address and status only — never a name or picture, even if one
+        // were sent — so what the owner sees does not depend on accounts.
+        // `pending` drives only the clock ring and the "awaiting" wording.
+        const byAddressOnly = h.status === "pending" || h.status === "declined";
+        const label = byAddressOnly ? h.email : h.name || h.email;
         return (
           <div
             key={h.email + i}
             className={`group relative ${overlap && i > 0 ? "-ml-2" : i > 0 ? "ml-1" : ""}`}
-            title={pending ? `${h.email} — awaiting acceptance` : h.name || h.email}
+            title={pending ? `${label} — awaiting acceptance` : label}
           >
             <div
               className={`flex items-center justify-center rounded-full font-semibold ring-2 ring-card ${SIZE[size]} ${paletteFor(h.email)} ${
                 pending ? "opacity-70 ring-muted-foreground/30 grayscale-[40%]" : ""
               }`}
             >
-              {h.avatar_url && !pending ? (
+              {h.avatar_url && !byAddressOnly ? (
                 <img src={h.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
               ) : (
-                initials(pending ? undefined : h.name, h.email)
+                initials(byAddressOnly ? undefined : h.name, h.email)
               )}
             </div>
             {pending && (

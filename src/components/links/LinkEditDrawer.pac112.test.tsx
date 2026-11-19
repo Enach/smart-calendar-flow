@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { LinkEditDrawer } from "./LinkEditDrawer";
+import { CO_HOST_TEXT } from "./coHostSave";
 import { api } from "@/api/client";
 import { clearFreebusyCache } from "@/api/coverageCache";
 import {
@@ -291,10 +292,12 @@ describe("messages (contract §5.3)", () => {
       ]),
     );
     expect(success).not.toHaveBeenCalled();
-    // PAC-149 (spec §3.7): the summary now says Paceday does *not* email
-    // invitations; what stays forbidden is a claim that something was sent or
-    // anything about whether an address has a Paceday account.
-    for (const line of results()) expect(line.replace(/\S+@\S+/g, "ADDR")).not.toMatch(/\bsent\b|\bemailed\b|paceday account|can accept from paceday/i);
+    // PAC-112's rule, after removing the two phrases PAC-149 (spec §3.7)
+    // sanctions: the "doesn't email invitations" sentence and "valid email address(es)".
+    for (const line of results()) {
+      const rest = line.replace(/\S+@\S+/g, "ADDR").replace(CO_HOST_TEXT.noEmail, "").replace(/valid email address(es)?/g, "");
+      expect(rest).not.toMatch(/sen[dt]|email|paceday account/i);
+    }
   });
 
   it("AC-12: an answer of zero invited says zero, though the editor's own diff would say one", async () => {

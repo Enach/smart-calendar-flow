@@ -59,7 +59,7 @@ describe("PAC-149 AC-11: the demo co-host list", () => {
   it("a removed pending entry is reported by address and status, with no account id", () => {
     const { link } = demoSchedulingLinksOps.createLink({ ...BASE, co_host_emails: ["alice@co.com", "someone@unknown.example"] });
     const out = demoSchedulingLinksOps.updateLink(link.id, { co_host_emails: [] });
-    expect(out.co_host_changes?.removed).toEqual([
+    expect(out.co_host_changes?.removed).toStrictEqual([
       { email: "alice@co.com", status: "pending" },
       { email: "someone@unknown.example", status: "pending" },
     ]);
