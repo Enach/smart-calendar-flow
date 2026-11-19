@@ -131,7 +131,13 @@ function teamAnalytics(teamId: string, dateISO?: string): TeamAnalyticsView {
   const week_start = mondayOf(dateISO ?? localISODate());
   const team = teamsApi.get(teamId);
   const rows: TeamAnalyticsRow[] = (team?.members ?? []).map((m) => {
-    const managed = demoMemberAnalytics(m.email)?.weeks.find((w) => w.week_start === week_start);
+    const analytics = demoMemberAnalytics(m.email);
+    // PAC-152: only a Manager row shown as on Paceday (with data) carries the
+    // member's own figures; an estimate row's week is not this member's, so
+    // meetings and focus both come from one source.
+    const managed = analytics?.is_paceday_user && analytics.data_available
+      ? analytics.weeks.find((w) => w.week_start === week_start)
+      : undefined;
     const synthetic = syntheticWeek(m.email, week_start);
     const meeting = managed?.meeting_minutes ?? synthetic.meeting;
     const focus = managed?.focus_minutes ?? synthetic.focus;

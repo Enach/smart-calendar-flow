@@ -15,6 +15,7 @@ import {
   type TeamMember,
 } from "@/api/manager";
 import type { ManagerMemberWire, ScanConfirmation, ScanPreview } from "@/contracts/managerTeam";
+import { localISODate } from "@/lib/localDate";
 
 export const SEED_MEMBERS: TeamMember[] = [
   {
@@ -79,6 +80,22 @@ function isoDaysAgo(days: number): string {
 
 // ---------- Mock analytics generator ----------
 
+/** The server's working week for the estimate (5 days x 8h). */
+const DEMO_WORK_MINUTES_PER_WEEK = 2400;
+
+/**
+ * engine.TrendPct (clockwise-like backend/engine/manager.go). Go's math.Round
+ * rounds halves away from zero; Math.round rounds them up, so round |x|.
+ */
+export function trendPct(current: number, prior: number): number {
+  if (prior === 0) return current === 0 ? 0 : 200;
+  const t = ((current - prior) / prior) * 100;
+  if (t > 200) return 200;
+  if (t < -200) return -200;
+  const x = t * 10;
+  return (Math.sign(x) * Math.round(Math.abs(x))) / 10;
+}
+
 function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
   const weeks: FocusWeekStat[] = [];
   const monday = (() => {
@@ -89,23 +106,28 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
     d.setHours(0, 0, 0, 0);
     return d;
   })();
+  // An added person (PAC-129) is never measured; a row without data is "no data".
+  const known = m.data_available && m.source !== "added";
   // Deterministic-ish hash from email
   const seed = Array.from(m.email).reduce((a, c) => a + c.charCodeAt(0), 0);
   for (let i = 11; i >= 0; i--) {
     const ws = new Date(monday);
     ws.setDate(ws.getDate() - i * 7);
     const r = (n: number) => ((seed * (i + 1) * (n + 3)) % 100) / 100;
-    const meetings = Math.round(120 + r(1) * 600);
-    const focus = m.is_paceday_user
-      ? Math.round(60 + r(2) * 480)
-      : Math.round(30 + r(2) * 200);
-    const free = Math.max(0, 2400 - meetings - focus);
+    // PAC-152: the made-up figures take the server's branches (PAC-130
+    // contract §2.2). No data: all zeroes. Not shown as on Paceday (the
+    // estimate branch): meeting time from free/busy, never focus, free time
+    // 2400 minus meetings. Shown as on Paceday: Paceday figures.
+    const meetings = known ? Math.round(120 + r(1) * 600) : 0;
+    const focus = known && m.is_paceday_user ? Math.round(60 + r(2) * 480) : 0;
+    const free = known ? Math.max(0, DEMO_WORK_MINUTES_PER_WEEK - meetings - focus) : 0;
     weeks.push({
-      week_start: ws.toISOString().slice(0, 10),
+      // The local Monday (toISOString gave the Sunday east of UTC).
+      week_start: localISODate(ws),
       meeting_minutes: meetings,
       focus_minutes: focus,
       free_minutes: free,
-      data_available: m.data_available,
+      data_available: known,
     });
   }
   const oneOnOnes = m.last_one_on_one
@@ -120,18 +142,26 @@ function mockAnalyticsFor(m: TeamMember): MemberAnalytics {
     weeks,
     one_on_ones: oneOnOnes,
     is_paceday_user: m.is_paceday_user,
-    data_available: m.data_available,
+    data_available: known,
   };
 }
 
 
+/** PAC-152: the roster's two weeks are the analytics' last two weeks. */
 function mockMemberToWire(member: TeamMember): ManagerMemberWire {
-  const week = { focus_minutes: 0, meeting_minutes: 0, free_minutes: 0, data_available: member.data_available };
+  const weeks = mockAnalyticsFor(member).weeks;
+  const toWire = (w: FocusWeekStat) => ({
+    focus_minutes: w.focus_minutes, meeting_minutes: w.meeting_minutes,
+    free_minutes: w.free_minutes, data_available: w.data_available,
+  });
+  const thisWeek = toWire(weeks[weeks.length - 1]);
+  const lastWeek = toWire(weeks[weeks.length - 2]);
   return {
     email: member.email, display_name: member.display_name, source: member.source, cadence: member.cadence,
     cadence_custom_days: member.custom_cadence_days ?? null,
     last_one_on_one_at: member.last_one_on_one ?? null, is_paceday_user: member.is_paceday_user,
-    this_week: week, last_week: week, focus_trend_pct: 0,
+    this_week: thisWeek, last_week: lastWeek,
+    focus_trend_pct: trendPct(thisWeek.focus_minutes, lastWeek.focus_minutes),
   };
 }
 
@@ -146,9 +176,24 @@ function mockScanPreview(teamId: string): ScanPreview {
 function mockConfirmScan(teamId: string, emails: string[]): ScanConfirmation {
   const selected = new Set(emails.map((email) => email.trim().toLowerCase()));
   let assigned = 0;
+  const present = new Set(managerApi.listTeam().map((m) => m.email));
   for (const member of SEED_MEMBERS) {
     if (!selected.has(member.email)) continue;
-    managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+    if (present.has(member.email)) {
+      managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+    } else {
+      // PAC-152: a detected person is stored as the server's confirm stores
+      // it, source "auto", with the seed's own flag and data (not as a manual
+      // add, which would erase the "On Paceday" branch from the demo).
+      managerApi.addMember({ email: member.email, display_name: member.display_name, cadence: member.cadence });
+      managerApi.updateMember(member.email, {
+        source: "auto",
+        is_paceday_user: member.is_paceday_user,
+        data_available: member.data_available,
+        last_one_on_one: member.last_one_on_one,
+        added_at: member.added_at,
+      });
+    }
     assigned += 1;
   }
   return { team_id: teamId, assigned, skipped: Math.max(0, selected.size - assigned), total: managerApi.listTeam().length };
