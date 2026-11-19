@@ -835,7 +835,7 @@ export type CreateSchedulingLinkRequest = Partial<{
    */
   max_uses: (number | null);
   /**
-   * Absent or null: no co-hosts besides the owner and no `co_host_changes`. Entries are trimmed and compared ignoring case. Each one is resolved (PAC-71 granting rule) and its outcome is reported in the 201's `co_host_changes`; an address that cannot be invited is reported as `not_added`, never silently dropped, and does not fail the create (spec D-5). On create the only current host is the owner, so a list of more than 5 entries is accepted only when every entry reaches the owner. PAC-112 (spec §3.6, D-8): a blank entry is a 422 "co_host_emails must not contain a blank address" (before PAC-112 it was skipped). Blank means: no character outside ECMA-262 `\s` (WhiteSpace and LineTerminator), exactly the set the items' `pattern: '\S'` uses, the PAC-67 test (API-052). So "\u0085" is not blank (reported `not_added`) and "\ufeff" is blank (422). Trimming, everywhere in this operation, removes leading and trailing characters of that same set. `maxItems` is deliberately not set: a list of more than 5 entries is refused 422 only when an entry does not reach a current host of the link (see the operation), which JSON Schema cannot express. No `format` is declared because the server checks none: a string that is not an address is simply `not_added` (contract md §3.4).
+   * Absent or null: no co-hosts besides the owner and no `co_host_changes`. Entries are trimmed and compared ignoring case. Each one is decided by the operation's PAC-149 rule (never resolved to an account) and its outcome is reported in the 201's `co_host_changes`; an entry that is not a well-formed address is reported as `not_added`, never silently dropped, and does not fail the create (spec D-5). On create the only current host is the owner, so a list of more than 5 entries is accepted only when every entry reaches the owner. PAC-112 (spec §3.6, D-8): a blank entry is a 422 "co_host_emails must not contain a blank address" (before PAC-112 it was skipped). Blank means: no character outside ECMA-262 `\s` (WhiteSpace and LineTerminator), exactly the set the items' `pattern: '\S'` uses, the PAC-67 test (API-052). So "\u0085" is not blank (reported `not_added`) and "\ufeff" is blank (422). Trimming, everywhere in this operation, removes leading and trailing characters of that same set. `maxItems` is deliberately not set: a list of more than 5 entries is refused 422 only when an entry does not reach a current host of the link (see the operation), which JSON Schema cannot express. No `format` is declared because the server checks none: a string that is not an address is simply `not_added` (contract md §3.4).
    */
   co_host_emails: (Array<string> | null);
 }>
@@ -1351,7 +1351,7 @@ export type InviteEmailRequest = ({
 } & Record<string, unknown>)
 export type InviteSchedulingLinkHostRequest = {
   /**
-   * Must be non-empty after trimming and must match an existing account (lowercased before lookup).
+   * No `format: email`: the server's rule below is the only check, and it accepts some addresses JSON Schema's email format refuses (e.g. `user@localhost`). PAC-149: the address to invite. Must be non-empty after trimming ECMA-262 `\s` from both ends (400 "email is required"), and, unless it is the owner's address or a current entry's ignoring case, a well-formed address (400 "email must be a valid email address"). Stored trimmed with its letter case kept. It is never looked up against accounts (before PAC-149 it had to match an account).
    */
   email: string;
 }
@@ -2415,28 +2415,28 @@ export type ScheduleSuggestions = {
  */
 export type SchedulingErrorResponse = { error: string }
 /**
- * backend/api/handlers_scheduling_links.go schedulingHostDTO - the host shape embedded in SchedulingLink. Distinct from SchedulingLinkHostRecord, which is the raw DB row returned by POST /{id}/hosts.
+ * backend/api/handlers_scheduling_links.go schedulingHostDTO - one entry of a link's roster (`SchedulingLink.hosts`), and since PAC-149 also the 200/201 body of `inviteSchedulingLinkHost`. PAC-149 (spec §3.4, D-6; contract md §2.5): what an entry shows depends only on its status and on the link, never on whether an account carries a pending invitation's address. The owner and an `accepted` entry: `user_id`, `email`, `name` and `avatar_url` as before (accepting is the invitee's consent to be shown). A `pending` entry is an invitation to an address: exactly `email` (the address as the owner typed it, trimmed), `is_owner: false` and `status`; it carries no account identifier, name or picture, so two pending entries differ only in `email`. A `declined` entry: exactly `email` (its account's stored address), `is_owner: false` and `status`. The only exception is an owner whose own row is `declined` (PAC-30's owner-decline follow-up), shown as the owner.
  */
 export type SchedulingLinkHost = {
   /**
-   * Declared `user_id,omitempty` but always populated from a uuid.UUID, so in practice always present.
+   * The account's id. PAC-149: present exactly for the owner and for an `accepted` entry; absent for `pending` and `declined` entries (before PAC-149 it was always present, including the id of a pending invitee: oracle C-4).
    */
-  user_id: string;
+  user_id?: string;
   /**
-   * The host's address. Never empty: every operation that answers a roster reads it strictly, and a host's user record that cannot be loaded is that operation's 500 (PAC-25, PAC-122, PAC-132; SF-029).
+   * No `format: email` (PAC-149 contract revision 2): an address that passed the well-formedness rule (`net/mail`, the team invitation's rule, e.g. `user@localhost`) or an account's stored address can fall outside JSON Schema's email format (the rule is wider than the format), and a read must never fail on one. An entry of an account an operator freed shows the placeholder `freed+<account id>@paceday.invalid` (an operator act, PAC-71; accepted). The entry's address: for a pending invitation the recorded address (trimmed, letter case kept as typed); for the owner and an accepted or declined entry the account's stored address. Never empty: every operation that answers a roster reads it strictly, and a host's user record that cannot be loaded is that operation's 500 (PAC-25, PAC-122, PAC-132; SF-029).
    */
   email: string;
   /**
-   * Omitted when empty.
+   * Omitted when empty. PAC-149, never present on a `pending` or `declined` entry.
    */
   name?: string;
   /**
-   * Omitted when empty.
+   * Omitted when empty. PAC-149, never present on a `pending` or `declined` entry.
    */
   avatar_url?: string;
   is_owner: boolean;
   /**
-   * Not constrained by the DB layer; these are the only three values the handlers write.
+   * Constrained by the database CHECK (pending, accepted, declined). PAC-149: `pending` is always an invitation to an address, never an entry bound to an account (a database CHECK enforces it).
    */
   status: ("pending" | "accepted" | "declined");
 }
@@ -2487,7 +2487,7 @@ export type SchedulingLink = {
    */
   active: boolean;
   /**
-   * Every host regardless of status, ordered by invited_at. Always an array, never null.
+   * Every host regardless of status. Always an array, never null. PAC-149 (spec §3.4 order, D-16): ordered by invitation time, then, for entries recorded by the same save, by the position of their first entry in that save's `co_host_emails` (the owner's row of a create first), then by address compared with `lower()`, then by the address's bytes, then by the entry's server-assigned id. Nothing in the order depends on accounts. An entry keeps its position when its invitee accepts or declines.
    */
   hosts: Array<SchedulingLinkHost>;
   /**
@@ -2524,7 +2524,7 @@ export type SchedulingLinkBookingRecord = {
   created_at: string;
 }
 /**
- * PAC-112. The outcome of one listed entry, decided in this order (contract md §2.2): `own_address` when the entry's one domain-confirmed holder is the link's owner; `already_host` when that holder, or else any account carrying the entry at any standing (the keep rule), was a non-owner host of the link before this save, whatever their status, which they keep (PAC-61, PAC-71 AC-43); `invited` when the one domain-confirmed holder was not a host and a `pending` row was created by this save (every entry reaching that account reports `invited`); otherwise `not_added`. `not_added` carries no reason: nobody, an unconfirmed carrier and several accounts are not distinguished (spec D-6). The owner's address held only unconfirmed or shared is `not_added`, and the owner's row is unchanged (spec §3.7).
+ * PAC-112, rules replaced by PAC-149 (spec docs/specs/PAC-149.md §3.2, D-1, D-7; contract contracts/features/PAC-149.md §2.2). The outcome of one listed entry, decided in this order, every comparison on the trimmed entry ignoring case with the database's `lower()` and none reading accounts by address: `own_address` when it equals the owner's stored address (the owner's row is unchanged, never demoted); `already_host` when it equals the address of a current non-owner entry of the link (pending invitation, accepted or declined host), which keeps its status (PAC-61; for a host this is PAC-71 AC-43's keep rule); `invited` when it is a well-formed address (lowercased, Go's `net/mail.ParseAddress` accepts it and returns exactly it) and a pending invitation for it was recorded by this save; otherwise `not_added`, which now means exactly "not a well-formed address" (PAC-112 D-6 relaxed: a client may say so). Before PAC-149 `invited` and `not_added` depended on whether a single domain-confirmed account held the address (oracle O-10b).
  */
 export type SchedulingLinkCoHostOutcome = {
   /**
@@ -2534,12 +2534,15 @@ export type SchedulingLinkCoHostOutcome = {
   outcome: ("invited" | "already_host" | "own_address" | "not_added");
 }
 /**
- * PAC-112. A host removed by this save. Bookings already made on the link are untouched.
+ * PAC-112. An entry removed by this save. Bookings already made on the link are untouched. PAC-149 (spec §3.4, D-6; contract md §2.5): shown as the roster shows the entry: an `accepted` entry with `user_id`; a `pending` invitation or a `declined` entry by `email` and `status` only, so two removed pending invitations differ only in `email`.
  */
 export type SchedulingLinkRemovedHost = {
-  user_id: string;
   /**
-   * The account's stored address, read inside the write; a failed read is the 500 with nothing changed, never an empty string.
+   * PAC-149: present exactly when `status` is `accepted`. Before PAC-149 it was required and present for every status (a removed pending invitee's account id: oracle C-5).
+   */
+  user_id?: string;
+  /**
+   * For a pending invitation its recorded address; otherwise the account's stored address, read inside the write. A failed read is the 500 with nothing changed, never an empty string.
    */
   email: string;
   /**
@@ -2548,19 +2551,19 @@ export type SchedulingLinkRemovedHost = {
   status: ("pending" | "accepted" | "declined");
 }
 /**
- * PAC-112 (spec §3.4, §3.5, §3.9, D-2; contract md §2). What this save did to the co-hosts, computed inside the write's transaction. Present in a `SchedulingLinkSaved` exactly when the request carried `co_host_emails` (non-null; `[]` included) and the save succeeded; absent otherwise. A client that sent a list and receives no `co_host_changes` is talking to a server without PAC-112 (rollback, spec §7): it must not claim any address was invited, and says it cannot tell which co-hosts were added (contract md §5.3). Counts are of people, not entries: two entries that reach one account count once.
+ * PAC-112 (spec §3.4, §3.5, §3.9, D-2; contract md §2). What this save did to the co-hosts, computed inside the write's transaction. Present in a `SchedulingLinkSaved` exactly when the request carried `co_host_emails` (non-null; `[]` included) and the save succeeded; absent otherwise. A client that sent a list and receives no `co_host_changes` is talking to a server without PAC-112 (rollback, spec §7): it must not claim any address was invited, and says it cannot tell which co-hosts were added (contract md §5.3). PAC-149: counts are of distinct entries (equal after the ECMA-262 trim and `lower()`), never of accounts; before PAC-149 two entries that reached one account counted once.
  */
 export type SchedulingLinkCoHostChanges = {
   /**
-   * One item per entry of the request's `co_host_emails`, in the same order and of the same length, duplicates included, so item i describes entry i.
+   * One item per entry of the request's `co_host_emails`, in the same order and of the same length, duplicates included, so item i describes entry i. Every entry equal (trim, `lower()`) to an invited entry reports `invited`.
    */
   addresses: Array<SchedulingLinkCoHostOutcome>;
   /**
-   * Every non-owner host this save removed (not on the list by the keep rule), with the status they had. Empty when nobody was removed and always empty on create. Never the owner. Order not specified.
+   * Every non-owner entry this save removed (its address equals no listed entry, ignoring case), with the status it had. Empty when nobody was removed and always empty on create. Never the owner. Order not specified. PAC-149: a removed pending invitation or declined entry is reported by address and status only (`SchedulingLinkRemovedHost`).
    */
   removed: Array<SchedulingLinkRemovedHost>;
   /**
-   * Distinct accounts whose outcome is `invited`.
+   * PAC-149: distinct new pending invitations this save recorded (entries equal after the trim and `lower()` count once). Before PAC-149: distinct accounts whose outcome was `invited`.
    */
   invited_count: number;
   /**
@@ -2608,29 +2611,9 @@ export type SchedulingLinkHostInvite = {
   invited_at: string;
 }
 /**
- * The 422 of `inviteSchedulingLinkHost` (PAC-120): the link already has 5 co-hosts or more (non-owner host rows of any status) and the invitation would add one. The text is distinct from the co-host list's over-5 422 on create and PATCH, and reads as a limit on the link, not on the request. Nothing was written.
+ * The 422 of `inviteSchedulingLinkHost` (PAC-120): the link already has 5 co-hosts or more (non-owner entries of any status, pending invitations included) and the invitation would add one; the same for every new address (PAC-149). The text is distinct from the co-host list's over-5 422 on create and PATCH, and reads as a limit on the link, not on the request. Nothing was written.
  */
 export type SchedulingLinkHostLimitError = { error: "this link has reached its limit of 5 co-hosts; remove a co-host before inviting another" }
-/**
- * Raw backend/storage/scheduling_links.go LinkHost row, returned by POST /api/scheduling-links/{id}/hosts. Not the same shape as the `hosts[]` entries inside SchedulingLink.
- */
-export type SchedulingLinkHostRecord = {
-  /**
-   * Host-row id. Note that accept/decline key on link_id, so this id is never used as a path parameter.
-   */
-  id: string;
-  link_id: string;
-  user_id: string;
-  status: ("pending" | "accepted" | "declined");
-  /**
-   * Raw time.Time marshalling (RFC3339 with nanoseconds and the DB offset), not the DTO millisecond format.
-   */
-  invited_at: string;
-  /**
-   * Omitted while null (json `responded_at,omitempty`). Set by accept/decline.
-   */
-  responded_at?: string;
-}
 /**
  * Echo of the status that was written. The only 200 body accept/decline returns.
  */
@@ -2695,7 +2678,7 @@ export type SchedulingLinkSaved = {
    */
   active: boolean;
   /**
-   * Every host regardless of status, ordered by invited_at. Always an array, never null.
+   * Every host regardless of status. Always an array, never null. PAC-149 (spec §3.4 order, D-16): ordered by invitation time, then, for entries recorded by the same save, by the position of their first entry in that save's `co_host_emails` (the owner's row of a create first), then by address compared with `lower()`, then by the address's bytes, then by the entry's server-assigned id. Nothing in the order depends on accounts. An entry keeps its position when its invitee accepts or declines.
    */
   hosts: Array<SchedulingLinkHost>;
   /**
@@ -3709,7 +3692,7 @@ export type UpdateSchedulingLinkRequest = Partial<{
    */
   active: (boolean | null);
   /**
-   * When present (non-null), the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Absent or null leaves the co-hosts untouched. Entries are trimmed and compared ignoring case. Every entry's outcome and every removal are reported in the 200's `co_host_changes`; an address that cannot be invited is `not_added`, never silently dropped, and does not fail the PATCH (spec D-5). PAC-112 (spec §3.6, D-8): a blank entry is a 422 "co_host_emails must not contain a blank address" (before PAC-112 it was skipped). Blank means: no character outside ECMA-262 `\s` (WhiteSpace and LineTerminator), exactly the set the items' `pattern: '\S'` uses, the PAC-67 test (API-052). So "\u0085" is not blank (reported `not_added`) and "\ufeff" is blank (422). Trimming, everywhere in this operation, removes leading and trailing characters of that same set. `maxItems` is deliberately not set: a list of more than 5 entries is refused 422 only when an entry does not reach a current host of the link (see the operation), which JSON Schema cannot express. No `format` is declared because the server checks none: a string that is not an address is simply `not_added` (contract md §3.4).
+   * When present (non-null), the complete co-host list: unlisted non-owner hosts are removed, new ones are added as `pending`, existing ones keep their status (PAC-61). Absent or null leaves the co-hosts untouched. Entries are trimmed and compared ignoring case. Every entry's outcome and every removal are reported in the 200's `co_host_changes`; an entry that is not a well-formed address (PAC-149: the only reason) is `not_added`, never silently dropped, and does not fail the PATCH (spec D-5). PAC-112 (spec §3.6, D-8): a blank entry is a 422 "co_host_emails must not contain a blank address" (before PAC-112 it was skipped). Blank means: no character outside ECMA-262 `\s` (WhiteSpace and LineTerminator), exactly the set the items' `pattern: '\S'` uses, the PAC-67 test (API-052). So "\u0085" is not blank (reported `not_added`) and "\ufeff" is blank (422). Trimming, everywhere in this operation, removes leading and trailing characters of that same set. `maxItems` is deliberately not set: a list of more than 5 entries is refused 422 only when an entry does not reach a current host of the link (see the operation), which JSON Schema cannot express. No `format` is declared because the server checks none: a string that is not an address is simply `not_added` (contract md §3.4).
    */
   co_host_emails: (Array<string> | null);
 }>
@@ -7343,9 +7326,9 @@ export type post_SuggestMeetingSlots = {
     }
 /**
  * The caller is inserted as an `accepted` host. An empty/omitted `slug` is auto-generated from the owner's name.
- * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none cannot be invited.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none cannot be invited. Superseded by PAC-149 (below): no entry is resolved to an account any more.
  * 
- * PAC-112 (spec §3.4-§3.8, D-2, D-4, D-8; contract contracts/features/PAC-112.md §2-§4): the create is all or nothing. The link, the owner's `accepted` host row and every co-host invitation are written in one transaction, opened with or without a session guard (with one, the PAC-71 re-check stays its first statement), whose lock waits are bounded at 10 seconds each as on PATCH (PAC-101): the answer is either 201 with all of them or an error with none of them (no link, no host row). A failed owner-host write, a failed co-host lookup and a failed co-host write are each the 500 with nothing created (before PAC-112 the first left the link created and the other two were silently skipped). Each listed entry gets an outcome, reported in the 201's `co_host_changes` (present exactly when `co_host_emails` is carried, `[]` included): `invited`, `own_address` (the address's one domain-confirmed holder is the caller; the owner's host row stays `accepted`, never demoted to `pending`: API-048's create-path remnant, fixed) or `not_added` (no single domain-confirmed holder; the same outcome whether nobody, an unconfirmed carrier or several accounts hold it, so it reveals nothing about any account). `already_host` cannot occur on create. Two entries that reach the same account write one host row and count once. A list with more than 5 entries is refused 422 unless every entry reaches the owner (on create the owner is the only current host; contract md §3). A blank entry is refused 422.
+ * PAC-112 (spec §3.4-§3.8, D-2, D-4, D-8; contract contracts/features/PAC-112.md §2-§4): the create is all or nothing. The link, the owner's `accepted` host row and every co-host invitation are written in one transaction, opened with or without a session guard (with one, the PAC-71 re-check stays its first statement), whose lock waits are bounded at 10 seconds each as on PATCH (PAC-101): the answer is either 201 with all of them or an error with none of them (no link, no host row). A failed owner-host write, a failed co-host lookup and a failed co-host write are each the 500 with nothing created (before PAC-112 the first left the link created and the other two were silently skipped). Each listed entry gets an outcome, reported in the 201's `co_host_changes` (present exactly when `co_host_emails` is carried, `[]` included): `invited`, `own_address` (the owner's host row stays `accepted`, never demoted to `pending`: API-048's create-path remnant, fixed) or `not_added`; how each is decided is PAC-149's rule below (before PAC-149: by the address's single domain-confirmed holder). `already_host` cannot occur on create. Two entries equal after the trim and `lower()` write one invitation and count once. A list with more than 5 entries is refused 422 unless every entry reaches the owner (on create the owner is the only current host; contract md §3). A blank entry is refused 422.
  * 
  * PAC-119 (spec docs/specs/PAC-119.md §3; contract contracts/features/PAC-119.md §1-§4): a create is safe to retry when it carries the optional `Idempotency-Key` header (see the parameter). The key is scoped to the caller's account. A create without a key, or with an empty one, behaves exactly as before PAC-119, so saving it again creates a second link. For a keyed create the server stores the key with the link it created, in the same transaction. A later create by the same account with the same key is then answered by the first matching rule, and writes nothing:
  * 1. the link that key created was deleted: 409
@@ -7361,6 +7344,10 @@ export type post_SuggestMeetingSlots = {
  *    `{"error":"idempotency key already used","link_id":"<id>"}`.
  * 
  * "The same" compares a SHA-256 digest of the request's normalised form (contract md §2.3): aliases resolved, defaults applied, title trimmed, and the co-host list trimmed, lowered, deduplicated and sorted. `null` and an absent list are the same; `[]` is different. Order of evaluation: requireAuth's 401, then the key's 400, then the body's 400, then the field and blank-entry 422s, then the owner and zone reads, then the key resolution (rules 1-4), then the slug check or generation, then the write. With a key, a slug conflict (the explicit slug's pre-check or the slug's unique constraint at insert) and a key conflict both resolve the key again. A stored key then decides by rules 1-4, so a keyed create is never answered "slug already exists" while its own key is stored. Refusals decided inside the write, the over-5 422 among them, come after key resolution: a retry whose list normalises to the original's is replayed. Every replay and every refusal is decided in a transaction whose PAC-71 re-check runs before the key read and again after it. A moved generation is therefore requireAuth's 401, with nothing of the link. When two requests with the same account and key run at once, exactly one link is created. The other waits for it, at most the 10 s lock bound, and is then answered by rules 1-4 in a new short guarded transaction. If the first rolls back, the other proceeds as a new create. A create that fails or is refused stores no key. The co-host outcomes and the request digest kept for a replay are removed within one hour after the 24-hour window. The key, the account, the link's id and the save's time are kept for ever, since links are never purged. Before PAC-119, nothing protected a retry after a lost 201 (API-095).
+ * 
+ * PAC-149: a replay of a key stored before PAC-149 was deployed returns the outcomes recorded then (rule 3: never re-evaluated). It reveals nothing new, and such keys expire within 24 hours of the deploy.
+ * 
+ * PAC-149 (spec docs/specs/PAC-149.md §3.1-§3.4, D-1, D-2, D-3, D-7, D-15, D-16, D-18; contract contracts/features/PAC-149.md §2-§3). This supersedes the PAC-71 granting rule and the account-based outcome rules stated above for co-host entries. The list never reads accounts by address, and nothing in the answer depends on whether an account carries an entry. Each entry is trimmed of leading and trailing ECMA-262 `\s` (blank: the 422 above) and decided in this order, every comparison ignoring case with the database's `lower()`: `own_address` when it equals the owner's stored address; `already_host` when it equals the address of a current non-owner entry of the link (a pending invitation's recorded address, or the stored address of an accepted or declined host's account), which keeps its status (PAC-61); `invited` when it is well-formed (lowercased, Go's `net/mail.ParseAddress` accepts it and returns exactly it: the team invitation's rule) and a pending invitation is recorded for it; otherwise `not_added`, whose only meaning is now "not a well-formed address". A pending invitation records the trimmed entry with its letter case kept, the time and the entry's position in the request, and points at no account; it is recorded the same way whether or not any account carries the address. Entries equal after the trim and `lower()` are one entry: one invitation, counted once. The over-5 rule treats an entry as reaching a current host when it equals the owner's address or a current entry's address under the same comparison. On PATCH, every non-owner entry whose address equals no listed entry is removed. The invitee sees and answers the invitation only while their account is the address's single domain-confirmed holder (`listSchedulingLinkHostInvites`). The server performs the same statements for a new address whatever accounts exist (contract md §2.6). Paceday sends no email to an invitee.
  */
 export type post_CreateSchedulingLink = {
       method: "POST",
@@ -7438,6 +7425,8 @@ export type get_GetArchivedSchedulingLink = {
     }
 /**
  * Invites to a deleted link are omitted (PAC-40 AC-5), and so are invites whose link or owner no longer exists. A storage error while reading an invite's link or its owner is the 500, never a shorter list (PAC-122 SF-030; before it such an invite was silently dropped). Invites to a paused link (`active=false`) are still listed (PAC-30 D-5). Returns `[]` (never null) when there are none.
+ * 
+ * PAC-149 (spec §3.3, D-5, D-10; contract md §2.4): a co-host invitation is to an address, not to an account. The caller sees a pending invitation exactly when the caller's account is, at the moment of the read, the single domain-confirmed holder of the invitation's address (PAC-71: the one account whose stored address equals it ignoring case, at standing `domain_confirmed`), the link is live or paused, and the caller neither owns the link nor has an accepted or declined entry on it. An account that becomes the holder later (a first sign-in or a later bind with authoritative evidence) sees invitations made before it existed; nothing is copied at sign-up. An unconfirmed carrier, and either account of a letter-case pair, sees none. The match is keyed on the caller's own stored address only. A storage error on it (the caller's account row or the invitation read) is the 500, never `[]` or a shorter list (SF-068's rule carried forward).
  */
 export type get_ListSchedulingLinkHostInvites = {
       method: "GET",
@@ -7452,7 +7441,9 @@ export type get_ListSchedulingLinkHostInvites = {
       
     }
 /**
- * `{id}` is the SCHEDULING LINK id, not the invite/host-row id -- the handler runs `UPDATE scheduling_link_hosts SET status=... WHERE link_id=$1 AND user_id=$2`. This matches the `link_id` field of the invite list payload. The UPDATE must affect exactly the caller's row: when it affects zero rows (the caller has no host row on that link, or `{id}` is not a link id, e.g. the host-row `id` from `SchedulingLinkHostRecord`) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 to every caller and no host row changes (PAC-40 AC-5), even though its host rows are kept in storage. PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link, or for a co-host invitation (PAC-120), still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
+ * `{id}` is the SCHEDULING LINK id, not an invite or host-row id. This matches the `link_id` field of the invite list payload. The write must affect exactly the caller's entry (PAC-149: or the pending invitation the caller holds, below): when it affects nothing (the caller has no host row on that link, or `{id}` is not a link id) the answer is 404 and nothing changes (PAC-30, API-020; before PAC-30 this was a 200 that changed nothing). Any existing host row matches, whatever its current status, so accepting twice is a 200 both times and a declined host may still accept. The owner's own row is a host row too, so the owner gets 200 (see PAC-30.md follow-ups). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 to every caller and no host row changes (PAC-40 AC-5), even though its host rows are kept in storage. PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link, or for a co-host invitation (PAC-120), still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
+ * 
+ * PAC-149 (spec §3.3, D-5, D-10; contract md §2.4), which decides what "the caller's host row" above means now that a pending invitation is to an address. Under the link's lock, in this order: (1) the caller owns the link: its owner row is updated exactly as before when it exists (the owner still gets 200, PAC-30), and in the same write any pending invitation of the link whose address equals the owner's stored address ignoring case is removed; when the link has no owner row (created before PAC-112) the answer is the 404 below and nothing is written, the stray invitation included. The owner is never matched by (2). (1') The caller has an accepted or declined entry on the link: that entry is updated exactly as before and, in the same write, any pending invitation of its stored address on the link is removed. Both removals concern a state no product path creates; never a 500 from a uniqueness rule. (2) Otherwise, when the caller's account is the single domain-confirmed holder of its stored address and the link has a pending invitation whose address equals it ignoring case, that invitation becomes the caller's entry with this status, bound to the caller's account, keeping its invitation time and its place in the roster; (3) otherwise the 404 below, nothing written. An unconfirmed carrier or either account of a letter-case pair falls in (3). A storage error on the match (the caller's account row or the invitation read) is the 500 with nothing changed, never the 404.
  */
 export type post_AcceptSchedulingLinkHostInvite = {
       method: "POST",
@@ -7475,7 +7466,7 @@ export type post_AcceptSchedulingLinkHostInvite = {
       
     }
 /**
- * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: as for accept, a delete committed while the request is handled is a 404 with nothing changed, a decline committed first is kept, and the wait for a delete or edit, or a co-host invitation (PAC-120), in progress is at most 10 seconds (then the 500).
+ * Same handler as accept, with status `declined`. `{id}` is the scheduling-link id. Same 404 rule as accept: zero rows updated is a 404 and nothing changes (PAC-30, API-020). Any existing host row matches, whatever its status. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: as for accept, a delete committed while the request is handled is a 404 with nothing changed, a decline committed first is kept, and the wait for a delete or edit, or a co-host invitation (PAC-120), in progress is at most 10 seconds (then the 500). PAC-149: the same cases as accept (accept's description); a declined entry made from an invitation is shown by address and status only (`SchedulingLinkHost`) and keeps counting toward the 5 co-hosts (PAC-120).
  */
 export type post_DeclineSchedulingLinkHostInvite = {
       method: "POST",
@@ -7498,22 +7489,7 @@ export type post_DeclineSchedulingLinkHostInvite = {
       
     }
 /**
- * routes.go:157-158 registers `slh.listHostInvites` at BOTH `/host-invites` and `/invites`. Byte-for-byte identical behaviour and response; neither is deprecated in code. The frontend only ever calls `/host-invites`. Invites to a deleted link are omitted, and a failed read of an invite's link or owner is the 500, as there (PAC-40, PAC-122 SF-030).
- */
-export type get_ListSchedulingLinkInvitesAlias = {
-      method: "GET",
-      path: "/api/scheduling-links/invites",
-      requestFormat: "json",
-      responseFormat: "json",
-      parameters: never,
-      responses: {200: Array<Schemas.SchedulingLinkHostInvite>,
-401: "{\"error\":\"unauthorized\"}\n",
-500: Schemas.BookingError,
-},
-      
-    }
-/**
- * Readable only by the link's owner and by co-hosts whose host row on the link is `accepted` (PAC-25, API-006), and only while the link is not deleted: a deleted link answers every caller, owner and accepted co-hosts included, the same `404 {"error":"not found"}` as an id that matches no link (PAC-40 AC-2, D-9); the owner reads it through `getArchivedSchedulingLink` instead. A paused link (`active=false`) is still returned to its owner and accepted co-hosts. That is the same set of callers who receive the link from `GET /api/scheduling-links`, so this read discloses nothing the list does not. Every other authenticated caller (no host row, a `pending` or `declined` invitation, a co-host who left or was removed) receives the same `404 {"error":"not found"}` as for an id that matches no link, with no part of the link in the body, so the answer does not reveal whether a link exists. A refused read is never `403` (PAC-25 D-1; contrast the owner-only siblings PATCH, DELETE, `/bookings` and `/hosts`, which still answer `403` and are out of scope). Check order: `400` malformed id; then the link lookup, which does not find a deleted link; then the caller's own host-status lookup on that link; then `404` for no link (never existed or deleted) or a caller who may not read it; then `200`. A storage error on either lookup answers `500` `{"error":"internal error"}`, never `404` (an outage is not reported as "not found") and never `200` (the reader check does not fail open). An allowed reader receives the full record including every host row (accepted, pending and declined) with each host's email, name and avatar; `is_owner` is computed against the caller and `my_status` is the caller's own host status. Building that record reads the roster (the link's host rows and each host's user record); a storage error on that read also answers `500` `{"error":"internal error"}`, never `200` with `hosts: []` or with a host's email missing (PAC-25 C-2). An accepted co-host therefore still sees pending and declined invitees' emails, as through the list (PAC-25 D-2).
+ * Readable only by the link's owner and by co-hosts whose host row on the link is `accepted` (PAC-25, API-006), and only while the link is not deleted: a deleted link answers every caller, owner and accepted co-hosts included, the same `404 {"error":"not found"}` as an id that matches no link (PAC-40 AC-2, D-9); the owner reads it through `getArchivedSchedulingLink` instead. A paused link (`active=false`) is still returned to its owner and accepted co-hosts. That is the same set of callers who receive the link from `GET /api/scheduling-links`, so this read discloses nothing the list does not. Every other authenticated caller (no host row, a `pending` or `declined` invitation, a co-host who left or was removed) receives the same `404 {"error":"not found"}` as for an id that matches no link, with no part of the link in the body, so the answer does not reveal whether a link exists. A refused read is never `403` (PAC-25 D-1; contrast the owner-only siblings PATCH, DELETE, `/bookings` and `/hosts`, which still answer `403` and are out of scope). Check order: `400` malformed id; then the link lookup, which does not find a deleted link; then the caller's own host-status lookup on that link; then `404` for no link (never existed or deleted) or a caller who may not read it; then `200`. A storage error on either lookup answers `500` `{"error":"internal error"}`, never `404` (an outage is not reported as "not found") and never `200` (the reader check does not fail open). An allowed reader receives the full record including every host row (accepted, pending and declined) with each host's email, name and avatar; `is_owner` is computed against the caller and `my_status` is the caller's own host status. Building that record reads the roster (the link's host rows and each host's user record); a storage error on that read also answers `500` `{"error":"internal error"}`, never `200` with `hosts: []` or with a host's email missing (PAC-25 C-2). An accepted co-host therefore still sees pending and declined invitees' emails, as through the list (PAC-25 D-2). PAC-149: a pending invitation is shown by its recorded address only, and a declined entry by address and status only (`SchedulingLinkHost`); the order is `SchedulingLink.hosts`'s.
  * 
  * PAC-112 (spec D-3, §6): this is the ONLY read from which a client may take a link's co-host list as the baseline for a co-host edit (the list sent in `co_host_emails` is the complete list, so a baseline missing someone removes them). The answers of `listSchedulingLinks`, `createSchedulingLink` and `updateSchedulingLink` must not be used as a baseline. They read the roster strictly too (the list since PAC-122, create and PATCH inside their write since PAC-132; SF-029: a failed roster read is their 500), but they are not the baseline read. The strictness above (500, never a degraded roster) is therefore load-bearing and must not be relaxed; it is pinned by TestPAC25GetLinkRosterFailureIs500.
  */
@@ -7539,9 +7515,11 @@ export type get_GetSchedulingLink = {
     }
 /**
  * Every field is optional; absent fields keep their stored value. The whole merged record is re-validated, so a patch can fail 422 on a field it did not touch. When `co_host_emails` is present (even `[]`) it sets the co-host list by difference (PAC-61): non-owner hosts whose email is not listed are removed, listed emails that are not yet hosts are added as `pending`, and listed hosts keep their status (accepted, pending or declined).
- * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the two halves follow different rules. KEEP SET (revoking and keeping): an existing host is kept when its account's stored address equals a listed address case-insensitively, at ANY standing, so an accepted co-host stored as `Pat@Acme.com` is kept by a list containing `pat@acme.com` (before PAC-71 the lowercased lookup missed it and removed the host). NEW ENTRIES (granting): a listed address that matches no existing host is invited as `pending` only when exactly one account holds it DOMAIN-CONFIRMED; otherwise it cannot be invited. The owner's host row never changes because of the list.
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the two halves follow different rules. KEEP SET (revoking and keeping): an existing host is kept when its account's stored address equals a listed address case-insensitively, at ANY standing, so an accepted co-host stored as `Pat@Acme.com` is kept by a list containing `pat@acme.com` (before PAC-71 the lowercased lookup missed it and removed the host). NEW ENTRIES (granting): a listed address that matches no existing host is invited as `pending` only when exactly one account holds it DOMAIN-CONFIRMED; otherwise it cannot be invited. The owner's host row never changes because of the list. PAC-149 (below) keeps the KEEP SET (an entry is kept when its address equals a listed address ignoring case; for a host that is the same test) and supersedes NEW ENTRIES: no listed address is resolved to an account.
  * 
  * PAC-112 (spec §3.4-§3.6, D-2, D-8; contract md §2-§3): when `co_host_emails` is carried the 200's `co_host_changes` reports, from inside the write, one outcome per listed entry (`invited`, `already_host`, `own_address`, `not_added`), every host this PATCH removed, and the counts. Absent or null `co_host_emails`: no `co_host_changes`, co-hosts untouched. A blank entry is a 422 before anything is written. A list with more than 5 entries is a 422 with nothing changed (fields included) when any entry does not reach a current host of the link; "current host" (owner included, any status) is decided against the host rows read inside this PATCH's transaction after the link's lock is taken, so a co-host removed by a concurrent edit no longer counts. A list that only keeps or removes is accepted at any length.
+ * 
+ * PAC-149 (spec docs/specs/PAC-149.md §3.1-§3.4, D-1, D-2, D-3, D-7, D-15, D-16, D-18; contract contracts/features/PAC-149.md §2-§3). This supersedes the PAC-71 granting rule and the account-based outcome rules stated above for co-host entries. The list never reads accounts by address, and nothing in the answer depends on whether an account carries an entry. Each entry is trimmed of leading and trailing ECMA-262 `\s` (blank: the 422 above) and decided in this order, every comparison ignoring case with the database's `lower()`: `own_address` when it equals the owner's stored address; `already_host` when it equals the address of a current non-owner entry of the link (a pending invitation's recorded address, or the stored address of an accepted or declined host's account), which keeps its status (PAC-61); `invited` when it is well-formed (lowercased, Go's `net/mail.ParseAddress` accepts it and returns exactly it: the team invitation's rule) and a pending invitation is recorded for it; otherwise `not_added`, whose only meaning is now "not a well-formed address". A pending invitation records the trimmed entry with its letter case kept, the time and the entry's position in the request, and points at no account; it is recorded the same way whether or not any account carries the address. Entries equal after the trim and `lower()` are one entry: one invitation, counted once. The over-5 rule treats an entry as reaching a current host when it equals the owner's address or a current entry's address under the same comparison. On PATCH, every non-owner entry whose address equals no listed entry is removed. The invitee sees and answers the invitation only while their account is the address's single domain-confirmed holder (`listSchedulingLinkHostInvites`). The server performs the same statements for a new address whatever accounts exist (contract md §2.6). Paceday sends no email to an invitee.
  * PAC-40: for `duration_options` / `durations` and `days_of_week` / `days` the canonical spelling wins whenever it is carried (present and not null; `[]` counts as carried), exactly as on create (D-5, API-049; before PAC-40 the alias won on PATCH). The window aliases are unchanged (D-10, OQ-7). A deleted link answers `404 {"error":"not found"}` to every caller, owner included, before the owner check and before the body is read, and stays deleted whatever the body says, `active: true` included (AC-3, AC-6, AC-6a); nothing is written.
  * 
  * PAC-101: the PATCH is all or nothing. The link's fields and, when `co_host_emails` is present, every co-host removal and invitation are written together: the answer is either 200 with all of them applied or an error with none of them applied. In particular a co-host lookup or write that fails is the 500 with the link's fields unchanged too (before PAC-101 a failed removal or invitation was a 200 with the fields changed and the co-host change silently dropped, and a failed co-host lookup was a 500 with the fields already changed). A link deleted while the PATCH is handled: if the delete commits first, the PATCH answers the 404 and changes nothing, co-hosts included; if the PATCH has started writing first, the delete waits for it, the PATCH answers 200, and the link is then deleted with the PATCH's fields and co-host list. No host row of the link changes after its delete commits. A refusal decided before the write (400, 403, 409, 422) keeps its answer even if the link was deleted meanwhile; the one 422 decided inside the write (PAC-112's list longer than 5, above) comes after the link's lock, so a link deleted first answers the 404 instead. A PATCH that must wait for a booking save, host write, delete or other edit of the same link waits at most 10 seconds for each lock it needs; past that it is the 500 and nothing changes.
@@ -7574,6 +7552,8 @@ export type patch_UpdateSchedulingLink = {
  * 
  * Writes in progress (PAC-101): a booking save, a co-host invite, accept, decline or leave, or a PATCH of this link that has already started writing when the delete arrives is completed first and is kept (it happened before the delete); the delete waits for it, at most 10 seconds (past that, the 500 and the link is not deleted). Every such write that reaches its save after the delete has committed writes nothing and answers its 404. So no booking and no host row of the link changes after the delete has committed.
  * 
+ * PAC-149 (spec §3.3, D-14, AC-17): the delete erases the link's pending co-host invitations in its own write, with no delay, whether or not the link has bookings. Accepted and declined entries are kept (PAC-40 D-2). An invitation committed before the delete is erased by it; an invitation that reaches its write after the delete committed is its 404. After the delete no pending invitation of the link exists, so nothing can list, answer, leave or restore one. This replaces, for pending invitations only, "host rows are kept" above and PAC-101's "the delete then keeps the resulting host rows".
+ * 
  * Erasure: once `booker_erasure.enabled` is true on this deployment (see `BookerErasurePolicy`), the bookers' names and emails of a deleted link are erased automatically 90 days after the link's last booking ends (owner decision 2026-10-27; spec §3.5). Deleting does not erase anything at the time. The answer stays an empty 204 (it carries neither the archive entry nor the erasure instant): the confirmation copy is built before the request from `ArchivedSchedulingLinkListResponse.booker_erasure`, and the instant is read from the archive afterwards (contracts/features/PAC-40.md §2.4).
  */
 export type delete_DeleteSchedulingLink = {
@@ -7592,29 +7572,6 @@ export type delete_DeleteSchedulingLink = {
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
 403: Schemas.BookingError,
-404: Schemas.BookingError,
-500: Schemas.BookingError,
-},
-      
-    }
-/**
- * routes.go:166 binds the SAME `slh.acceptInvite` handler already bound at `/host-invites/{id}/accept` (routes.go:159). Because both handlers key on the link id, the two paths are exactly equivalent -- this is a second spelling of the same operation, not a different resource. The frontend only uses the `/host-invites/...` form. Same 404 rule: a caller with no host row on the link gets 404 and nothing changes (PAC-30, API-020). The duplicate spelling itself (API-069) is not resolved by PAC-30. A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link, or for a co-host invitation (PAC-120), still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
- */
-export type post_AcceptSchedulingLinkInviteByLink = {
-      method: "POST",
-      path: "/api/scheduling-links/{id}/accept",
-      requestFormat: "json",
-      responseFormat: "json",
-      parameters: {
-            
-        path:  { id: string },
-        
-        
-        
-          }
-      responses: {200: Schemas.SchedulingLinkInviteResponse,
-400: Schemas.BookingError,
-401: "{\"error\":\"unauthorized\"}\n",
 404: Schemas.BookingError,
 500: Schemas.BookingError,
 },
@@ -7645,38 +7602,15 @@ export type get_ListSchedulingLinkBookings = {
       
     }
 /**
- * Equivalent to POST /api/scheduling-links/host-invites/{id}/decline (same handler, same key, same PAC-30 404 when the caller has no host row on the link). A paused link (`active=false`) keeps its host rows, so accept/decline on it match and return 200 (PAC-30 D-5). A deleted link answers 404 and no host row changes (PAC-40 AC-5). PAC-101: as for accept, a delete committed while the request is handled is a 404 with nothing changed, a decline committed first is kept, and the wait for a delete or edit, or a co-host invitation (PAC-120), in progress is at most 10 seconds (then the 500).
- */
-export type post_DeclineSchedulingLinkInviteByLink = {
-      method: "POST",
-      path: "/api/scheduling-links/{id}/decline",
-      requestFormat: "json",
-      responseFormat: "json",
-      parameters: {
-            
-        path:  { id: string },
-        
-        
-        
-          }
-      responses: {200: Schemas.SchedulingLinkInviteResponse,
-400: Schemas.BookingError,
-401: "{\"error\":\"unauthorized\"}\n",
-404: Schemas.BookingError,
-500: Schemas.BookingError,
-},
-      
-    }
-/**
- * The invitee must already have an account; the email is lowercased and trimmed. A new invitee gets a `pending` row (201). Re-inviting someone who is already a host of the link changes nothing: their row is returned as is with 200, so an accepted or declined host keeps that status (PAC-61). Response is the raw `storage.LinkHost` row, not the host DTO used inside SchedulingLink.
- * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invitee is resolved only to an account that holds the email DOMAIN-CONFIRMED (exactly one, compared case-insensitively). An address carried only unconfirmed, by several accounts, or by none answers the existing 404 "user not found", with nothing written.
+ * PAC-149 (spec docs/specs/PAC-149.md §3.1-§3.4, §3.6, D-1, D-2, D-15, D-18; contract contracts/features/PAC-149.md §2-§3). The invitation is to an address. The server never reads accounts by address here, and nothing in the answer, nor the work done, depends on whether an account carries it. The address is trimmed of leading and trailing ECMA-262 `\s` (the co-host list's set); blank after the trim (or a body that is not JSON) is the 400 "email is required". Then, for a live or paused link the caller owns, decided in this order, every comparison ignoring case with the database's `lower()`: (1) the owner's own stored address: 200 with the owner's entry, nothing written; (2) the address of a current entry of the link (a pending invitation's recorded address, or the stored address of an accepted or declined host's account): 200 with that entry as the link reads show it, its status kept (PAC-61), nothing written; (3) not well-formed (lowercased, Go's `net/mail.ParseAddress` must accept it and return exactly it: the team invitation's rule): the 400 "email must be a valid email address", nothing written; (4) the link already has 5 co-hosts: the 422, nothing written; (5) otherwise a pending invitation is recorded (the trimmed address with its letter case kept, and the time) and the answer is 201 with it as the link reads show it: address, `pending`, `is_owner: false`, no account identifier, no name, no picture. Two new addresses get byte-identical 201s modulo the address. Paceday sends no email to the invitee; the invitee sees the invitation in `listSchedulingLinkHostInvites` while their account is the address's single domain-confirmed holder. Before PAC-149 the address was resolved to its single domain-confirmed holder, "user not found" (404) answered every other address, and the 201/200 body was the raw host row with the account's id (API-072 superseded; oracle O-10).
+ * PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): the invitee was resolved only to an account that holds the email DOMAIN-CONFIRMED. Superseded by PAC-149 (above): acceptance is now the granting site (`acceptSchedulingLinkHostInvite`).
  * PAC-40: a deleted link answers 404 "not found" to every caller, owner included, before the owner check and before the body is read, and no host row is written (AC-6, AC-6a).
  * 
- * PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete, edit, booking save, host response or other invitation of the same link still in progress waits at most 10 seconds per wait; past that it is the 500 and nothing changes. The bound is per wait, not in total (PAC-120): a booking save or host response that arrives while the invitation is waiting can take the link first, so on a busy link the invitation can wait longer than 10 seconds in all, until the request budget ends it, but it never deadlocks. A refusal decided before the write (400, 403, the 404 "user not found", the 500 of a failed link read or a failed address lookup) keeps its answer even if the link was deleted meanwhile; nothing is written either way.
+ * PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete, edit, booking save, host response or other invitation of the same link still in progress waits at most 10 seconds per wait; past that it is the 500 and nothing changes. The bound is per wait, not in total (PAC-120): a booking save or host response that arrives while the invitation is waiting can take the link first, so on a busy link the invitation can wait longer than 10 seconds in all, until the request budget ends it, but it never deadlocks. A refusal decided before the write (400, 403, the 500 of a failed link read) keeps its answer even if the link was deleted meanwhile; nothing is written either way. PAC-149: (1)-(5) above are decided inside the write, under the link's lock, so a link deleted first answers the 404 "not found"; an invitation committed first is erased by the delete (`deleteSchedulingLink`).
  * 
- * PAC-120 (spec docs/specs/PAC-120.md §3.2): a link holds at most 5 co-hosts. A co-host is any host row of the link other than its owner's, whatever its status (`pending`, `accepted` or `declined`). The owner's own row is never counted, whatever its status and whether or not it exists. An invitation that would add a host row is refused with 422 `{"error":"this link has reached its limit of 5 co-hosts; remove a co-host before inviting another"}` when the link already has 5 co-hosts or more, and nothing is written. The limit is the same value as the co-host list's (createSchedulingLink, updateSchedulingLink) and the link editor's. It never refuses: re-inviting someone who is already a host of the link, at any count and of any status (the 200 above, row unchanged), including the second of two simultaneous invitations of one new address; the owner inviting their own address (200 with their row unchanged; for a link with no owner row, created before PAC-112, the 201 with a `pending` owner row, which is not a co-host, is today's answer and may change in a follow-up); and accepting, declining, leaving or removal, which other operations do. A link already above 5 keeps its co-hosts and accepts new invitations again once it has 4 or fewer.
+ * PAC-120 (spec docs/specs/PAC-120.md §3.2): a link holds at most 5 co-hosts. A co-host is any host row of the link other than its owner's, whatever its status (`pending`, `accepted` or `declined`). The owner's own row is never counted, whatever its status and whether or not it exists. An invitation that would add a host row is refused with 422 `{"error":"this link has reached its limit of 5 co-hosts; remove a co-host before inviting another"}` when the link already has 5 co-hosts or more, and nothing is written. The limit is the same value as the co-host list's (createSchedulingLink, updateSchedulingLink) and the link editor's. It never refuses: re-inviting someone who is already a host of the link, at any count and of any status (the 200 above, row unchanged), including the second of two simultaneous invitations of one new address; the owner inviting their own address (200 with their entry unchanged; PAC-149: for a link with no owner row, created before PAC-112, the 200 carries the owner as `SchedulingLinkHost` with `is_owner: true` and `status: accepted` and nothing is written, where before PAC-149 a `pending` owner row was created); and accepting, declining, leaving or removal, which other operations do. PAC-149: the limit applies to every new address alike; a pending invitation is a co-host for the count. A link already above 5 keeps its co-hosts and accepts new invitations again once it has 4 or fewer.
  * 
- * The limit is decided inside the write, after the session re-check and after the link's lock, against the host rows read under that lock, never from an earlier read. Invitations and co-host list saves on one link are ordered by that lock, so together they never take it past 5: two simultaneous invitations of different new addresses on a link with 4 co-hosts give one 201 and one 422. Every earlier answer comes first and is unchanged: 400 "invalid id", the 500 of a failed link read, 404 "not found", 403, 400 "email is required", 404 "user not found", the 500 of a failed address lookup. A session whose generation moved before the write's re-check gets requireAuth's 401 instead of the 422 (PAC-71); one that moves after it leaves the 422 standing.
+ * The limit is decided inside the write, after the session re-check and after the link's lock, against the host rows read under that lock, never from an earlier read. Invitations and co-host list saves on one link are ordered by that lock, so together they never take it past 5: two simultaneous invitations of different new addresses on a link with 4 co-hosts give one 201 and one 422. Every earlier answer comes first and is unchanged: 400 "invalid id", the 500 of a failed link read, 404 "not found", 403, 400 "email is required" (PAC-149: "user not found" and the failed address lookup no longer exist; the owner's address, an existing entry and the 400 "email must be a valid email address" come before the limit, rule order (1)-(4) above). A session whose generation moved before the write's re-check gets requireAuth's 401 instead of the 422 (PAC-71); one that moves after it leaves the 422 standing.
  */
 export type post_InviteSchedulingLinkHost = {
       method: "POST",
@@ -7690,8 +7624,8 @@ export type post_InviteSchedulingLinkHost = {
         
         body:  Schemas.InviteSchedulingLinkHostRequest,
           }
-      responses: {200: Schemas.SchedulingLinkHostRecord,
-201: Schemas.SchedulingLinkHostRecord,
+      responses: {200: Schemas.SchedulingLinkHost,
+201: Schemas.SchedulingLinkHost,
 400: Schemas.BookingError,
 401: "{\"error\":\"unauthorized\"}\n",
 403: Schemas.BookingError,
@@ -7702,7 +7636,7 @@ export type post_InviteSchedulingLinkHost = {
       
     }
 /**
- * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id, or the link was deleted -> 404 for every caller, owner and pending invitee included, and no host row is removed (PAC-40 AC-5); caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204). PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link, or for a co-host invitation (PAC-120), still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
+ * Deletes the caller's `scheduling_link_hosts` row, whatever its status (pending, accepted or declined). Checked in this order: `{id}` not a UUID -> 400 "invalid id"; no link with that id, or the link was deleted -> 404 for every caller, owner and pending invitee included, and no host row is removed (PAC-40 AC-5); caller is the owner -> 400 "owner cannot leave link"; the DELETE removes zero rows (the caller has no host row on the link) -> 404 and nothing changes (PAC-30, API-020; before PAC-30 a non-host got 204). PAC-149 (spec §3.3 "Leave", D-5, D-10, AC-18): after the owner check, under the link's lock: a caller with an accepted or declined entry removes it (and, in the same write, any pending invitation of its own address on the link, a state no product path creates); otherwise, when the caller's account is the single domain-confirmed holder of its stored address and the link has a pending invitation equal to it ignoring case, that invitation is removed (204); otherwise the 404, nothing changed. A storage error on the match is the 500, never the 404. PAC-101: A link deleted while the request is handled: the write and the check that the link is not deleted are one atomic step ordered against the delete. If the delete commits first, the answer is the same 404 `{"error":"not found"}` as for a link deleted before the request arrived and no host row changes; if the write commits first it takes full effect and the delete then keeps the resulting host rows (PAC-40 D-2). A paused link does not block it. A write that must wait for a delete or edit of the same link, or for a co-host invitation (PAC-120), still in progress waits at most 10 seconds; past that it is the 500 and nothing changes.
  */
 export type post_LeaveSchedulingLink = {
       method: "POST",
@@ -8372,8 +8306,6 @@ export type delete_RemoveTeamPerson = {
 "/api/scheduling-links": Endpoints.post_CreateSchedulingLink,
 "/api/scheduling-links/host-invites/{id}/accept": Endpoints.post_AcceptSchedulingLinkHostInvite,
 "/api/scheduling-links/host-invites/{id}/decline": Endpoints.post_DeclineSchedulingLinkHostInvite,
-"/api/scheduling-links/{id}/accept": Endpoints.post_AcceptSchedulingLinkInviteByLink,
-"/api/scheduling-links/{id}/decline": Endpoints.post_DeclineSchedulingLinkInviteByLink,
 "/api/scheduling-links/{id}/hosts": Endpoints.post_InviteSchedulingLinkHost,
 "/api/scheduling-links/{id}/leave": Endpoints.post_LeaveSchedulingLink,
 "/api/settings/daily-recap/preview": Endpoints.post_PreviewDailyRecap,
@@ -8436,7 +8368,6 @@ get: {
 "/api/scheduling-links/archive": Endpoints.get_ListArchivedSchedulingLinks,
 "/api/scheduling-links/archive/{id}": Endpoints.get_GetArchivedSchedulingLink,
 "/api/scheduling-links/host-invites": Endpoints.get_ListSchedulingLinkHostInvites,
-"/api/scheduling-links/invites": Endpoints.get_ListSchedulingLinkInvitesAlias,
 "/api/scheduling-links/{id}": Endpoints.get_GetSchedulingLink,
 "/api/scheduling-links/{id}/bookings": Endpoints.get_ListSchedulingLinkBookings,
 "/api/settings": Endpoints.get_GetSettings,
