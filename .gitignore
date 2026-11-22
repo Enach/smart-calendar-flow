@@ -62,3 +62,10 @@ sbom.cdx.json
 # per machine. The skill's text files are tracked.
 .claude/settings.local.json
 .claude/skills/impeccable/scripts/bin/
+
+# CI (.github/workflows/ci.yml) and Dockerfile.local both run `npm ci`, so
+# package-lock.json is the one authoritative lockfile. Tracked Bun lockfiles
+# drifted 169 package versions away from it, handing `bun install` a different,
+# unaudited dependency set.
+bun.lock
+bun.lockb

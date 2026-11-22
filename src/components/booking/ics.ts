@@ -10,6 +10,36 @@ import { dateKeyInZone } from "@/lib/timeZone";
 
 const icsInstant = (s: string) => new Date(s).toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
 
+/**
+ * RFC 5545 section 3.3.11: a TEXT property value. Backslash, semicolon and
+ * comma carry meaning inside a value and are escaped; every line break becomes
+ * the literal `\n` (the one escape notes already relied on), and any other
+ * control character becomes a space, so no free text can end the content line
+ * and start a property of its own.
+ */
+const icsText = (v: string): string =>
+  v
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\r\n|[\r\n]/g, "\\n")
+    .replace(/\p{Cc}+/gu, " ");
+
+/**
+ * RFC 5545 section 3.2: a parameter value, as in `CN=`. Parameters have no
+ * escape mechanism: a value holding `;`, `:`, `,` or `"` is quoted, and a `"`
+ * or a control character, which a quoted string cannot carry either, becomes a
+ * space. Without this a host named `Doe, Jane` splits the ATTENDEE line's
+ * parameters in two, and a `:` in a name ends the parameter list early.
+ */
+const icsParam = (v: string): string => {
+  const safe = v.replace(/["\p{Cc}]+/gu, " ");
+  return /[;:,]/.test(safe) ? `"${safe}"` : safe;
+};
+
+/** A CAL-ADDRESS (`mailto:`) is a URI: neither whitespace nor a control character belongs in one. */
+const icsAddress = (v: string): string => v.replace(/[\s\p{Cc}]+/gu, "");
+
 export function buildIcs(conf: BookingConfirmation, now: Date = new Date()): string {
   const lines = [
     "BEGIN:VCALENDAR",
@@ -22,13 +52,14 @@ export function buildIcs(conf: BookingConfirmation, now: Date = new Date()): str
     `DTSTAMP:${icsInstant(now.toISOString())}`,
     `DTSTART:${icsInstant(conf.start)}`,
     `DTEND:${icsInstant(conf.end)}`,
-    `SUMMARY:${conf.title}`,
-    `DESCRIPTION:Booked via Paceday${conf.notes ? `\\n\\n${conf.notes.replace(/\n/g, "\\n")}` : ""}`,
-    `ORGANIZER;CN=${conf.hosts[0]?.name || conf.hosts[0]?.email}:mailto:${conf.hosts[0]?.email || ""}`,
+    `SUMMARY:${icsText(conf.title)}`,
+    `DESCRIPTION:${icsText(`Booked via Paceday${conf.notes ? `\n\n${conf.notes}` : ""}`)}`,
+    `ORGANIZER;CN=${icsParam(conf.hosts[0]?.name || conf.hosts[0]?.email || "")}:mailto:${icsAddress(conf.hosts[0]?.email || "")}`,
     ...conf.hosts.map(
-      (h) => `ATTENDEE;CN=${h.name || h.email};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${h.email}`,
+      (h) =>
+        `ATTENDEE;CN=${icsParam(h.name || h.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${icsAddress(h.email)}`,
     ),
-    `ATTENDEE;CN=${conf.booker_name};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${conf.booker_email}`,
+    `ATTENDEE;CN=${icsParam(conf.booker_name)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${icsAddress(conf.booker_email)}`,
     "END:VEVENT",
     "END:VCALENDAR",
   ];

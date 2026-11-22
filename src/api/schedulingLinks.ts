@@ -264,6 +264,42 @@ export class BookingsUnreadableError extends Error {
 const BookingRecordList = SchedulingLinkBookingRecordSchema.array();
 
 /**
+ * PAC-134 (contract md 5) / PAC-40 (contract section 2.2): the one erasure
+ * invariant both booking reads hold to. The erasure marker is `booker_erased_at`
+ * — absent on a live record, null on an archived one — and it is set exactly
+ * when the booker's name and email are both null; an erased booking's notes are
+ * blank. Any other combination is a contract violation.
+ *
+ * Returns what the record says about its booker, or null when it says something
+ * the contract does not allow. The two call sites then answer with their own
+ * error (BookingsUnreadableError for the live read, ArchiveUnavailableError for
+ * the archive), so the rule itself lives in one place and the two paths cannot
+ * drift apart again.
+ *
+ * The notes half carries the weight: free text routinely names the booker, so a
+ * record that claims erasure and still carries notes is unreadable whatever the
+ * server did to that column, and no erased booker's notes are ever rendered.
+ */
+export function bookerErasure(b: {
+  booker_name?: string | null;
+  booker_email?: string | null;
+  booker_erased_at?: string | null;
+  notes: string;
+}): { erased_at: string } | { booker_name: string; booker_email: string } | null {
+  // The marker is absent on a live record and null on an archived one, and the
+  // two reads' generated types differ accordingly, so each field is read as
+  // "has a value or not" rather than against one of the two spellings.
+  if (b.booker_erased_at != null) {
+    return b.booker_name == null && b.booker_email == null && b.notes === ""
+      ? { erased_at: b.booker_erased_at }
+      : null;
+  }
+  return b.booker_name != null && b.booker_email != null
+    ? { booker_name: b.booker_name, booker_email: b.booker_email }
+    : null;
+}
+
+/**
  * PAC-40 (contract section 7, challenge K4-7): the archive answered 200 but its
  * body does not match the generated schema (for example a field added by a
  * later server). The archive is then unavailable: nothing is shown from it and
@@ -274,6 +310,34 @@ export class ArchiveUnavailableError extends Error {
     super("archive unavailable");
     this.name = "ArchiveUnavailableError";
   }
+}
+
+/**
+ * A public slug the server could not be holding: the contract stores a slug
+ * normalised to lowercase alphanumerics and dashes (`createSchedulingLink`
+ * request, `slug`), so anything else names no link.
+ *
+ * It matters because a slug arrives from the route (`useParams`, already
+ * URL-decoded) and is interpolated into a request path. `requestApi` builds
+ * its URL with `new URL()`, which resolves `..`, so a slug such as
+ * `../../admin/sso/providers` would silently aim a request — the booking POST
+ * included — at another endpoint. The three public calls refuse such a slug
+ * before any request leaves the browser, and encode what they do send.
+ *
+ * `message` is the demo's `not_found` wording so the booking page shows its
+ * existing "Link not found", which is the truth, rather than a 404 from a
+ * request it should never have made (src/pages/PublicBooking.tsx).
+ */
+export class InvalidLinkSlugError extends Error {
+  constructor() {
+    super("not_found");
+    this.name = "InvalidLinkSlugError";
+  }
+}
+
+/** True when `slug` is a slug the backend could hold. */
+function isPublicSlug(slug: string): boolean {
+  return /^[a-z0-9-]{1,80}$/.test(slug);
 }
 
 
@@ -393,10 +457,10 @@ export const schedulingLinksApi = {
       }),
 
   acceptInvite: (linkId: string) =>
-    demoOrReal<void>("schedulingLinksApi.acceptInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/accept`)),
+    demoOrReal<void>("schedulingLinksApi.acceptInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${encodeURIComponent(linkId)}/accept`)),
 
   declineInvite: (linkId: string) =>
-    demoOrReal<void>("schedulingLinksApi.declineInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${linkId}/decline`)),
+    demoOrReal<void>("schedulingLinksApi.declineInvite", [linkId], () => requestApi("POST", `/scheduling-links/host-invites/${encodeURIComponent(linkId)}/decline`)),
 
   /**
    * PAC-112 (contract §5.1): GET /scheduling-links/{id}, the strict single-link
@@ -406,7 +470,7 @@ export const schedulingLinksApi = {
   getLink: (id: string) =>
     demoOrReal<SchedulingLink>("schedulingLinksApi.getLink", [id], async () => {
         const [detail, user] = await Promise.all([
-          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`),
+          requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${encodeURIComponent(id)}`),
           requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined),
         ]);
         return normalizeSchedulingLink(detail, user);
@@ -457,7 +521,7 @@ export const schedulingLinksApi = {
     booking_horizon_days: number; refusal_message: BookingRefusalMessage;
   }>) =>
     demoOrReal<SchedulingLinkSaveResult>("schedulingLinksApi.updateLink", [id, input], async () => {
-        const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${id}`);
+        const current = await requestApi<BackendSchedulingLink>("GET", `/scheduling-links/${encodeURIComponent(id)}`);
         const merged: LinkFormValues = {
           title: input.title ?? current.title,
           durations: input.durations ?? current.durations ?? current.duration_options ?? [30],
@@ -482,21 +546,21 @@ export const schedulingLinksApi = {
           ...backendLinkBody({ ...merged, active: input.active }),
           ...(listSent ? { co_host_emails: input.co_host_emails } : {}),
         };
-        const raw = await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${id}`, body);
+        const raw = await requestApi<BackendSchedulingLink>("PATCH", `/scheduling-links/${encodeURIComponent(id)}`, body);
         const user = await requestApi<BackendUser>("GET", "/auth/me").catch(() => undefined);
         return { link: normalizeSchedulingLink(raw, user), co_host_changes: coHostChangesOf(raw), co_host_list_sent: listSent };
       }),
 
   deleteLink: (id: string) =>
-    demoOrReal<void>("schedulingLinksApi.deleteLink", [id], () => requestApi("DELETE", `/scheduling-links/${id}`)),
+    demoOrReal<void>("schedulingLinksApi.deleteLink", [id], () => requestApi("DELETE", `/scheduling-links/${encodeURIComponent(id)}`)),
 
   leaveLink: (id: string) =>
-    demoOrReal<void>("schedulingLinksApi.leaveLink", [id], () => requestApi("POST", `/scheduling-links/${id}/leave`)),
+    demoOrReal<void>("schedulingLinksApi.leaveLink", [id], () => requestApi("POST", `/scheduling-links/${encodeURIComponent(id)}/leave`)),
 
   /** GET /scheduling-links/:id/bookings — bookings already made on a link. */
   listBookings: (id: string) =>
     demoOrReal<LinkBooking[]>("schedulingLinksApi.listBookings", [id], async () => {
-        const raw = await requestApi<unknown>("GET", `/scheduling-links/${id}/bookings`);
+        const raw = await requestApi<unknown>("GET", `/scheduling-links/${encodeURIComponent(id)}/bookings`);
         const parsed = BookingRecordList.safeParse(raw);
         if (!parsed.success) throw new BookingsUnreadableError();
         return parsed.data.map((b): LinkBooking => {
@@ -506,21 +570,15 @@ export const schedulingLinksApi = {
             end: b.end_time,
             duration_minutes: Math.round((new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
           };
-          // PAC-134 (contract md 5): name and email are null if and only if
-          // booker_erased_at is present, and an erased booking's notes are
-          // blank. Any other combination is a contract violation and makes
-          // the whole answer unreadable, like any other.
-          if (b.booker_erased_at !== undefined) {
-            if (b.booker_name !== null || b.booker_email !== null || b.notes !== "") throw new BookingsUnreadableError();
-            return { ...base, booker_name: null, booker_email: null, erased_at: b.booker_erased_at };
+          // PAC-134 (contract md 5): the shared erasure invariant. A booking
+          // that breaks it makes the whole answer unreadable, like any other
+          // contract violation.
+          const booker = bookerErasure(b);
+          if (!booker) throw new BookingsUnreadableError();
+          if ("erased_at" in booker) {
+            return { ...base, booker_name: null, booker_email: null, erased_at: booker.erased_at };
           }
-          if (b.booker_name === null || b.booker_email === null) throw new BookingsUnreadableError();
-          return {
-            ...base,
-            booker_name: b.booker_name,
-            booker_email: b.booker_email,
-            ...(b.notes ? { notes: b.notes } : {}),
-          };
+          return { ...base, ...booker, ...(b.notes ? { notes: b.notes } : {}) };
         });
       }),
 
@@ -546,21 +604,29 @@ export const schedulingLinksApi = {
    * of its bookings. 404 (unknown, live, paused or not the caller's) reaches the
    * caller as an ApiHttpError; a body that fails the schema is
    * ArchiveUnavailableError.
+   *
+   * The schema alone does not say what erasure means, so the same
+   * `bookerErasure` invariant the live read applies (PAC-134) runs here too: an
+   * archived booking that says erased and still carries notes makes the archive
+   * unavailable rather than showing the owner the booker's free text, which is
+   * exactly the data the erasure removes.
    */
   getArchivedLink: (id: string) =>
     demoOrReal<ArchivedSchedulingLinkDetail>("schedulingLinksApi.getArchivedLink", [id], async () => {
         const raw = await requestApi<unknown>("GET", `/scheduling-links/archive/${encodeURIComponent(id)}`);
         const parsed = ArchivedSchedulingLinkDetailSchema.safeParse(raw);
         if (!parsed.success) throw new ArchiveUnavailableError();
+        if (parsed.data.bookings.some((b) => bookerErasure(b) === null)) throw new ArchiveUnavailableError();
         return parsed.data as ArchivedSchedulingLinkDetail;
       }),
 
 
   // ----- public: booking flow -----
 
-  getPublicLink: (slug: string) =>
-    demoOrReal<PublicLinkInfo>("schedulingLinksApi.getPublicLink", [slug], async () => {
-        const raw = await requestApi<BackendPublicLink>("GET", `/book/${slug}`);
+  getPublicLink: (slug: string) => {
+    if (!isPublicSlug(slug)) throw new InvalidLinkSlugError();
+    return demoOrReal<PublicLinkInfo>("schedulingLinksApi.getPublicLink", [slug], async () => {
+        const raw = await requestApi<BackendPublicLink>("GET", `/book/${encodeURIComponent(slug)}`);
         const info: PublicLinkInfo = {
           slug: raw.slug, title: raw.title,
           durations: (raw.durations ?? raw.duration_options ?? [30]).slice(),
@@ -574,9 +640,11 @@ export const schedulingLinksApi = {
         };
         publicLinkCache.set(slug, info);
         return info;
-      }),
+      });
+  },
 
   getPublicSlots: (slug: string, params: PublicSlotsParams): Promise<PublicSlotsAnswer> => {
+    if (!isPublicSlug(slug)) return Promise.reject(new InvalidLinkSlugError());
     // PAC-88 (contract section 3.1): a request without `date` is the day
     // overview and needs `from` and `to`; the page never sends the date-less
     // overview without them (no whole-horizon read).
@@ -593,7 +661,7 @@ export const schedulingLinksApi = {
         };
         const raw = await requestApi<BookingSlot[] | Partial<PublicSlotsWire>>(
           "GET",
-          `/book/${slug}/slots`,
+          `/book/${encodeURIComponent(slug)}/slots`,
           undefined,
           query,
         );
@@ -624,12 +692,13 @@ export const schedulingLinksApi = {
     slug: string,
     input: { start: string; duration_minutes: number; name: string; email: string; notes?: string },
     idempotencyKey?: string,
-  ) =>
-    demoOrReal<BookingConfirmation>("schedulingLinksApi.bookSlot", [slug, input], async () => {
+  ) => {
+    if (!isPublicSlug(slug)) throw new InvalidLinkSlugError();
+    return demoOrReal<BookingConfirmation>("schedulingLinksApi.bookSlot", [slug, input], async () => {
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
         const raw = await requestApi<BackendBooking>(
           "POST",
-          `/book/${slug}`,
+          `/book/${encodeURIComponent(slug)}`,
           { name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes },
           undefined,
           undefined,
@@ -642,7 +711,8 @@ export const schedulingLinksApi = {
           duration_minutes: raw.duration_minutes ?? Math.round((new Date(raw.end).getTime() - new Date(raw.start).getTime()) / 60_000),
           hosts: raw.hosts ?? link?.hosts ?? [], booker_name: raw.booker_name, booker_email: raw.booker_email, notes: raw.notes,
         };
-      }),
+      });
+  },
 };
 
 /** PAC-119: the 409 of a link create, one of three variants told apart by `error` alone. */

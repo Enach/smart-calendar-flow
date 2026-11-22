@@ -80,6 +80,7 @@ export const NOT_OPERATIONS: Record<string, string> = {
   "schedulingLinks.publicBookingDisplayUrl": URL_BUILDER,
   "schedulingLinks.newBookingAttemptKey": "PAC-82: makes a booking attempt's Idempotency-Key, no request (PAC-119: also a link create's)",
   "schedulingLinks.linkCreateConflict": PURE,
+  "schedulingLinks.bookerErasure": "PAC-134: reads a booking record's erasure state, shared by the live and archive reads, no request",
   // teams.ts
   "teams.normalizeInvite": PURE,
   "teams.validateTeamName": PURE,
