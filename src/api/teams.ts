@@ -189,10 +189,19 @@ function normalizeZones(zones: BackendZone[]): NoMeetingZone[] {
   }));
 }
 
+/**
+ * Every `teamId` and `zoneId` this module interpolates into a request path is
+ * encoded, because `requestApi` builds its URL with `new URL()`, which resolves
+ * `..` (the mechanism behind PR #205's public-slug finding). The ids come from
+ * a server payload or from the persisted team state rather than from the route,
+ * which is why this was the deferred half of that finding rather than the
+ * urgent one — but an id that escapes the `/teams/` prefix would still aim a
+ * cookie-bearing request at an endpoint of someone else's choosing.
+ */
 async function remoteTeam(id: string): Promise<FormalTeam> {
   const [rawDetail, zones] = await Promise.all([
-    requestApi<unknown>("GET", "/teams/" + id),
-    requestApi<BackendZone[]>("GET", "/teams/" + id + "/no-meeting-zones"),
+    requestApi<unknown>("GET", "/teams/" + encodeURIComponent(id)),
+    requestApi<BackendZone[]>("GET", "/teams/" + encodeURIComponent(id) + "/no-meeting-zones"),
   ]);
   // Strict: an unknown key or a missing `people` throws rather than showing a
   // partial member list (SF-039 is the server's half; this is the client's).
@@ -372,13 +381,13 @@ const teamsRemote = {
   renameTeam: (id: string, name: string) =>
     demoOrReal<FormalTeam | null>("teams.renameTeam", [id, name], async () => {
         assertTeams(validateTeamName(name));
-        await requestApi("PATCH", "/teams/" + id, { name: name.trim() });
+        await requestApi("PATCH", "/teams/" + encodeURIComponent(id), { name: name.trim() });
         return readBack(() => remoteTeam(id));
       }),
 
   deleteTeam: (id: string) =>
     demoOrReal<void>("teams.deleteTeam", [id], async () => {
-        await requestApi("DELETE", "/teams/" + id);
+        await requestApi("DELETE", "/teams/" + encodeURIComponent(id));
         const state = load();
         state.teams = state.teams.filter((team) => team.id !== id);
         if (state.active_team_id === id) state.active_team_id = state.teams[0]?.id ?? null;
@@ -395,7 +404,7 @@ const teamsRemote = {
     demoOrReal<FormalTeamMember>("teams.addPerson", [teamId, email, name], async () => {
         assertTeams(validateTeamEmail(email));
         const trimmedName = name?.trim();
-        const raw = await requestApi<unknown>("POST", "/teams/" + teamId + "/people", {
+        const raw = await requestApi<unknown>("POST", "/teams/" + encodeURIComponent(teamId) + "/people", {
           email: email.trim().toLowerCase(),
           ...(trimmedName ? { name: trimmedName } : {}),
         });
@@ -411,7 +420,7 @@ const teamsRemote = {
     demoOrReal<TeamInviteOutcome>("teams.inviteMember", [teamId, email, displayName], async () => {
         assertTeams(validateTeamEmail(email));
         const trimmedName = displayName?.trim();
-        const raw = await requestApi<unknown>("POST", "/teams/" + teamId + "/members/invite", {
+        const raw = await requestApi<unknown>("POST", "/teams/" + encodeURIComponent(teamId) + "/members/invite", {
           email: email.trim().toLowerCase(),
           ...(trimmedName ? { name: trimmedName } : {}),
         });
@@ -426,13 +435,13 @@ const teamsRemote = {
    */
   removeMember: (teamId: string, email: string) =>
     demoOrReal<void>("teams.removeMember", [teamId, email], async () => {
-        await requestApi("DELETE", "/teams/" + teamId + "/people/" + encodeURIComponent(email.trim().toLowerCase()));
+        await requestApi("DELETE", "/teams/" + encodeURIComponent(teamId) + "/people/" + encodeURIComponent(email.trim().toLowerCase()));
       }),
 
   addZone: (teamId: string, input: Omit<NoMeetingZone, "id" | "created_at">) =>
     demoOrReal<NoMeetingZone | null>("teams.addZone", [teamId, input], async () => {
         assertTeams(validateZoneInput(input));
-        const raw = await requestApi<BackendZone>("POST", "/teams/" + teamId + "/no-meeting-zones", {
+        const raw = await requestApi<BackendZone>("POST", "/teams/" + encodeURIComponent(teamId) + "/no-meeting-zones", {
           dayOfWeek: input.day_of_week,
           startTime: timeFromMinutes(input.start_min),
           endTime: timeFromMinutes(input.end_min),
@@ -456,7 +465,7 @@ const teamsRemote = {
           end_min: patch.end_min ?? current.end_min,
         };
         assertTeams(validateZoneInput(merged));
-        await requestApi("PATCH", "/teams/" + teamId + "/no-meeting-zones/" + zoneId, {
+        await requestApi("PATCH", "/teams/" + encodeURIComponent(teamId) + "/no-meeting-zones/" + encodeURIComponent(zoneId), {
           dayOfWeek: patch.day_of_week ?? current.day_of_week,
           startTime: timeFromMinutes(patch.start_min ?? current.start_min),
           endTime: timeFromMinutes(patch.end_min ?? current.end_min),
@@ -465,13 +474,13 @@ const teamsRemote = {
       }),
 
   removeZone: (teamId: string, zoneId: string) =>
-    demoOrReal<void>("teams.removeZone", [teamId, zoneId], () => requestApi("DELETE", "/teams/" + teamId + "/no-meeting-zones/" + zoneId)),
+    demoOrReal<void>("teams.removeZone", [teamId, zoneId], () => requestApi("DELETE", "/teams/" + encodeURIComponent(teamId) + "/no-meeting-zones/" + encodeURIComponent(zoneId))),
 
   findSlots: (teamId: string, dateISO: string, durationMin: number) =>
     demoOrReal<AvailabilitySlot[]>("teams.findSlots", [teamId, dateISO, durationMin], async () => {
         assertTeams(validateAvailabilityQuery(dateISO, durationMin));
         const raw = await requestApi<unknown>(
-          "GET", "/teams/" + teamId + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
+          "GET", "/teams/" + encodeURIComponent(teamId) + "/availability", undefined, { date: dateISO, duration: String(durationMin) },
         );
         // The counts are the server's (SF-054): never derived from the member list.
         return TeamSlotListSchema.parse(raw).slots.map((slot) => ({
@@ -487,7 +496,7 @@ const teamsRemote = {
   teamAnalytics: (teamId: string, dateISO?: string) =>
     demoOrReal<TeamAnalyticsView>("teams.teamAnalytics", [teamId, dateISO], async () => {
         if (dateISO !== undefined) assertTeams(ISO_DATE_RE.test(dateISO) ? null : "Pick a valid date.");
-        const raw = await requestApi<unknown>("GET", "/teams/" + teamId + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
+        const raw = await requestApi<unknown>("GET", "/teams/" + encodeURIComponent(teamId) + "/analytics", undefined, dateISO ? { date: dateISO } : undefined);
         return normalizeTeamAnalytics(TeamAnalyticsSchema.parse(raw));
       }),
 };

@@ -107,3 +107,31 @@ export async function apiFetch<T = unknown>(
 export function apiUrl(path: string): string {
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
+
+/**
+ * `apiUrl(path)` for a path that came out of a response body, or null when the
+ * value is not a path at all (2026-11-22 audit follow-up).
+ *
+ * Two server-sent values reach `window.location` through `apiUrl`: the
+ * `redirect_url` of POST /api/auth/detect (the SSO sign-in start) and the
+ * `stepup_url` of the SSO step-up offer. Both are paths on the API origin by
+ * contract, and both are typed `string` with nothing checking that, so
+ * `apiUrl` was the only thing standing between a response body and a
+ * navigation. It is not enough: API_BASE is empty whenever no API host is
+ * injected — `bun run dev`, the documented local workflow, and the local
+ * Docker image — and there `"//evil.example/signin"` concatenates to a
+ * protocol-relative URL that leaves the origin for an attacker's page, in the
+ * middle of a sign-in, with none of the CSP that production's nginx sends.
+ *
+ * The rule is the one `AuthDialog`'s own `resolveRedirect` already applies to
+ * the `?redirect=` query parameter: one leading slash, and nothing that makes
+ * the rest an authority. `safeLinkUrl` is the wrong tool for this particular
+ * value — it refuses every relative URL, which is all a correct `path` here
+ * ever is — so the check is on the shape of the path instead of on a scheme.
+ */
+export function apiPathUrl(path: string): string | null {
+  // A backslash is here because browsers normalise `/\` to `//` when they
+  // resolve a URL, so `/\evil.example` is an authority too.
+  if (!path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) return null;
+  return apiUrl(path);
+}

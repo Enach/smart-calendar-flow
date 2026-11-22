@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiHttpError, normalizeAttendees, normalizeEvents } from "./client";
+import { ApiHttpError, api, normalizeAttendees, normalizeEvents } from "./client";
 import { teamsApi, unwrapTeam, unwrapTeamList } from "./teams";
 import { getEventOwnership } from "@/lib/eventOwnership";
 import type { CalendarEvent } from "./types";
@@ -89,6 +89,43 @@ describe("event conference normalization", () => {
       { id: "1", title: "Sync", start: "2026-05-04T09:00:00Z", end: "2026-05-04T09:30:00Z" },
     ]);
     expect("conference" in ev).toBe(false);
+  });
+});
+
+/**
+ * 2026-11-22 audit follow-up: the same block, arriving by the write instead of
+ * the read. `api.addConference` cast its answer to ConferenceLink and
+ * `MeetingLinkRow` renders it straight into an `<a href>`, so the check
+ * `normalizeEvents` gained in #204 did not cover it — an added link stayed
+ * unvalidated on screen until the next events read replaced it.
+ */
+describe("the conference an add answers with", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterAll(() => vi.unstubAllGlobals());
+
+  const add = () => api.addConference("evt-1", { provider: "google_meet" });
+
+  it("returns a link the schema and the allowlist both accept", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ provider: "google_meet", url: "https://meet.google.com/abc-defg-hij" }));
+    await expect(add()).resolves.toEqual({ provider: "google_meet", url: "https://meet.google.com/abc-defg-hij" });
+  });
+
+  it("fails rather than handing the row a scheme we never make clickable", async () => {
+    for (const url of ["javascript:alert(1)", "  JavaScript:alert(1)", "data:text/html,x", "vbscript:MsgBox(1)", "//evil.example/j"]) {
+      fetchMock.mockResolvedValue(jsonResponse({ provider: "custom", url }));
+      await expect(add()).rejects.toThrow(/not one we can open/);
+    }
+  });
+
+  it("fails on an answer that is not the contract's CalendarEventConference", async () => {
+    for (const bad of [null, "https://meet.google.com/abc", { url: "https://meet.google.com/abc" }, { provider: "custom", url: "https://x.test", onclick: "alert(1)" }]) {
+      fetchMock.mockResolvedValue(jsonResponse(bad));
+      await expect(add()).rejects.toThrow(/not one we can open/);
+    }
   });
 });
 
