@@ -6871,6 +6871,8 @@ export interface components {
              * @enum {string}
              */
             calendarProvider: "google" | "outlook" | "webcal";
+            /** @description The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+             *      */
             webcalUrl: string;
             /** @description The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
              *      */
@@ -7025,6 +7027,8 @@ export interface components {
              * @enum {string}
              */
             calendarProvider?: "google" | "outlook" | "webcal";
+            /** @description The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+             *      */
             webcalUrl?: string;
             /** @description The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
              *      */
@@ -8021,6 +8025,7 @@ export interface components {
          *     Messages PAC-66 adds, each produced only when the write CHANGES the property to a non-empty value (`""` is always accepted, spec AC-15; the two `gcpLocation` messages are gone with the property, NEW-llm-bring-your-own): `azureEndpoint must be an https URL whose host is approved for azure_openai on this deployment` (an unapproved host, a scheme other than `https`, a port other than 443, userinfo, or a value that does not parse as an absolute URL); `azureEndpoint cannot be set: azure_openai is not enabled on this deployment` (the operator approved no Azure host); `awsRegion must be a valid AWS region name`. Each names the property first, so a client can attach it to the field.
          *     Message PAC-66-B adds, as changed by NEW-llm-bring-your-own, under the same changed-and-non-empty rule (`""` is always accepted): `llmBaseUrl must be an OpenAI or Anthropic destination approved on this deployment` (a value approved for neither provider, a path other than an approved gateway prefix, a query, fragment, userinfo or whitespace; spec AC-18, PAC-66-B AC-B3, AC-B6, AC-B19). The two `ollamaBaseUrl` messages are gone with the property.
          *     Messages NEW-llm-bring-your-own adds: `llmProvider unsupported cannot be chosen: choose off, organization or a key-based provider` (a write of `unsupported` onto a row that does not already read as `unsupported`); `llmApiKey cannot be set: choose openai, anthropic, azure_openai, bedrock or vertex as llmProvider first` (a non-empty `llmApiKey` when the provider after the write is `""`, `organization` or `unsupported`); `llmUnboundApiKey must be "" (it can only remove the key bound to no provider)` (any `llmUnboundApiKey` value other than `""`; a non-string is `invalid JSON: llmUnboundApiKey has the wrong type`). A removed property (`awsProfile`, `gcpProject`, `gcpLocation`, `ollamaBaseUrl`, `ollamaModel`) is the existing `unknown property: <name>`.
+         *     Messages the security audit of 2026-11-22 adds, under the same changed-and-non-empty rule (`""` is always accepted, and clears the feed). `webcalUrl` was the one user-supplied URL the backend fetches that nothing validated, so any address reachable from the deployment network could be stored and then fetched - on demand through `/api/personal-calendars/{id}/preview` and every 30 minutes by the personal-blocker cron (SSRF): `webcalUrl must be a webcal, webcals, http or https URL with no credentials` (a value that does not parse, an opaque URL, userinfo, no host, or any other scheme - `file:`, `gopher:`, `ftp:`); `webcalUrl must not point at a loopback, link-local or private address` (a host that is an address literal outside the public set - loopback, RFC 1918, IPv6 unique-local, link-local including 169.254.169.254, unspecified, multicast, RFC 6598, NAT64/6to4/Teredo - or a name that can only be local: `localhost` and anything under it, a single-label intranet name, or a final label with no letter such as an address written as a decimal integer). The same two messages, with `url` in place of `webcalUrl`, are the 400s of POST and PATCH `/api/personal-calendars`. A name is otherwise accepted whatever it resolves to: the control is the egress guard, which judges the literal address of every feed connection at the moment it is made, so a name that resolves publicly at write time and privately at fetch time is still refused (`backend/calendar/feed_guard.go`). A deployment that declares test mode (`PACEDAY_ALLOW_STANDINS=true`, the e2e stack) accepts private addresses and single-label names at both layers, and says so at startup; production fails closed.
          *     `""` is NOT in this catalogue for `workStart`, `workEnd`, `lunchStart` or `lunchEnd`. It is a valid value for all four, on read and on write (spec AC-7); the handler already skips the format check for it (`backend/api/handlers_settings.go:75`).
          *      */
         SettingsValidationError: {
@@ -12361,7 +12366,7 @@ export interface operations {
                     "application/json": components["schemas"]["PersonalCalendar"];
                 };
             };
-            /** @description `invalid body` (unparseable JSON) or `provider required`. */
+            /** @description `invalid body` (unparseable JSON), `provider required`, or one of the two feed-URL refusals the security audit of 2026-11-22 adds - `url must be a webcal, webcals, http or https URL with no credentials` and `url must not point at a loopback, link-local or private address`. A non-empty `url` is judged whatever the provider, because the backend fetches it (preview, and the personal-blocker cron every 30 minutes); `""` is accepted, and so is any ordinary name, which the egress guard judges again at connection time. The same rule and messages apply to `settings.webcalUrl` - see SettingsValidationError for the full statement of it. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12472,7 +12477,7 @@ export interface operations {
                     "application/json": components["schemas"]["PersonalCalendar"];
                 };
             };
-            /** @description `invalid id` or `invalid body`. */
+            /** @description `invalid id`, `invalid body`, or either feed-URL refusal of POST (a PATCH that re-points `url` is the same sink); the stored row is then unchanged. */
             400: {
                 headers: {
                     [name: string]: unknown;

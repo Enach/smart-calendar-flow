@@ -2856,6 +2856,9 @@ export type Settings = {
    * Before PAC-24 this was a property of the singleton row, so one user connecting Outlook switched the whole deployment (`backend/auth/microsoft_oauth.go:57` writes `calendar_provider = 'outlook' WHERE id = 1`).
    */
   calendarProvider: ("google" | "outlook" | "webcal");
+  /**
+   * The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+   */
   webcalUrl: string;
   /**
    * The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
@@ -3037,6 +3040,9 @@ export type SettingsUpdate = Partial<{
    * Before PAC-24 this was a property of the singleton row, so one user connecting Outlook switched the whole deployment (`backend/auth/microsoft_oauth.go:57` writes `calendar_provider = 'outlook' WHERE id = 1`).
    */
   calendarProvider: ("google" | "outlook" | "webcal");
+  /**
+   * The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+   */
   webcalUrl: string;
   /**
    * The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
