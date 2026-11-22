@@ -24,7 +24,7 @@ import {
   type SignInEmailKind,
 } from "@/components/auth/rememberedEmail";
 
-import { apiFetch, apiUrl, checkApiAvailability } from "@/lib/api";
+import { apiFetch, apiPathUrl, apiUrl, checkApiAvailability } from "@/lib/api";
 import { ApiUnreachableError, apiErrorMessage, isAnswerLost } from "@/api/client";
 import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import type { AuthUser } from "@/contexts/AuthContext";
@@ -253,8 +253,16 @@ function AuthDialogBody({
       if (type === "sso" && res.redirect_url) {
         // redirect_url is a path on the API origin, not this app's (PAC-35,
         // API-010); the typed email goes with it as the IdP's login hint.
-        window.location.href = apiUrl(`${res.redirect_url}?login_hint=${encodeURIComponent(parsed.data)}`);
-        return;
+        // `apiPathUrl` holds it to being a path: a detect answer of
+        // "//evil.example/signin" would otherwise send the browser there with
+        // the typed address in tow (2026-11-22 audit follow-up). A value that
+        // is not a path falls through to the provider choice below, the same
+        // as an sso answer that sent no path at all (PAC-98 AC-12).
+        const target = apiPathUrl(res.redirect_url);
+        if (target) {
+          window.location.href = `${target}?login_hint=${encodeURIComponent(parsed.data)}`;
+          return;
+        }
       }
       setPending(null);
       if (type === "generic") {

