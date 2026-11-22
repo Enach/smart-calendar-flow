@@ -100,12 +100,18 @@ function checkAnswer(
   return "ok";
 }
 
+/**
+ * Who the visitor is booking with. 2026-11-22 audit, finding 4: this page is
+ * unauthenticated and its slug is guessable, so a host is named by display
+ * name only. A host without one is counted, never named from its address.
+ */
 function hostsLabel(hosts: PublicLinkInfo["hosts"]): string {
   if (hosts.length === 0) return "";
-  const names = hosts.map((h) => h.name?.split(" ")[0] || h.email.split("@")[0]);
-  if (names.length === 1) return names[0]!;
-  if (names.length === 2) return `${names[0]} + ${names[1]}`;
-  return `${names[0]} + ${names.length - 1} others`;
+  const names = hosts.map((h) => h.name?.trim().split(" ")[0]).filter((first): first is string => !!first);
+  if (names.length === 0) return hosts.length === 1 ? "Your host" : `${hosts.length} hosts`;
+  if (hosts.length === 1) return names[0]!;
+  if (hosts.length === 2 && names.length === 2) return `${names[0]} + ${names[1]}`;
+  return `${names[0]} + ${hosts.length - 1} others`;
 }
 
 export default function PublicBooking() {
@@ -523,7 +529,7 @@ export default function PublicBooking() {
             </p>
 
             <div className="mt-6 flex items-center justify-center gap-3">
-              <HostAvatars hosts={confirmation.hosts} size="md" overlap showPending={false} />
+              <HostAvatars hosts={confirmation.hosts} size="md" overlap showPending={false} audience="public" />
               <span className="text-sm font-medium text-foreground">{hostsLabel(confirmation.hosts)}</span>
             </div>
 
@@ -614,7 +620,7 @@ export default function PublicBooking() {
           {/* LEFT — host info */}
           <aside className="space-y-5">
             <div className="flex items-center gap-3">
-              <HostAvatars hosts={link.hosts} size="lg" overlap showPending={false} />
+              <HostAvatars hosts={link.hosts} size="lg" overlap showPending={false} audience="public" />
             </div>
             <div>
               <p className="text-sm font-medium text-foreground">{hostsLabel(link.hosts)}</p>
