@@ -185,4 +185,23 @@ describe("PAC-40 archive page", () => {
     fireEvent.click(await screen.findByTestId("archive-view-bookings"));
     expect(await screen.findByTestId("archive-bookings-empty")).toBeInTheDocument();
   });
+
+  /**
+   * PAC-134 / PAC-40: a booker's notes are free text that routinely names
+   * them, their employer and their phone number. An erased booking carries
+   * none (contract section 2.2) and the read refuses an answer that says
+   * otherwise, so the owner's archive can never put that text back on screen.
+   */
+  it("notes on a booking that says erased reach nobody: the detail is unavailable instead", async () => {
+    const NOTES = "Jane Roe, Acme Ltd, +33 6 12 34 56 78";
+    answer(
+      { links: [ARCHIVED_A], booker_erasure: POLICY_A },
+      { link: ARCHIVED_A, bookings: [BOOKING, { ...ERASED_BOOKING, notes: NOTES }] },
+    );
+    renderPage();
+    fireEvent.click(await screen.findByTestId("archive-view-bookings"));
+    expect(await screen.findByTestId("archive-detail-unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(NOTES)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("archive-bookings")).not.toBeInTheDocument();
+  });
 });

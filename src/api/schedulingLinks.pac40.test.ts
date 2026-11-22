@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiHttpError, ApiUnreachableError } from "./client";
-import { ArchiveUnavailableError, schedulingLinksApi } from "./schedulingLinks";
+import { ArchiveUnavailableError, BookingsUnreadableError, schedulingLinksApi } from "./schedulingLinks";
 import {
   ARCHIVED_A,
   ARCHIVED_EMPTY,
@@ -93,5 +93,56 @@ describe("PAC-40 archive reads", () => {
     await expect(schedulingLinksApi.deleteLink(LINK_ID)).resolves.toBeUndefined();
     expect(requestPath(fetchMock.mock.calls[0][0])).toBe(`/api/scheduling-links/${LINK_ID}`);
     expect(fetchMock.mock.calls[0][1]?.method).toBe("DELETE");
+  });
+});
+
+/**
+ * PAC-40 / PAC-134: the archive read holds the live read's erasure invariant,
+ * from the one `bookerErasure` helper both call. An erased booking's notes are
+ * the booker's own free text — their name, their employer, their phone number —
+ * which is exactly what the erasure removes, so a record that says erased and
+ * still carries notes makes the archive unavailable rather than showing that
+ * text to the link's owner. Whether the server blanks the column is not
+ * something the client can check, so the client's rule stands on its own.
+ */
+describe("PAC-134 erasure invariant: one rule, both booking reads", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  const NOTES = "Jane Roe, Acme Ltd, +33 6 12 34 56 78";
+
+  it("an archived booking that says erased and still carries notes is ArchiveUnavailableError", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ link: ARCHIVED_A, bookings: [{ ...ERASED_BOOKING, notes: NOTES }] }),
+    );
+    await expect(schedulingLinksApi.getArchivedLink(LINK_ID)).rejects.toBeInstanceOf(ArchiveUnavailableError);
+  });
+
+  it("the live read refuses the very same record, with its own error", async () => {
+    fetchMock.mockResolvedValue(jsonResponse([{ ...ERASED_BOOKING, notes: NOTES }]));
+    await expect(schedulingLinksApi.listBookings(LINK_ID)).rejects.toBeInstanceOf(BookingsUnreadableError);
+  });
+
+  it("an archived booking that says erased but still names its booker is unavailable too", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ link: ARCHIVED_A, bookings: [{ ...ERASED_BOOKING, booker_name: "Jane Roe" }] }),
+    );
+    await expect(schedulingLinksApi.getArchivedLink(LINK_ID)).rejects.toBeInstanceOf(ArchiveUnavailableError);
+  });
+
+  it("an archived booking with a null name but no erasure marker is unavailable (AC-22)", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ link: ARCHIVED_A, bookings: [{ ...BOOKING, booker_name: null }] }),
+    );
+    await expect(schedulingLinksApi.getArchivedLink(LINK_ID)).rejects.toBeInstanceOf(ArchiveUnavailableError);
+  });
+
+  it("a contract-shaped archive, erased booking included, still reads", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ link: ARCHIVED_A, bookings: [BOOKING, ERASED_BOOKING] }));
+    const out = await schedulingLinksApi.getArchivedLink(LINK_ID);
+    expect(out.bookings.map((b) => b.notes)).toEqual(["About the roadmap", ""]);
   });
 });

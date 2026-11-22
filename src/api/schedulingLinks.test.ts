@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { isApiHttpError, isApiUnreachableError } from "./client";
-import { BookingsUnreadableError, publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
+import { BookingsUnreadableError, InvalidLinkSlugError, publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -771,5 +771,76 @@ describe("PAC-72 booking horizon and refusal message", () => {
       schedulingLinksApi.createLink({ ...base, slug: "", co_host_emails: [], booking_horizon_days: 400 }),
     ).toThrow(/between 1 and 365 days/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A public slug arrives from the route (`useParams`, already URL-decoded) and
+ * is interpolated into a request path, so it must not be able to name another
+ * endpoint. The three public calls refuse a slug the backend could not hold and
+ * encode the one they send.
+ */
+describe("a public slug cannot escape the /api/book prefix", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => vi.unstubAllGlobals());
+
+  const TRAVERSAL = "../../admin/sso/providers";
+
+  /** The call's failure, whether the guard throws or rejects. */
+  const failureOf = async (call: () => unknown) => {
+    try {
+      await call();
+      return null;
+    } catch (e) {
+      return e;
+    }
+  };
+
+  it("new URL() is why encoding alone is not enough: it resolves `..` in the path", () => {
+    // What requestApi does with the path it is given (src/api/client.ts).
+    expect(new URL("/api/book/../../admin/sso/providers", "https://app.paceday.com").pathname).toBe(
+      "/admin/sso/providers",
+    );
+  });
+
+  it("refuses a traversal slug on the link read, the slots read and the booking POST", async () => {
+    const link = await failureOf(() => schedulingLinksApi.getPublicLink(TRAVERSAL));
+    const slots = await failureOf(() =>
+      schedulingLinksApi.getPublicSlots(TRAVERSAL, { date: "2026-03-02", duration: 30 }),
+    );
+    const booking = await failureOf(() =>
+      schedulingLinksApi.bookSlot(TRAVERSAL, {
+        start: "2026-03-02T09:00:00Z",
+        duration_minutes: 30,
+        name: "Z",
+        email: "z@co.com",
+      }),
+    );
+    for (const e of [link, slots, booking]) expect(e).toBeInstanceOf(InvalidLinkSlugError);
+    // The booking POST is the one that matters most: it carries the signed-in
+    // visitor's cookies. Nothing left the browser at all.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("the page reads the refusal as 'Link not found': no such link can exist", async () => {
+    const e = await failureOf(() => schedulingLinksApi.getPublicLink(TRAVERSAL));
+    // The wording src/pages/PublicBooking.tsx already keys its not-found state on.
+    expect((e as Error).message).toBe("not_found");
+  });
+
+  it("refuses anything outside lowercase alphanumerics and dashes, and any over-long slug", async () => {
+    for (const bad of ["Intro", "intro call", "intro/slots", "intro%2f..", "", "a".repeat(81), "intro?x=y"]) {
+      expect(await failureOf(() => schedulingLinksApi.getPublicLink(bad))).toBeInstanceOf(InvalidLinkSlugError);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("an ordinary slug still reaches /api/book/:slug unchanged", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ slug: "intro-call", title: "Intro", duration_options: [30] }));
+    await schedulingLinksApi.getPublicLink("intro-call");
+    expect(requestPath(fetchMock.mock.calls[0][0])).toBe("/api/book/intro-call");
   });
 });
