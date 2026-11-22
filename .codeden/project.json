@@ -1,0 +1,9 @@
+{
+  "setup": ["npm ci"],
+  "devServer": { "command": "npm run dev", "port": 8080 },
+  "checks": [
+    "npm run typecheck",
+    "npm run lint",
+    { "command": "npm test", "timeoutSec": 1200 }
+  ]
+}
