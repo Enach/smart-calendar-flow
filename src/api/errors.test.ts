@@ -6,12 +6,16 @@ import {
   apiFailureMessage,
   ApiGatewayError,
   ApiHttpError,
+  ApiRateLimitedError,
   ApiRequestCancelledError,
   ApiUnreachableError,
   classifyApiFailure,
   CLIENT_REQUEST_BOUND_MS,
   HEALTH_PROBE_BOUND_MS,
   isBudgetExpired,
+  parseRetryAfterMs,
+  RATE_LIMIT_DEFAULT_RETRY_MS,
+  rateLimitRetryAfterMs,
   requestApi,
 } from "./client";
 
@@ -240,10 +244,11 @@ describe("PAC-83 error taxonomy (contract §2, §3)", () => {
     });
   });
 
-  it("classifies in precedence: cancelled, budget, too-large, lost, http", () => {
+  it("classifies in precedence: cancelled, budget, too-large, rate-limited, lost, http", () => {
     expect(classifyApiFailure(new ApiRequestCancelledError())).toBe("cancelled");
     expect(classifyApiFailure(new ApiHttpError(503, { error: "request timed out" }))).toBe("budget");
     expect(classifyApiFailure(new ApiHttpError(413))).toBe("too-large");
+    expect(classifyApiFailure(new ApiHttpError(429))).toBe("rate-limited");
     expect(classifyApiFailure(new ApiUnreachableError("timeout"))).toBe("lost");
     expect(classifyApiFailure(new ApiGatewayError(504))).toBe("lost");
     expect(classifyApiFailure(new ApiHttpError(409))).toBe("http");
@@ -265,5 +270,108 @@ describe("PAC-83 error taxonomy (contract §2, §3)", () => {
       expect(apiFailureMessage(e, "booking").message).toBe(API_MESSAGES.lostBooking);
     }
     expect(apiFailureMessage(new ApiRequestCancelledError(), "read")).toEqual({ message: "", retry: false });
+  });
+});
+
+/**
+ * NEW-booking-rate-limit (clockwise-like#332): the api repo's per-client
+ * limiter. `createPublicBooking` and `getPublicBookingSlots` are the only two
+ * public booking operations that declare a 429 (src/api/generated/types.ts:
+ * `BookingCreateRateLimited`, `BookingSlotsRateLimited`); `getPublicLinkInfo`
+ * declares 200, 404, 410 and 500 only, so nothing here is mapped for it.
+ */
+describe("NEW-booking-rate-limit: the 429 and its Retry-After", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function rateLimited(retryAfter?: string): Response {
+    return new Response(JSON.stringify({ error: "rate limit exceeded" }), {
+      status: 429,
+      headers: { "content-type": "application/json", ...(retryAfter === undefined ? {} : { "retry-after": retryAfter }) },
+    });
+  }
+
+  it("Retry-After: 30 is honoured as sent, not replaced by the client's default", async () => {
+    fetchMock.mockResolvedValueOnce(rateLimited("30"));
+    const err = await requestApi("POST", "/book/intro", { name: "A" }).catch((e) => e);
+    expect(err).toBeInstanceOf(ApiRateLimitedError);
+    expect((err as ApiRateLimitedError).retryAfterMs).toBe(30_000);
+    expect((err as ApiRateLimitedError).retryAfterFromServer).toBe(true);
+    expect(rateLimitRetryAfterMs(err)).toBe(30_000);
+    // Still an ApiHttpError with its status, so every existing 429 branch holds.
+    expect(err).toBeInstanceOf(ApiHttpError);
+    expect((err as ApiHttpError).status).toBe(429);
+  });
+
+  // Defensive tolerance only: this API declares Retry-After `required`,
+  // `type: integer`, delta-seconds, and never sends an HTTP-date. Reading the
+  // other RFC 9110 form costs two lines and keeps a rewriting proxy from
+  // silently pushing every 429 onto the fallback.
+  it("tolerates the HTTP-date form rather than falling back", async () => {
+    const at = new Date(Date.now() + 45_000);
+    fetchMock.mockResolvedValueOnce(rateLimited(at.toUTCString()));
+    const err = await requestApi("GET", "/book/intro/slots").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiRateLimitedError);
+    const ms = (err as ApiRateLimitedError).retryAfterMs;
+    // The header has whole-second resolution, so allow the rounding either way.
+    expect(ms).toBeGreaterThan(43_000);
+    expect(ms).toBeLessThanOrEqual(45_000);
+    expect((err as ApiRateLimitedError).retryAfterFromServer).toBe(true);
+  });
+
+  it("no Retry-After at all falls back to the client's default, and says so", async () => {
+    // The real case: `Retry-After` is deliberately not in
+    // Access-Control-Expose-Headers, so a deployment whose API base is on
+    // another origin (API_BASE_URL / VITE_API_BASE_URL) sees the 429 and
+    // cannot read the header. Same-origin always can.
+    fetchMock.mockResolvedValueOnce(rateLimited());
+    const err = await requestApi("GET", "/book/intro/slots").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiRateLimitedError);
+    expect((err as ApiRateLimitedError).retryAfterMs).toBe(RATE_LIMIT_DEFAULT_RETRY_MS);
+    expect((err as ApiRateLimitedError).retryAfterFromServer).toBe(false);
+  });
+
+  it("classifies as its own kind, after too-large and before lost", async () => {
+    fetchMock.mockResolvedValueOnce(rateLimited("30"));
+    const err = await requestApi("GET", "/book/intro/slots").catch((e) => e);
+    expect(classifyApiFailure(err)).toBe("rate-limited");
+    // By status alone, as 413 is: a 429 raised anywhere else maps the same.
+    expect(classifyApiFailure(new ApiHttpError(429, { error: "rate limit exceeded" }))).toBe("rate-limited");
+    expect(rateLimitRetryAfterMs(new ApiHttpError(429))).toBe(RATE_LIMIT_DEFAULT_RETRY_MS);
+    expect(rateLimitRetryAfterMs(new ApiHttpError(409))).toBeNull();
+  });
+
+  it("words the wait per effect and never shows the server's string", async () => {
+    fetchMock.mockResolvedValueOnce(rateLimited("30"));
+    const err = await requestApi("POST", "/book/intro", { name: "A" }).catch((e) => e);
+    expect(apiFailureMessage(err, "booking")).toEqual({ message: API_MESSAGES.rateLimitedBooking, retry: false });
+    expect(apiFailureMessage(err, "read")).toEqual({ message: API_MESSAGES.rateLimitedRead, retry: true });
+    expect(apiFailureMessage(err, "write")).toEqual({ message: API_MESSAGES.rateLimitedWrite, retry: false });
+    for (const effect of ["read", "write", "booking"] as const) {
+      const { message } = apiFailureMessage(err, effect);
+      expect(message).not.toMatch(/rate limit|429|too many|throttl/i);
+      // Never the not-found / no-longer-available shape.
+      expect(message).not.toMatch(/doesn't exist|no longer|not found|unavailable/i);
+    }
+  });
+
+  it.each([
+    ["absent", undefined, null],
+    ["empty", "   ", null],
+    ["a word", "soon", null],
+    ["negative", "-5", null],
+    ["fractional", "30.5", null],
+    ["absurdly long", "86400", null],
+    ["an HTTP-date beyond the ceiling", new Date(Date.now() + 86_400_000).toUTCString(), null],
+    ["zero", "0", 0],
+    ["an HTTP-date already past", new Date(Date.now() - 60_000).toUTCString(), 0],
+    ["the booking limiter's ceiling", "600", 600_000],
+  ])("parses %s", (_name, raw, expected) => {
+    expect(parseRetryAfterMs(raw as string | undefined)).toBe(expected);
   });
 });

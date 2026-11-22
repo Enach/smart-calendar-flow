@@ -1,8 +1,31 @@
+import { useEffect, useState } from "react";
 import { AlertCircle, RotateCcw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { apiFailureMessage, classifyApiFailure, type ApiEffect } from "@/api/client";
+import { apiFailureMessage, classifyApiFailure, rateLimitRetryAfterMs, type ApiEffect } from "@/api/client";
 import { cn } from "@/lib/utils";
+
+/**
+ * NEW-booking-rate-limit: a retry offered after a 429 waits out the server's
+ * `Retry-After` (its own default when the answer carried none) before it can
+ * be pressed, so the retry never spends the budget that is already gone.
+ * Returns true for every other failure: nothing to wait for.
+ */
+function useRetryAllowed(error: unknown): boolean {
+  const waitMs = rateLimitRetryAfterMs(error);
+  const [allowed, setAllowed] = useState(waitMs === null || waitMs <= 0);
+  useEffect(() => {
+    if (waitMs === null || waitMs <= 0) {
+      setAllowed(true);
+      return;
+    }
+    setAllowed(false);
+    const timer = setTimeout(() => setAllowed(true), waitMs);
+    return () => clearTimeout(timer);
+    // `error` identity: a refetch that is refused again restarts the wait.
+  }, [error, waitMs]);
+  return allowed;
+}
 
 /**
  * PAC-83 (spec §3.4, contract §5.1): an inline failure shown where the action
@@ -30,6 +53,7 @@ export function ApiErrorNotice({
   className?: string;
 }) {
   const kind = classifyApiFailure(error);
+  const retryAllowed = useRetryAllowed(error);
   if (kind === "cancelled") return null;
   const failure = apiFailureMessage(error, effect, shorten);
   return (
@@ -52,7 +76,7 @@ export function ApiErrorNotice({
           variant="outline"
           data-testid="api-error-retry"
           onClick={onRetry}
-          disabled={retrying}
+          disabled={retrying || !retryAllowed}
           className="shrink-0"
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" /> Try again

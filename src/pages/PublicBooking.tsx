@@ -37,15 +37,6 @@ import {
   zoneOffsetLabel,
 } from "@/lib/timeZone";
 
-// NEW-booking-rate-limit: the server answers 429 when one client books or
-// looks up times too often. The booker sees a plain wait-and-retry message, not
-// the server's string. The exact wait (Retry-After) is not readable
-// cross-origin and is not needed here.
-const BOOKING_RATE_LIMITED_MESSAGE =
-  "You've made too many attempts in a short time. Please wait a few minutes, then try again — your details are kept.";
-const SLOTS_RATE_LIMITED_MESSAGE =
-  "Too many requests for available times. Please wait a minute, then retry.";
-
 /** PAC-88 (contract section 2.4): the server's 400 for a zone its tz database lacks. */
 const DISPLAY_ZONE_REFUSED = "invalid display_time_zone, use an IANA time zone name";
 /** PAC-88 (spec 3.8): the link's zone changed and re-reading it did not settle it. */
@@ -389,9 +380,12 @@ export default function PublicBooking() {
         return;
       }
       const detail = isApiHttpError(e) ? apiErrorMessage(e) : null;
-      if (status === 429) {
-        // Keep the chosen slot and the typed details; no refetch, no alarm.
-        setSubmitError(BOOKING_RATE_LIMITED_MESSAGE);
+      if (kind === "rate-limited") {
+        // NEW-booking-rate-limit: nothing was looked up and nothing was
+        // written, so the booking was certainly not made. Keep the chosen slot
+        // and the typed details; no refetch, no alarm, no "Try again" that
+        // would re-send this attempt — the booker presses Confirm again.
+        setSubmitError(API_MESSAGES.rateLimitedBooking);
       } else if (status === 409) {
         setSubmitError(detail ?? "This slot was just taken — please pick another time.");
         setSelectedSlot(null);
@@ -451,12 +445,20 @@ export default function PublicBooking() {
   if (linkQuery.isError) {
     const err = linkQuery.error as unknown;
     const kind = classifyApiFailure(err);
-    if (kind === "lost" || kind === "budget") {
+    if (kind === "lost" || kind === "budget" || kind === "rate-limited") {
       // PAC-83 AC-10: the link may well exist — never "Link not found".
+      //
+      // NEW-booking-rate-limit: a 429 on the link lookup proves even less — the
+      // limiter refused before the slug was looked up at all (contract
+      // BookingSlotsRateLimited, which `getPublicLinkInfo` shares), so the
+      // heading must not say the link could not be loaded either. The notice's
+      // own retry waits out Retry-After before it can be pressed.
       return (
         <div className="flex min-h-screen items-center justify-center bg-background px-4">
           <div className="w-full max-w-md text-center">
-            <h1 className="font-serif text-3xl text-foreground">We couldn't load this link</h1>
+            <h1 className="font-serif text-3xl text-foreground">
+              {kind === "rate-limited" ? "Just a moment" : "We couldn't load this link"}
+            </h1>
             <ApiErrorNotice
               className="mt-4 text-left"
               error={err}
@@ -734,7 +736,6 @@ export default function PublicBooking() {
                       className="mb-3"
                       error={overviewQuery.error}
                       effect="read"
-                      message={httpStatus(overviewQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
                       onRetry={() => void overviewQuery.refetch()}
                       retrying={overviewQuery.isFetching}
                     />
@@ -806,7 +807,6 @@ export default function PublicBooking() {
                       className="mb-3"
                       error={daySlotsQuery.error}
                       effect="read"
-                      message={httpStatus(daySlotsQuery.error) === 429 ? SLOTS_RATE_LIMITED_MESSAGE : undefined}
                       onRetry={() => void daySlotsQuery.refetch()}
                       retrying={daySlotsQuery.isFetching}
                     />

@@ -14,7 +14,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { dayButton, dayButtons, findPageTitle, queryTimeButtons } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
-import { ApiHttpError } from "@/api/client";
+import { API_MESSAGES, ApiHttpError, ApiRateLimitedError } from "@/api/client";
 import { schedulingLinksApi, type PublicSlotsAnswer, type PublicSlotsParams } from "@/api/schedulingLinks";
 import type { BookingConfirmation, PublicLinkInfo } from "@/api/types";
 import { groupStartsByDay, wallTimeInZone } from "@/lib/timeZone";
@@ -426,7 +426,7 @@ describe("PAC-88 days of the displayed zone", () => {
     expect(screen.queryByTestId("api-error")).not.toBeInTheDocument();
   });
 
-  it("AC-16a: a failed overview leaves no day selectable and shows the PAC-83 error with retry; a 429 keeps the rate-limit text", async () => {
+  it("AC-16a: a failed overview leaves no day selectable and shows the PAC-83 error with retry; a 429 gets the wait-and-retry text", async () => {
     at("2027-01-04T10:00:00Z");
     linkIs(PARIS_LINK);
     const offered = gridStarts("2027-01-11", [9, 0], [10, 0], "Europe/Paris");
@@ -439,9 +439,12 @@ describe("PAC-88 days of the displayed zone", () => {
     await findPageTitle("Intro call");
     const notice = await screen.findByTestId("api-error");
     expect(dayCell("2027-01-11")).toBeDisabled();
-    failure = new ApiHttpError(429, { error: "rate limit exceeded" });
+    // NEW-booking-rate-limit: Retry-After 0 so this test's retry chain is not
+    // the one waiting out the delay (PublicBooking.test.tsx covers that).
+    failure = new ApiRateLimitedError({ error: "rate limit exceeded" }, "0");
     fireEvent.click(within(notice).getByTestId("api-error-retry"));
-    expect(await screen.findByText(/too many requests for available times/i)).toBeInTheDocument();
+    expect(await screen.findByText(API_MESSAGES.rateLimitedRead)).toBeInTheDocument();
+    expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
     failure = null;
     fireEvent.click(screen.getByTestId("api-error-retry"));
     await pickDay("2027-01-11");
