@@ -1,5 +1,5 @@
 {
-  "setup": ["npm ci"],
+  "setup": ["npm ci --legacy-peer-deps"],
   "devServer": { "command": "npm run dev", "port": 8080 },
   "checks": [
     "npm run typecheck",
