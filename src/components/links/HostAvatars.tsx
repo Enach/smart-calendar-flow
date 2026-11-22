@@ -1,4 +1,4 @@
-import { Clock } from "lucide-react";
+import { Clock, User } from "lucide-react";
 import type { SchedulingHost } from "@/api/types";
 
 interface HostAvatarsProps {
@@ -8,6 +8,13 @@ interface HostAvatarsProps {
   overlap?: boolean;
   /** Show a clock icon ring around pending co-hosts. */
   showPending?: boolean;
+  /**
+   * Who is reading. "owner" is the signed-in owner's own screens, where a
+   * host's address is theirs to see. "public" is the unauthenticated booking
+   * page: 2026-11-22 audit, finding 4 — `/book/:slug` is guessable, so nothing
+   * rendered there may name a host by address. Defaults to "owner".
+   */
+  audience?: "owner" | "public";
 }
 
 const SIZE: Record<NonNullable<HostAvatarsProps["size"]>, string> = {
@@ -37,7 +44,7 @@ function paletteFor(seed: string) {
   return PALETTE[n];
 }
 
-export function HostAvatars({ hosts, size = "sm", overlap = false, showPending = true }: HostAvatarsProps) {
+export function HostAvatars({ hosts, size = "sm", overlap = false, showPending = true, audience = "owner" }: HostAvatarsProps) {
   if (!hosts.length) return null;
   return (
     <div className="flex items-center">
@@ -48,7 +55,12 @@ export function HostAvatars({ hosts, size = "sm", overlap = false, showPending =
         // were sent — so what the owner sees does not depend on accounts.
         // `pending` drives only the clock ring and the "awaiting" wording.
         const byAddressOnly = h.status === "pending" || h.status === "declined";
-        const label = byAddressOnly ? h.email : h.name || h.email;
+        // 2026-11-22 audit, finding 4: on the public booking page a host is
+        // named by display name only. With no name it is a nameless host —
+        // never an address, and never initials read off one.
+        const isPublic = audience === "public";
+        const nameless = isPublic && !h.name?.trim();
+        const label = isPublic ? h.name?.trim() || "Host" : byAddressOnly ? h.email : h.name || h.email;
         return (
           <div
             key={h.email + i}
@@ -62,8 +74,10 @@ export function HostAvatars({ hosts, size = "sm", overlap = false, showPending =
             >
               {h.avatar_url && !byAddressOnly ? (
                 <img src={h.avatar_url} alt="" className="h-full w-full rounded-full object-cover" />
+              ) : nameless ? (
+                <User className="h-1/2 w-1/2" aria-hidden="true" />
               ) : (
-                initials(byAddressOnly ? undefined : h.name, h.email)
+                initials(byAddressOnly ? undefined : h.name, isPublic ? undefined : h.email)
               )}
             </div>
             {pending && (
