@@ -4,6 +4,13 @@
  * Instants stay absolute (UTC `Z`), so every calendar client shows them in its
  * own zone (PAC-88 spec 3.6, unchanged). Only the file name carries a date:
  * the start's date in the zone the visitor booked in (AC-30).
+ *
+ * This is the one place on the public booking path that legitimately needs a
+ * host's address: ORGANIZER and ATTENDEE are CAL-ADDRESS properties (RFC 5545
+ * sections 3.8.4.3 and 3.8.4.1) and a calendar client needs a real reply-to in
+ * them. It is a value written into a file the booker asked for, not something
+ * the page displays, so it stays. What it must not do is throw when a host
+ * reaches it with no address.
  */
 import type { BookingConfirmation } from "@/api/types";
 import { dateKeyInZone } from "@/lib/timeZone";
@@ -55,9 +62,12 @@ export function buildIcs(conf: BookingConfirmation, now: Date = new Date()): str
     `SUMMARY:${icsText(conf.title)}`,
     `DESCRIPTION:${icsText(`Booked via Paceday${conf.notes ? `\n\n${conf.notes}` : ""}`)}`,
     `ORGANIZER;CN=${icsParam(conf.hosts[0]?.name || conf.hosts[0]?.email || "")}:mailto:${icsAddress(conf.hosts[0]?.email || "")}`,
+    // ORGANIZER above already degrades to an empty CAL-ADDRESS for a host with
+    // no address; ATTENDEE now does the same instead of throwing on one. A host
+    // with an address is unaffected: `|| ""` only chooses what to escape.
     ...conf.hosts.map(
       (h) =>
-        `ATTENDEE;CN=${icsParam(h.name || h.email)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${icsAddress(h.email)}`,
+        `ATTENDEE;CN=${icsParam(h.name || h.email || "")};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${icsAddress(h.email || "")}`,
     ),
     `ATTENDEE;CN=${icsParam(conf.booker_name)};ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:${icsAddress(conf.booker_email)}`,
     "END:VEVENT",

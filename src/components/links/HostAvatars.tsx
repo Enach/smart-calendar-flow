@@ -38,10 +38,17 @@ const PALETTE = [
   "bg-destructive/15 text-[#A33333]",
 ];
 
-function paletteFor(seed: string) {
-  let n = 0;
-  for (let i = 0; i < seed.length; i++) n = (n + seed.charCodeAt(i)) % PALETTE.length;
-  return PALETTE[n];
+/**
+ * A host's colour comes from its position in the list, not from its address.
+ * `PublicHost` carries no id (`src/api/generated/schemas.types.d.ts`: email,
+ * name, avatar_url), so position is the only stable discriminator the public
+ * booking page has — and unlike the address it is not identifying data, and it
+ * survives the address leaving the DTO. The cost is that the colours follow
+ * positions rather than people: a host whose rank in the response changes gets
+ * a different colour. An opaque host id in the DTO would fix that properly.
+ */
+function paletteFor(index: number) {
+  return PALETTE[index % PALETTE.length];
 }
 
 export function HostAvatars({ hosts, size = "sm", overlap = false, showPending = true, audience = "owner" }: HostAvatarsProps) {
@@ -63,12 +70,17 @@ export function HostAvatars({ hosts, size = "sm", overlap = false, showPending =
         const label = isPublic ? h.name?.trim() || "Host" : byAddressOnly ? h.email : h.name || h.email;
         return (
           <div
-            key={h.email + i}
+            // The list key is positional for the same reason as the colour: a
+            // host has no id, and the address is not an identity. Nothing here
+            // holds state of its own — no input, no uncontrolled node — so a
+            // positional key only means React updates a chip in place instead
+            // of remounting it.
+            key={i}
             className={`group relative ${overlap && i > 0 ? "-ml-2" : i > 0 ? "ml-1" : ""}`}
             title={pending ? `${label} — awaiting acceptance` : label}
           >
             <div
-              className={`flex items-center justify-center rounded-full font-semibold ring-2 ring-card ${SIZE[size]} ${paletteFor(h.email)} ${
+              className={`flex items-center justify-center rounded-full font-semibold ring-2 ring-card ${SIZE[size]} ${paletteFor(i)} ${
                 pending ? "opacity-70 ring-muted-foreground/30 grayscale-[40%]" : ""
               }`}
             >
