@@ -1,3 +1,7 @@
 # Generated from the OpenAPI contract and checked byte for byte by
 # `make openapi-check`: keep LF on every platform, including autocrlf checkouts.
 src/api/generated/*.ts text eol=lf
+
+# Shell scripts run under bash; CRLF breaks them on autocrlf checkouts
+# (CodeDen worktrees on Windows included).
+*.sh text eol=lf
