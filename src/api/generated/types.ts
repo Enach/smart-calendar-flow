@@ -1765,7 +1765,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Public metadata for a bookable scheduling link. */
+        /**
+         * Public metadata for a bookable scheduling link.
+         * @description Rate limited per client on the slot-listing budget, which it shares with `getPublicBookingSlots`: at most 120 requests per client per fixed 1-minute window across both operations and all links. The limit is checked and the request counted atomically as the handler's first statement, before the link lookup, so every request counts whatever it would otherwise have answered (200, 404, 410 or 500) and a refused request answers 429 even for an unknown slug — it cannot tell a slug that exists from one that does not. Client identification, the per-process caveat and the sweep are exactly as described on `createPublicBooking`. This operation answers with every accepted host's address, and until the 2026-11-22 security audit it had no limiter at all: with default slugs of the shape "{first-name}-{duration}min" an unauthenticated first-name dictionary sweep harvested each host's email, name, avatar and calendar-connection coverage at any rate. Generated slugs now carry 32 bits of entropy as well (see `createSchedulingLink`); slugs issued before that keep resolving unchanged.
+         */
         get: operations["getPublicLinkInfo"];
         put?: never;
         /**
@@ -3487,7 +3490,7 @@ export interface paths {
         put?: never;
         /**
          * Create a scheduling link owned by the caller.
-         * @description The caller is inserted as an `accepted` host. An empty/omitted `slug` is auto-generated from the owner's name.
+         * @description The caller is inserted as an `accepted` host. An empty/omitted `slug` is auto-generated from the owner's name, their first duration and 8 random hexadecimal characters: "{first-name}-{duration}min-{8 hex}", e.g. "nicolas-30min-3f9a1c04". The entropy is the slug's secret (2026-11-22 security audit, finding 2): before it a default slug was exactly "{first-name}-{duration}min", so an unauthenticated first-name dictionary sweep of `getPublicLinkInfo` harvested every host's address. Only generation changed: no stored slug was rewritten, every slug issued before keeps resolving, and an explicit `slug` is still taken exactly as sent. An owner whose name holds nothing usable (a provider that sent no `name` at all, or a name no character of which survives slug normalisation) gets the stem "meet" rather than the 500 that shape used to produce.
          *     PAC-71 (spec §3 "What standing allows", AC-28, AC-29, AC-40, AC-43; D-5, D-17): an entry of `co_host_emails` resolves to an account only when exactly one account holds that address DOMAIN-CONFIRMED (compared case-insensitively); an address carried only unconfirmed, by several accounts (letter-case collision), or by none cannot be invited. Superseded by PAC-149 (below): no entry is resolved to an account any more.
          *
          *     PAC-112 (spec §3.4-§3.8, D-2, D-4, D-8; contract contracts/features/PAC-112.md §2-§4): the create is all or nothing. The link, the owner's `accepted` host row and every co-host invitation are written in one transaction, opened with or without a session guard (with one, the PAC-71 re-check stays its first statement), whose lock waits are bounded at 10 seconds each as on PATCH (PAC-101): the answer is either 201 with all of them or an error with none of them (no link, no host row). A failed owner-host write, a failed co-host lookup and a failed co-host write are each the 500 with nothing created (before PAC-112 the first left the link created and the other two were silently skipped). Each listed entry gets an outcome, reported in the 201's `co_host_changes` (present exactly when `co_host_emails` is carried, `[]` included): `invited`, `own_address` (the owner's host row stays `accepted`, never demoted to `pending`: API-048's create-path remnant, fixed) or `not_added`; how each is decided is PAC-149's rule below (before PAC-149: by the address's single domain-confirmed holder). `already_host` cannot occur on create. Two entries equal after the trim and `lower()` write one invitation and count once. A list with more than 5 entries is refused 422 unless every entry reaches the owner (on create the owner is the only current host; contract md §3). A blank entry is refused 422.
@@ -4989,7 +4992,7 @@ export interface components {
         CreateSchedulingLinkRequest: {
             /** @description Trimmed. Required in effect - an empty title is a 422. */
             title?: string;
-            /** @description Normalised to lowercase alphanumerics and dashes. When it normalises to the empty string a slug is generated from the owner's name plus the first duration. */
+            /** @description Normalised to lowercase alphanumerics and dashes. When it normalises to the empty string a slug is generated from the owner's name, the first duration and 8 random hexadecimal characters (see the operation description). */
             slug?: string;
             /** @description Canonical spelling. Wins over `durations` whenever it is carried (present and not null), even as `[]`, which is then a 422 "at least one duration is required" whatever `durations` says. Defaults to [30] when both are absent or null. */
             duration_options?: number[] | null;
@@ -6871,6 +6874,8 @@ export interface components {
              * @enum {string}
              */
             calendarProvider: "google" | "outlook" | "webcal";
+            /** @description The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+             *      */
             webcalUrl: string;
             /** @description The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
              *      */
@@ -7025,6 +7030,8 @@ export interface components {
              * @enum {string}
              */
             calendarProvider?: "google" | "outlook" | "webcal";
+            /** @description The iCalendar feed this user's `webcal` calendar provider reads. Stored encrypted (PAC-84) and served back to its own owner. The backend fetches it, so since the security audit of 2026-11-22 a value is refused unless it is a webcal/webcals/http/https URL without credentials whose host is not, and cannot only be, an address inside the deployment's own network - see SettingsValidationError for the two messages.
+             *      */
             webcalUrl?: string;
             /** @description The address of THIS user's connected calendar. Before PAC-24 the auth-status handler served the singleton row's value to everyone (API-009).
              *      */
@@ -7851,7 +7858,7 @@ export interface components {
                 "application/json": components["schemas"]["BookingRateLimitError"];
             };
         };
-        /** @description The client has already made 120 requests to `getPublicBookingSlots` in its current 1-minute window (NEW-booking-rate-limit). Nothing was looked up. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 60. Not exposed to cross-origin pages, as for `BookingCreateRateLimited`. */
+        /** @description The client has already made 120 requests to `getPublicBookingSlots` and `getPublicLinkInfo` together in its current 1-minute window (NEW-booking-rate-limit; `getPublicLinkInfo` joined this budget with the 2026-11-22 security audit, finding 2). Nothing was looked up. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 60. Not exposed to cross-origin pages, as for `BookingCreateRateLimited`. */
         BookingSlotsRateLimited: {
             headers: {
                 /** @description Delay-seconds form of RFC 9110 section 10.2.3 (never the HTTP-date form): seconds remaining in the client's slot-listing window, rounded up. */
@@ -7976,7 +7983,7 @@ export interface components {
                 "application/json": components["schemas"]["RequestBudgetExpiredError"];
             };
         };
-        /** @description Validation failure from validateSchedulingLink / parseClock. Messages: "title is required"; "at least one duration is required"; "durations must be positive integers"; "at least one day is required"; "days_of_week must contain values between 0 and 6"; "window times must use HH:MM"; "window_start must be before window_end"; "buffers must be zero or positive"; "min_notice_minutes must be zero or positive"; "usage_type must be reusable, recurring, or single_use"; "max_uses must be set to a positive integer for recurring links"; "slug cannot be empty" (PATCH only); "booking_horizon_days must be between 1 and 365"; "refusal_message must be generic or specific" (both PAC-72 revision 2). PAC-112 (spec D-9; each also writes nothing): "days contains an unrecognised day name" (API-053: the `days` alias is used, i.e. `days_of_week` is absent or null, and at least one entry is not a recognised name; reported before every other field 422: on create before "title is required", on PATCH before "slug cannot be empty", and so instead of "at least one day is required"); "co_host_emails must not contain a blank address"; "a co-host list longer than 5 can only keep or remove co-hosts, and this one names someone who is not a current host of the link" (the over-5 rule; worded so it never reads as "too many" to an owner who only removed someone). */
+        /** @description Validation failure from validateSchedulingLink / parseClock. Messages: "title is required"; "title must not contain line breaks" (the title holds CR, LF or NUL; it is the Subject of the confirmation email and the SUMMARY property of the iCalendar invitation, both line-oriented — 2026-11-22 security audit, finding 1; reported right after "title is required"); "at least one duration is required"; "durations must be positive integers"; "at least one day is required"; "days_of_week must contain values between 0 and 6"; "window times must use HH:MM"; "window_start must be before window_end"; "buffers must be zero or positive"; "min_notice_minutes must be zero or positive"; "usage_type must be reusable, recurring, or single_use"; "max_uses must be set to a positive integer for recurring links"; "slug cannot be empty" (PATCH only); "booking_horizon_days must be between 1 and 365"; "refusal_message must be generic or specific" (both PAC-72 revision 2). PAC-112 (spec D-9; each also writes nothing): "days contains an unrecognised day name" (API-053: the `days` alias is used, i.e. `days_of_week` is absent or null, and at least one entry is not a recognised name; reported before every other field 422: on create before "title is required", on PATCH before "slug cannot be empty", and so instead of "at least one day is required"); "co_host_emails must not contain a blank address"; "a co-host list longer than 5 can only keep or remove co-hosts, and this one names someone who is not a current host of the link" (the over-5 rule; worded so it never reads as "too many" to an owner who only removed someone). */
         SchedulingLinkValidationError: {
             headers: {
                 [name: string]: unknown;
@@ -8021,6 +8028,7 @@ export interface components {
          *     Messages PAC-66 adds, each produced only when the write CHANGES the property to a non-empty value (`""` is always accepted, spec AC-15; the two `gcpLocation` messages are gone with the property, NEW-llm-bring-your-own): `azureEndpoint must be an https URL whose host is approved for azure_openai on this deployment` (an unapproved host, a scheme other than `https`, a port other than 443, userinfo, or a value that does not parse as an absolute URL); `azureEndpoint cannot be set: azure_openai is not enabled on this deployment` (the operator approved no Azure host); `awsRegion must be a valid AWS region name`. Each names the property first, so a client can attach it to the field.
          *     Message PAC-66-B adds, as changed by NEW-llm-bring-your-own, under the same changed-and-non-empty rule (`""` is always accepted): `llmBaseUrl must be an OpenAI or Anthropic destination approved on this deployment` (a value approved for neither provider, a path other than an approved gateway prefix, a query, fragment, userinfo or whitespace; spec AC-18, PAC-66-B AC-B3, AC-B6, AC-B19). The two `ollamaBaseUrl` messages are gone with the property.
          *     Messages NEW-llm-bring-your-own adds: `llmProvider unsupported cannot be chosen: choose off, organization or a key-based provider` (a write of `unsupported` onto a row that does not already read as `unsupported`); `llmApiKey cannot be set: choose openai, anthropic, azure_openai, bedrock or vertex as llmProvider first` (a non-empty `llmApiKey` when the provider after the write is `""`, `organization` or `unsupported`); `llmUnboundApiKey must be "" (it can only remove the key bound to no provider)` (any `llmUnboundApiKey` value other than `""`; a non-string is `invalid JSON: llmUnboundApiKey has the wrong type`). A removed property (`awsProfile`, `gcpProject`, `gcpLocation`, `ollamaBaseUrl`, `ollamaModel`) is the existing `unknown property: <name>`.
+         *     Messages the security audit of 2026-11-22 adds, under the same changed-and-non-empty rule (`""` is always accepted, and clears the feed). `webcalUrl` was the one user-supplied URL the backend fetches that nothing validated, so any address reachable from the deployment network could be stored and then fetched - on demand through `/api/personal-calendars/{id}/preview` and every 30 minutes by the personal-blocker cron (SSRF): `webcalUrl must be a webcal, webcals, http or https URL with no credentials` (a value that does not parse, an opaque URL, userinfo, no host, or any other scheme - `file:`, `gopher:`, `ftp:`); `webcalUrl must not point at a loopback, link-local or private address` (a host that is an address literal outside the public set - loopback, RFC 1918, IPv6 unique-local, link-local including 169.254.169.254, unspecified, multicast, RFC 6598, NAT64/6to4/Teredo - or a name that can only be local: `localhost` and anything under it, a single-label intranet name, or a final label with no letter such as an address written as a decimal integer). The same two messages, with `url` in place of `webcalUrl`, are the 400s of POST and PATCH `/api/personal-calendars`. A name is otherwise accepted whatever it resolves to: the control is the egress guard, which judges the literal address of every feed connection at the moment it is made, so a name that resolves publicly at write time and privately at fetch time is still refused (`backend/calendar/feed_guard.go`). A deployment that declares test mode (`PACEDAY_ALLOW_STANDINS=true`, the e2e stack) accepts private addresses and single-label names at both layers, and says so at startup; production fails closed.
          *     `""` is NOT in this catalogue for `workStart`, `workEnd`, `lunchStart` or `lunchEnd`. It is a valid value for all four, on read and on write (spec AC-7); the handler already skips the format check for it (`backend/api/handlers_settings.go:75`).
          *      */
         SettingsValidationError: {
@@ -9923,6 +9931,7 @@ export interface operations {
                     "application/json": components["schemas"]["BookingError"];
                 };
             };
+            429: components["responses"]["BookingSlotsRateLimited"];
             /** @description Storage failure. Body: {"error":"internal error"}. Includes a failed read of the link owner's settings, needed for `time_zone` (PAC-72 revision 3.1): never answered with the UTC fallback. Includes a failed read of the link's accepted hosts or of a host's user record (PAC-122 SF-027): never a 200 with `hosts` emptied, a host left out or `coverage.total` undercounted. */
             500: {
                 headers: {
@@ -9962,7 +9971,7 @@ export interface operations {
                     "application/json": components["schemas"]["PublicBookingConfirmation"];
                 };
             };
-            /** @description Validation failure, checked before the offerable-start rule (a 400 is never turned into a 409). Messages: "invalid request body"; "name, email, and start are required"; "invalid start time, use RFC3339"; "invalid end time, use RFC3339"; "duration does not match end time" (`end` sent together with `duration` or `duration_minutes`, and end - start is not exactly that many minutes, seconds and fractions included); "invalid duration" (the resolved length is not exactly a whole number of minutes that is one of the link's durations, or 30 when the link has none; never rounded or truncated to an accepted duration); "end must be after start" (reachable only when the end computed from `duration_minutes` overflows, which needs a link duration option above about 153,722,867 minutes; an ordinary end at or before start answers "duration does not match end time" or "invalid duration" instead). PAC-82: "invalid Idempotency-Key header" when the header is present, not empty, and not 16 to 255 characters from `A-Z a-z 0-9 - _`, or when it is sent more than once (two or more field lines, even identical); checked after the 404 and before the body is read, nothing written. With a valid key, "invalid duration" for a duration that is not one of the link's is checked after the replay decision and the 410 (a replay is never turned into this 400); every other message keeps its place. */
+            /** @description Validation failure, checked before the offerable-start rule (a 400 is never turned into a 409). Messages: "invalid request body"; "name, email, and start are required"; "name must not contain line breaks" (`name` holds CR, LF or NUL); "email must be a valid email address" (`email` is not exactly one address: a display name, a second address, a line break, surrounding space or over 254 octets are all refused; RFC 5321 §4.5.3.1.3 counts octets, and an address is never shortened to fit — a shortened address is somebody else's) — both from the 2026-11-22 security audit, finding 1, checked right after the required check and before `start` is parsed, because the booker's name and address reach the To header and Subject of the confirmation email and the ATTENDEE property of the iCalendar invitation it carries; "invalid start time, use RFC3339"; "invalid end time, use RFC3339"; "duration does not match end time" (`end` sent together with `duration` or `duration_minutes`, and end - start is not exactly that many minutes, seconds and fractions included); "invalid duration" (the resolved length is not exactly a whole number of minutes that is one of the link's durations, or 30 when the link has none; never rounded or truncated to an accepted duration); "end must be after start" (reachable only when the end computed from `duration_minutes` overflows, which needs a link duration option above about 153,722,867 minutes; an ordinary end at or before start answers "duration does not match end time" or "invalid duration" instead). PAC-82: "invalid Idempotency-Key header" when the header is present, not empty, and not 16 to 255 characters from `A-Z a-z 0-9 - _`, or when it is sent more than once (two or more field lines, even identical); checked after the 404 and before the body is read, nothing written. With a valid key, "invalid duration" for a duration that is not one of the link's is checked after the replay decision and the 410 (a replay is never turned into this 400); every other message keeps its place. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12361,7 +12370,7 @@ export interface operations {
                     "application/json": components["schemas"]["PersonalCalendar"];
                 };
             };
-            /** @description `invalid body` (unparseable JSON) or `provider required`. */
+            /** @description `invalid body` (unparseable JSON), `provider required`, or one of the two feed-URL refusals the security audit of 2026-11-22 adds - `url must be a webcal, webcals, http or https URL with no credentials` and `url must not point at a loopback, link-local or private address`. A non-empty `url` is judged whatever the provider, because the backend fetches it (preview, and the personal-blocker cron every 30 minutes); `""` is accepted, and so is any ordinary name, which the egress guard judges again at connection time. The same rule and messages apply to `settings.webcalUrl` - see SettingsValidationError for the full statement of it. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -12472,7 +12481,7 @@ export interface operations {
                     "application/json": components["schemas"]["PersonalCalendar"];
                 };
             };
-            /** @description `invalid id` or `invalid body`. */
+            /** @description `invalid id`, `invalid body`, or either feed-URL refusal of POST (a PATCH that re-points `url` is the same sink); the stored row is then unchanged. */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -13942,7 +13951,7 @@ export interface operations {
                     "application/json": components["schemas"]["Team"];
                 };
             };
-            /** @description JSON error "name is required" — covers both a malformed body and a blank/ whitespace-only name (one branch, one message).
+            /** @description JSON error "name is required" — covers both a malformed body and a blank/ whitespace-only name (one branch, one message). Or "name must not contain line breaks" when the name holds CR, LF or NUL: the team's name is interpolated into the Subject header of every invitation the team sends, where a line break would end the header and let the rest of the name write headers and a body of its own (2026-11-22 security audit, finding 1). Checked after the blank check, so a blank name keeps its message; nothing is written either way.
              *      */
             400: {
                 headers: {
@@ -14167,7 +14176,8 @@ export interface operations {
                     "application/json": components["schemas"]["Team"];
                 };
             };
-            /** @description JSON error "invalid team id" or "name is required". */
+            /** @description JSON error "invalid team id", "name is required", or "name must not contain line breaks" when the name holds CR, LF or NUL (the same rule and reason as on createTeam; nothing is renamed).
+             *      */
             400: {
                 headers: {
                     [name: string]: unknown;
