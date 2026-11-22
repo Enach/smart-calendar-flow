@@ -2,6 +2,7 @@ import type { ApiPort, CalendarEventDTO, CompressionApplyResponse, ScheduleSugge
 import {
   AIStatus as AIStatusSchema,
   CalendarDisconnectUnsupported,
+  CalendarEventConference as CalendarEventConferenceSchema,
   CalendarNotConnectedError,
   ConnectStartResponse as ConnectStartResponseSchema,
   OrganizationAIConfiguration as OrganizationAIConfigurationSchema,
@@ -17,6 +18,7 @@ import {
 } from "./generated/schemas";
 import type { SsoStepupProvider, SsoStepupPurpose, SsoStepupScopes } from "./generated/schemas";
 import { apiUrl } from "@/lib/api";
+import { safeLinkUrl } from "@/lib/linkScheme";
 import { demoOrReal } from "./demoGate";
 
 import type {
@@ -1038,6 +1040,27 @@ export function normalizeAttendees(raw: unknown): {
   };
 }
 
+/**
+ * An event's conference block is invite data like its description, and the UI
+ * builds a `Join meeting` href straight out of `url`, so it is checked here
+ * rather than at render time (read-only security audit, 2026-11-22):
+ *  - the contract's own schema for the shape, strict as everywhere else, so a
+ *    block that is not a CalendarEventConference never reaches the UI;
+ *  - the link allowlist for the scheme, because the schema's `z.url()` accepts
+ *    anything `new URL()` parses, `javascript:` included.
+ *
+ * A block that fails either check is dropped: the event keeps its row and
+ * loses only its Join button, the same way a malformed attendee is skipped
+ * above instead of fabricated.
+ */
+function normalizeConference(raw: unknown): ConferenceLink | undefined {
+  const parsed = CalendarEventConferenceSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const url = safeLinkUrl(parsed.data.url);
+  if (!url) return undefined;
+  return { ...parsed.data, provider: parsed.data.provider as ConferenceProvider, url };
+}
+
 export function normalizeEvents(raw: unknown): CalendarEvent[] {
   if (!Array.isArray(raw)) return [];
   return (raw as Array<CalendarEvent & { attendees?: unknown }>).map((ev) => {
@@ -1045,6 +1068,7 @@ export function normalizeEvents(raw: unknown): CalendarEvent[] {
     return {
       ...ev,
       ...(attendees ? { attendees } : {}),
+      ...(ev?.conference !== undefined ? { conference: normalizeConference(ev.conference) } : {}),
       attendee_details: ev?.attendee_details?.length ? ev.attendee_details : attendee_details,
     } as CalendarEvent;
   });

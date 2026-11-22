@@ -1,6 +1,12 @@
 // Parses an event description that may contain a small subset of HTML
 // (typically `<br>` and `<a href="...">...</a>` from Google/Outlook calendars)
 // into a clean structure we can render with proper UI components.
+//
+// The description is attacker-controlled: anyone who can send the user an
+// invite writes it. Every link node therefore goes through the scheme
+// allowlist here, at the parse boundary, so no render site has to remember to.
+
+import { safeLinkUrl } from "@/lib/linkScheme";
 
 export type DescriptionNode =
   | { type: "text"; value: string }
@@ -47,7 +53,8 @@ function linkifyText(text: string): DescriptionNode[] {
 /**
  * Parse a description, normalizing common HTML markup from calendar providers.
  * - `<br>` → newline
- * - `<a href="X">Y</a>` → link node
+ * - `<a href="X">Y</a>` → link node, when X's scheme is allowed; otherwise
+ *   the anchor's text, as plain text
  * - any other tag is stripped
  * - bare URLs in text are linkified
  *
@@ -73,9 +80,13 @@ export function parseDescription(
       const before = stripTags(s.slice(cursor, idx));
       nodes.push(...linkifyText(decodeEntities(before)));
     }
-    const url = decodeEntities(m[1]);
-    const label = decodeEntities(stripTags(m[2])) || url;
-    nodes.push({ type: "link", url, label });
+    const href = decodeEntities(m[1]);
+    const label = decodeEntities(stripTags(m[2])) || href;
+    const url = safeLinkUrl(href);
+    // A scheme we do not allow keeps the anchor's text and loses the link, so
+    // the reader still sees everything the invite said and can click none of it.
+    if (url) nodes.push({ type: "link", url, label });
+    else nodes.push({ type: "text", value: label });
     cursor = idx + m[0].length;
   }
   if (cursor < s.length) {
