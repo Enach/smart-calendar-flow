@@ -104,6 +104,143 @@ export class ApiHttpError extends Error {
 }
 
 /**
+ * NEW-booking-rate-limit (clockwise-like#332): the per-client limiter refused
+ * the request. Every operation that declares a 429 says nothing was looked up
+ * and nothing was written, so a refusal is always safe to repeat later. The
+ * three public booking routes that declare one:
+ *
+ *   GET  /api/book/{slug}        getPublicLinkInfo      BookingSlotsRateLimited
+ *   GET  /api/book/{slug}/slots  getPublicBookingSlots  BookingSlotsRateLimited
+ *   POST /api/book/{slug}        createPublicBooking    BookingCreateRateLimited
+ *
+ * Nothing here is keyed on the operation: `interpretResponse` raises this for
+ * any 429 from any call, so a route that starts being limited (or whose
+ * generated entry has not caught up) is handled with no client change.
+ *
+ * The first two share ONE budget — 120 requests per client per fixed 1-minute
+ * window across both operations and all links — and `createPublicBooking` has
+ * its own, 20 per fixed 10-minute window. The client models no budget of its
+ * own, which is what keeps the shared bucket correct: `Retry-After` is the
+ * seconds remaining in that client's window, so waiting it out waits for the
+ * window to END, after which both operations sharing it are clear. A per-call
+ * backoff would have had to know they share a bucket; waiting for the server's
+ * own window boundary cannot get that wrong.
+ *
+ * A subclass of ApiHttpError on purpose: `isApiHttpError`, `e.status` and
+ * every existing 429 branch keep working unchanged. What it adds is the one
+ * thing the body cannot carry — how long to wait, from `Retry-After`.
+ */
+let warnedAboutRetryAfter = false;
+
+export class ApiRateLimitedError extends ApiHttpError {
+  /**
+   * How long before a retry may be sent: the server's `Retry-After` when it
+   * sent a readable one, else RATE_LIMIT_DEFAULT_RETRY_MS.
+   */
+  readonly retryAfterMs: number;
+  /**
+   * Whether `retryAfterMs` came from the answer rather than from the default.
+   * False is not an error — see RATE_LIMIT_DEFAULT_RETRY_MS for when it
+   * happens — but it must never become the normal case unnoticed, so a
+   * development build says so on the console.
+   */
+  readonly retryAfterFromServer: boolean;
+  constructor(data?: unknown, retryAfter?: string | null) {
+    super(429, data, "Rate limited (HTTP 429)");
+    this.name = "ApiRateLimitedError";
+    const parsed = parseRetryAfterMs(retryAfter);
+    this.retryAfterFromServer = parsed !== null;
+    this.retryAfterMs = parsed ?? RATE_LIMIT_DEFAULT_RETRY_MS;
+    if (!this.retryAfterFromServer && import.meta.env.DEV && !warnedAboutRetryAfter) {
+      warnedAboutRetryAfter = true;
+      // Same-origin (production behind nginx, dev behind the vite proxy) this
+      // header is always readable, so seeing this in a same-origin build means
+      // the server stopped sending it, not that the fallback is working.
+      console.warn(
+        `[rate limit] no readable Retry-After on a 429 (header: ${retryAfter ?? "absent"}); waiting ${RATE_LIMIT_DEFAULT_RETRY_MS} ms instead`,
+      );
+    }
+  }
+}
+
+/**
+ * The wait used when the answer carried no readable `Retry-After`.
+ *
+ * Why the branch exists at all: the server sets the header on every 429 path
+ * (one shared helper, declared `required`), but it is deliberately NOT in
+ * `Access-Control-Expose-Headers`, so only a same-origin caller can read it.
+ * Same-origin is the normal deployment (production through nginx, development
+ * through the vite proxy), but the API base is configurable to another origin
+ * (`API_BASE_URL` / `VITE_API_BASE_URL`, a configuration the contract
+ * supports and src/api/client.test.ts exercises); such a deployment sees the
+ * 429 and cannot read the header. A malformed or absurd value lands here too.
+ *
+ * Why 60 s: the full width of the shared link-info/slots window, which is the
+ * only budget that gates a control here (its `Retry-After` is 1..60 s). So the
+ * fallback always waits at least as long as the real wait would have been on
+ * those paths — it can over-wait, never under-wait and re-trip the limiter.
+ * `createPublicBooking`'s window is wider (1..600 s), but its refusal offers no
+ * timed control: the booker presses "Confirm booking" again when they choose,
+ * and a second refusal simply says the same thing again.
+ */
+export const RATE_LIMIT_DEFAULT_RETRY_MS = 60_000;
+/**
+ * Longer than this is not believed: `createPublicBooking`'s ceiling is 600 s
+ * and the shared link-info/slots ceiling 60 s (contract
+ * BookingCreateRateLimited, BookingSlotsRateLimited), so a bigger value is a
+ * broken or hostile header, not a wait to make a visitor sit through.
+ */
+export const RATE_LIMIT_MAX_RETRY_MS = 600_000;
+
+/**
+ * `Retry-After` in milliseconds, or null when it is absent, unparseable or
+ * absurd — the caller then uses its own default rather than failing.
+ *
+ * This API sends delta-seconds and only delta-seconds (declared `required`,
+ * `type: integer`, pinned by the api repo's own tests). The HTTP-date form RFC
+ * 9110 §10.2.3 also allows is read anyway, because tolerating it is two lines
+ * and refusing it would be a silent fallback on any proxy that rewrote the
+ * header; no behaviour here depends on a form the server cannot send. A date
+ * already past, or a zero delay, is 0: the wait is over. Signed or fractional
+ * delta-seconds, anything else unreadable, and anything above
+ * RATE_LIMIT_MAX_RETRY_MS are null.
+ */
+export function parseRetryAfterMs(raw: string | null | undefined, now: number = Date.now()): number | null {
+  if (raw == null) return null;
+  const value = raw.trim();
+  if (value === "") return null;
+  let ms: number;
+  if (/^\d+$/.test(value)) {
+    ms = Number(value) * 1000;
+  } else if (/^[+-]?\d*\.?\d+$/.test(value)) {
+    // A malformed delta-seconds (signed, fractional). Not an HTTP-date either,
+    // and Date.parse would read "-5" as a year, so refuse it outright.
+    return null;
+  } else {
+    const at = Date.parse(value);
+    if (Number.isNaN(at)) return null;
+    ms = at - now;
+  }
+  if (!Number.isFinite(ms) || ms > RATE_LIMIT_MAX_RETRY_MS) return null;
+  return ms > 0 ? ms : 0;
+}
+
+/** A 429, recognised by status alone (as 413 is). */
+export function isRateLimited(e: unknown): boolean {
+  return isApiHttpError(e) && e.status === 429;
+}
+
+/**
+ * How long to wait before offering a retry of `e`, or null when `e` is not a
+ * rate-limited answer. A 429 that did not come through `interpretResponse`
+ * (so carries no header) gets the default.
+ */
+export function rateLimitRetryAfterMs(e: unknown): number | null {
+  if (e instanceof ApiRateLimitedError) return e.retryAfterMs;
+  return isRateLimited(e) ? RATE_LIMIT_DEFAULT_RETRY_MS : null;
+}
+
+/**
  * A 5xx whose body is not JSON: nginx's 502/504 page, an operator proxy's
  * 502/503/504/52x page, the dev proxy's text/plain 500 (contract §2.3). It
  * proves nothing about what the server did.
@@ -404,7 +541,7 @@ const TEAMS_CONNECT_TEXT: ReadonlyMap<string, string> = new Map([
 
 // ---------- PAC-83: classification and the user-facing wording ----------
 
-export type ApiFailureKind = "cancelled" | "budget" | "too-large" | "lost" | "http";
+export type ApiFailureKind = "cancelled" | "budget" | "too-large" | "rate-limited" | "lost" | "http";
 /** Per operation, never derived from the HTTP method (contract §3.3). */
 export type ApiEffect = "read" | "write" | "booking";
 
@@ -425,13 +562,25 @@ export const API_MESSAGES = {
    */
   retryRefusedBooking:
     "This time can't be booked now. Your earlier attempt may still have been saved — check your email before booking another time.",
+  /**
+   * NEW-booking-rate-limit (clockwise-like#332): a 429. The visitor tripped a
+   * limiter on someone else's host directory; they are told to wait a moment
+   * and ask again, never about limits, attempts or requests. Nothing was
+   * looked up and nothing was written, so the booking wording says plainly
+   * that the booking was not sent — the opposite of `lostBooking` — and the
+   * read wording never suggests the link or the host is gone.
+   */
+  rateLimitedRead: "This isn't ready yet — give it a moment, then try again.",
+  rateLimitedWrite: "This wasn't sent — give it a moment, then try again.",
+  rateLimitedBooking: "Your booking wasn't sent — give it a moment, then confirm again. Your details are kept.",
 } as const;
 
-/** In precedence order: cancelled, budget, too-large, lost, http. */
+/** In precedence order: cancelled, budget, too-large, rate-limited, lost, http. */
 export function classifyApiFailure(e: unknown): ApiFailureKind {
   if (e instanceof ApiRequestCancelledError) return "cancelled";
   if (isBudgetExpired(e)) return "budget";
   if (isRequestTooLarge(e)) return "too-large";
+  if (isRateLimited(e)) return "rate-limited";
   if (isAnswerLost(e)) return "lost";
   return "http";
 }
@@ -451,6 +600,13 @@ export function apiFailureMessage(e: unknown, effect: ApiEffect, shorten?: strin
       return { message: API_MESSAGES.budgetRead, retry: true };
     case "too-large":
       return { message: shorten ? `${API_MESSAGES.tooLarge} Shorten ${shorten}.` : API_MESSAGES.tooLarge, retry: false };
+    case "rate-limited":
+      // Safe to repeat: the limiter refused before looking anything up. A
+      // booking is re-sent by the booker pressing Confirm again, not by a
+      // "Try again" that would re-send the same attempt.
+      if (effect === "booking") return { message: API_MESSAGES.rateLimitedBooking, retry: false };
+      if (effect === "write") return { message: API_MESSAGES.rateLimitedWrite, retry: false };
+      return { message: API_MESSAGES.rateLimitedRead, retry: true };
     case "lost":
       if (effect === "booking") return { message: API_MESSAGES.lostBooking, retry: false };
       if (effect === "write") return { message: API_MESSAGES.lostWrite, retry: false };
@@ -586,6 +742,9 @@ export function interpretResponse<T>(res: Response, text: string): T {
   }
   if (!res.ok) {
     if (res.status >= 500 && (!ct.includes("application/json") || !parsed)) throw new ApiGatewayError(res.status);
+    // NEW-booking-rate-limit: the only place `Retry-After` is still readable —
+    // the four error classes are all the caller ever sees.
+    if (res.status === 429) throw new ApiRateLimitedError(parsed ? data : undefined, res.headers.get("retry-after"));
     throw new ApiHttpError(res.status, parsed ? data : undefined);
   }
   if (res.status === 204) return undefined as T;

@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { findTimeButton, pickFirstSelectableDay } from "@/test/bookingPage";
 import PublicBooking from "./PublicBooking";
-import { ApiHttpError } from "@/api/client";
+import { API_MESSAGES, ApiHttpError, ApiRateLimitedError, RATE_LIMIT_DEFAULT_RETRY_MS } from "@/api/client";
 import type { BookingRateLimitError, BookingSlotUnavailableError } from "@/api/generated/schemas";
 import { schedulingLinksApi, type PublicSlotsParams } from "@/api/schedulingLinks";
 import { toast } from "@/hooks/useToast";
@@ -154,15 +154,31 @@ describe("PublicBooking link gone on submit (PAC-105)", () => {
   });
 });
 
+/** A wait longer than the real Retry-After of the tests that time one out. */
+const SLOW_TEST = 20_000;
+
+/**
+ * NEW-booking-rate-limit (clockwise-like#332). The three public booking calls
+ * that declare a 429 - the link lookup, the slot listing and the booking
+ * submit - all land in the one PAC-83 taxonomy case, so the visitor is never
+ * told about limits, never shown the server's string, and never told the link
+ * is gone. The mapping is on the status, not on the operation.
+ */
 describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("AC-10: a 429 on submit shows a friendly wait message, keeps the booker's input and slot, and neither toasts nor refetches", async () => {
+  /** The server's 429: `{"error":"rate limit exceeded"}` and its Retry-After. */
+  function limited(retryAfter?: string) {
+    return new ApiRateLimitedError(rateLimited, retryAfter);
+  }
+
+  it("AC-10: a 429 on submit says the booking was not sent, keeps the booker's input and slot, and neither toasts nor refetches", async () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
     const slotsSpy = vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => pac88Answer(params));
-    vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(new ApiHttpError(429, rateLimited));
+    // createPublicBooking's own budget: Retry-After is 1..600 s there.
+    vi.spyOn(schedulingLinksApi, "bookSlot").mockRejectedValue(limited("600"));
     const toastError = vi.spyOn(toast, "error");
 
     renderPage();
@@ -175,38 +191,97 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
     fireEvent.click(screen.getByRole("button", { name: /confirm booking/i }));
 
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/too many attempts/i);
-    expect(alert).toHaveTextContent(/wait a few minutes/i);
+    expect(alert).toHaveTextContent(API_MESSAGES.rateLimitedBooking);
+    // Never the server's string, never developer framing, and never the
+    // "may have been saved" doubt: a 429 writes nothing.
     expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
+    expect(alert).not.toHaveTextContent(/too many|429|rate limit|throttl/i);
+    expect(alert).not.toHaveTextContent(/may have been|may or may not/i);
     expect(toastError).not.toHaveBeenCalled();
 
-    // Still on the details step, with everything the booker typed.
-    expect(screen.getByRole("button", { name: /confirm booking/i })).toBeInTheDocument();
+    // A 600-second wait gates no control: Confirm stays pressable rather than
+    // being disabled for ten minutes, and everything typed is still there.
+    expect(screen.getByRole("button", { name: /confirm booking/i })).toBeEnabled();
     expect(screen.getByLabelText("Name", { exact: true })).toHaveValue("Eager Booker");
     expect(screen.getByLabelText("Email", { exact: true })).toHaveValue("eager@co.com");
     expect(screen.getByLabelText(/notes/i)).toHaveValue("About the demo");
     expect(slotsSpy.mock.calls.length).toBe(slotCallsBefore);
   });
 
-  it("AC-11: a 429 on the slot listing shows a friendly wait message with the manual Retry", async () => {
+  it("AC-11: a 429 on the slot listing waits out Retry-After: 1 before its Try again can be pressed", async () => {
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
     // PAC-88: the overview answers; the day listing is the one rate limited.
     let dayAnswers = 0;
     const slotsSpy = vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => {
-      if (params.date && dayAnswers++ === 0) throw new ApiHttpError(429, rateLimited);
+      if (params.date && dayAnswers++ === 0) throw limited("1");
       return pac88Answer(params);
     });
 
     renderPage();
     await pickFirstSelectableDay();
 
-    expect(await screen.findByText(/too many requests for available times/i)).toBeInTheDocument();
-    expect(screen.getByText(/wait a minute/i)).toBeInTheDocument();
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "rate-limited");
+    expect(notice).toHaveTextContent(API_MESSAGES.rateLimitedRead);
     expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
     expect(slotsSpy.mock.calls.filter(([, p]) => p.date).length).toBe(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /try again/i } /* PAC-83: the manual retry is labelled "Try again" (spec §3.4) */));
+    // The retry is offered, but honours the server's delay rather than
+    // immediately spending a budget that is already gone.
+    const retry = within(notice).getByTestId("api-error-retry");
+    expect(retry).toBeDisabled();
+    await waitFor(() => expect(retry).toBeEnabled(), { timeout: 5_000 });
+
+    fireEvent.click(retry);
     expect(await findTimeButton()).toBeInTheDocument();
-    expect(screen.queryByText(/too many requests for available times/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("api-error")).not.toBeInTheDocument();
+  }, SLOW_TEST);
+
+  it("a 429 with no readable Retry-After falls back to the client's own wait, never failing", async () => {
+    // The real case: a deployment whose API base is on another origin cannot
+    // read the header, which is not in Access-Control-Expose-Headers.
+    vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
+    vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => {
+      if (params.date) throw limited();
+      return pac88Answer(params);
+    });
+
+    renderPage();
+    await pickFirstSelectableDay();
+
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "rate-limited");
+    expect(notice).toHaveTextContent(API_MESSAGES.rateLimitedRead);
+    // The fallback covers the whole shared window, so it never under-waits.
+    expect(RATE_LIMIT_DEFAULT_RETRY_MS).toBe(60_000);
+    expect(within(notice).getByTestId("api-error-retry")).toBeDisabled();
+  });
+
+  /**
+   * The gap this session was opened for. `GET /api/book/{slug}` is the first
+   * call a visitor makes and shares the slot-listing budget, so reloading the
+   * page is enough to trip it. Before this change the page rendered the
+   * heading "We couldn't load this link" over the server's own
+   * "rate limit exceeded", with a Try again that re-spent the budget at once.
+   */
+  it("a 429 on the link lookup never renders the not-found or no-longer-available shape", async () => {
+    vi.spyOn(schedulingLinksApi, "getPublicLink").mockRejectedValue(limited("30"));
+    renderPage();
+
+    const notice = await screen.findByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", "rate-limited");
+    expect(notice).toHaveTextContent(API_MESSAGES.rateLimitedRead);
+    expect(screen.getByRole("heading", { name: "Just a moment" })).toBeInTheDocument();
+
+    // Not the 404 shape, not the 410 shape, and not "we couldn't load it".
+    expect(screen.queryByRole("heading", { name: "Link not found" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Link no longer active" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Link no longer available" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /couldn't load this link/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/doesn't exist or is no longer active/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/used up or paused/i)).not.toBeInTheDocument();
+    // Never the server's string, never developer framing.
+    expect(screen.queryByText(/rate limit exceeded/i)).not.toBeInTheDocument();
+    expect(notice).not.toHaveTextContent(/too many|429|rate limit|throttl/i);
   });
 });
