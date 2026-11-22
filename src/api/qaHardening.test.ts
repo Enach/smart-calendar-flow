@@ -47,6 +47,51 @@ describe("event attendee normalization", () => {
   });
 });
 
+describe("event conference normalization", () => {
+  // Read-only security audit, 2026-11-22, finding 1: `conference` is invite
+  // data, and EventDetailView builds the `Join meeting` href out of it.
+  const event = (conference: unknown) => ({
+    id: "1",
+    title: "Sync",
+    start: "2026-05-04T09:00:00Z",
+    end: "2026-05-04T09:30:00Z",
+    conference,
+  });
+
+  it("keeps a conference the contract's schema and the link allowlist both accept", () => {
+    const [ev] = normalizeEvents([
+      event({ provider: "google_meet", url: "https://meet.google.com/abc-defg-hij", label: "Google Meet" }),
+    ]);
+    expect(ev.conference).toEqual({
+      provider: "google_meet",
+      url: "https://meet.google.com/abc-defg-hij",
+      label: "Google Meet",
+    });
+  });
+
+  it("drops a conference whose url carries a scheme we never make clickable", () => {
+    for (const url of ["javascript:alert(1)", "  JavaScript:alert(1)", "data:text/html,x", "vbscript:MsgBox(1)", "//evil.example/j"]) {
+      const [ev] = normalizeEvents([event({ provider: "custom", url })]);
+      expect(ev.conference).toBeUndefined();
+      // The event itself survives: only the Join button goes.
+      expect(ev.title).toBe("Sync");
+    }
+  });
+
+  it("drops a conference that is not the contract's CalendarEventConference", () => {
+    for (const bad of [null, "https://meet.google.com/abc", { url: "https://meet.google.com/abc" }, { provider: "custom" }, { provider: "custom", url: "https://x.test", onclick: "alert(1)" }]) {
+      expect(normalizeEvents([event(bad)])[0].conference).toBeUndefined();
+    }
+  });
+
+  it("leaves an event with no conference alone", () => {
+    const [ev] = normalizeEvents([
+      { id: "1", title: "Sync", start: "2026-05-04T09:00:00Z", end: "2026-05-04T09:30:00Z" },
+    ]);
+    expect("conference" in ev).toBe(false);
+  });
+});
+
 describe("teams list payload shapes", () => {
   beforeEach(() => {
     fetchMock.mockReset();
