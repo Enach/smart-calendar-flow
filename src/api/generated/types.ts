@@ -7847,7 +7847,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description The client has already made 20 requests to `createPublicBooking` in its current 10-minute window (NEW-booking-rate-limit). Nothing was looked up or written. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json, the same envelope and message as the detect limiter's 429. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 600. The header is not listed in `Access-Control-Expose-Headers`, so a page on another origin cannot read it; the web booking page does not need it. */
+        /** @description The client has already made 20 requests to `createPublicBooking` in its current 10-minute window (NEW-booking-rate-limit). Nothing was looked up or written. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json, the same envelope and message as the detect limiter's 429. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 600. The header is listed in `Access-Control-Expose-Headers` (PAC-163), so a page on another origin can read it. */
         BookingCreateRateLimited: {
             headers: {
                 /** @description Delay-seconds form of RFC 9110 section 10.2.3 (never the HTTP-date form): seconds remaining in the client's booking window, rounded up. */
@@ -7858,7 +7858,7 @@ export interface components {
                 "application/json": components["schemas"]["BookingRateLimitError"];
             };
         };
-        /** @description The client has already made 120 requests to `getPublicBookingSlots` and `getPublicLinkInfo` together in its current 1-minute window (NEW-booking-rate-limit; `getPublicLinkInfo` joined this budget with the 2026-11-22 security audit, finding 2). Nothing was looked up. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 60. Not exposed to cross-origin pages, as for `BookingCreateRateLimited`. */
+        /** @description The client has already made 120 requests to `getPublicBookingSlots` and `getPublicLinkInfo` together in its current 1-minute window (NEW-booking-rate-limit; `getPublicLinkInfo` joined this budget with the 2026-11-22 security audit, finding 2). Nothing was looked up. Body: `{"error":"rate limit exceeded"}`, Content-Type application/json. `Retry-After` is the whole number of seconds until the client's window ends, rounded up, never less than 1 and never more than 60. Exposed to cross-origin pages, as for `BookingCreateRateLimited`. */
         BookingSlotsRateLimited: {
             headers: {
                 /** @description Delay-seconds form of RFC 9110 section 10.2.3 (never the HTTP-date form): seconds remaining in the client's slot-listing window, rounded up. */

@@ -138,7 +138,10 @@ describe("SF-004: a failed sign-out is not shown as signed out", () => {
 
     await waitFor(() => expect(screen.getByTestId("who")).toHaveTextContent("anon"), { timeout: SLOW_WAIT });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByTestId("where")).toHaveTextContent(/^\/$/);
+    // The redirect runs in the continuation after `logout()` resolves, one
+    // commit after the identity clears, so it needs its own wait: reading the
+    // route synchronously here raced the navigation and flaked (#212).
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent(/^\/$/), { timeout: SLOW_WAIT });
     expect(logoutCalls()).toHaveLength(2);
   }, SLOW_TEST);
 

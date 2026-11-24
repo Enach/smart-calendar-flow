@@ -21,18 +21,30 @@
 // The fingerprint deliberately omits the line number: `rule|file|snippet`.
 // Lines shift on every unrelated edit; the snippet is what the finding is about.
 //
-// IMPECCABLE_CMD overrides the detector command (used by the tests, and to point
-// at a locally installed binary). Default pins the version so a detector
-// upgrade is a reviewed diff, never a silent change in what the gate means.
+// The detector is a pinned devDependency run out of node_modules, never `npx`,
+// for the reason scripts/openapi-gen.sh states for the generators: a version
+// resolved from the registry at gate time has no lockfile entry and no
+// integrity hash, so `npm audit` and Dependabot never see it and the gate can
+// change meaning without a diff. A detector upgrade is a reviewed change to
+// package.json, package-lock.json and IMPECCABLE_VERSION together.
+//
+// IMPECCABLE_BIN points the npm shim at a preinstalled engine binary (for a
+// sandbox with no registry access). It is a path to an executable, never a
+// command line: nothing here is passed through a shell.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const IMPECCABLE_VERSION = "4.5.2";
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+// fileURLToPath, not `new URL(...).pathname`: the latter keeps the leading
+// slash of a file: URL, so on Windows ROOT came out as C:\C:\... and the gate
+// could only ever run on CI.
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = path.join(ROOT, ".impeccable", "baseline.json");
 const BASELINE_REL = ".impeccable/baseline.json";
+const DETECTOR_PKG = path.join(ROOT, "node_modules", "impeccable");
 const SCAN_TARGET = "src";
 const update = process.argv.includes("--update");
 
@@ -40,10 +52,35 @@ const fail = (msg) => { console.error(`design-check: ${msg}`); process.exit(1); 
 const note = (msg) => console.error(`design-check: ${msg}`);
 
 // ---------- 1. scan ----------
+// The entry point comes from the installed package's own `bin` field rather
+// than a hardcoded path, and runs as `node <entry>` rather than through
+// node_modules/.bin: the shim there is a .cmd file on Windows, which cannot be
+// spawned without a shell. The version is checked because `.impeccable/
+// baseline.json` records which detector produced it — a baseline ratcheted by
+// one version and enforced by another is not a ratchet.
+function detectorEntry() {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(path.join(DETECTOR_PKG, "package.json"), "utf8"));
+  } catch {
+    fail(`impeccable not installed, install with: npm install --legacy-peer-deps
+  (it is a pinned devDependency; do not npx a floating version — the gate must
+   reach the same verdict on every machine, and a package resolved from the
+   registry at gate time has no lockfile entry and no integrity hash)`);
+  }
+  if (pkg.version !== IMPECCABLE_VERSION) {
+    fail(`impeccable@${pkg.version} is installed but this gate pins ${IMPECCABLE_VERSION} — run npm install --legacy-peer-deps, or bump the pin in package.json, IMPECCABLE_VERSION and ${BASELINE_REL} together`);
+  }
+  const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.impeccable;
+  if (!bin) fail(`impeccable@${pkg.version} declares no "impeccable" binary — cannot run the detector`);
+  return path.join(DETECTOR_PKG, bin);
+}
+
 function scan() {
-  const cmd = process.env.IMPECCABLE_CMD || `npx --yes impeccable@${IMPECCABLE_VERSION}`;
-  const r = spawnSync(`${cmd} detect --json --no-advisory ${SCAN_TARGET}`, {
-    cwd: ROOT, shell: true, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+  // Arguments as an array with no `shell`, so no part of this command line —
+  // not the entry path, not the scan target — can be shell-interpreted.
+  const r = spawnSync(process.execPath, [detectorEntry(), "detect", "--json", "--no-advisory", SCAN_TARGET], {
+    cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
   });
   if (r.error) fail(`could not start the detector: ${r.error.message}`);
   // 0 = clean, 2 = findings, anything else = the scan did not complete.
