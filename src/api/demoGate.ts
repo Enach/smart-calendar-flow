@@ -56,45 +56,95 @@ export async function demoOrReal<T>(op: string, args: readonly unknown[], real: 
  * demo write is left behind (PAC-83 AC-15) and no real cache is lost.
  */
 const SHARED_STORES = ["paceday:teams:v1", "paceday:manager:v1"] as const;
+
+/**
+ * PAC-92: the backup is kept in `sessionStorage`, scoped to the tab that
+ * entered the demo — like the demo session flag itself, and for the same
+ * reason src/components/auth/rememberedEmail.ts chooses sessionStorage.
+ * In `localStorage` it was shared by every tab of the origin, so a second tab
+ * opened during a demo restored the stores and dropped the backup, and the
+ * demo tab's later writes then survived its exit.
+ *
+ * Read from `localStorage` too, once, by the start-up undo below: that is
+ * where builds before PAC-92 kept it.
+ */
 const STORES_BEFORE_DEMO = "paceday:stores-before-demo";
+
+/**
+ * `localStorage`, so every tab sees it: a demo somewhere may have written the
+ * shared stores. Removed when a tab leaves a demo cleanly (the stores are back
+ * as they were); until then any tab that is not in a demo drops the stores
+ * rather than show another tab's demo data.
+ */
+const STORES_TOUCHED_BY_DEMO = "paceday:demo-touched-stores";
 
 /** Called by the demo entry when the demo starts. */
 export function backupStoresForDemo(): void {
   if (!__PACEDAY_DEMO_BUILD__) return;
   try {
-    if (localStorage.getItem(STORES_BEFORE_DEMO) === null) {
+    if (sessionStorage.getItem(STORES_BEFORE_DEMO) === null) {
       const before: Record<string, string | null> = {};
       for (const key of SHARED_STORES) before[key] = localStorage.getItem(key);
-      localStorage.setItem(STORES_BEFORE_DEMO, JSON.stringify(before));
+      sessionStorage.setItem(STORES_BEFORE_DEMO, JSON.stringify(before));
     }
+    localStorage.setItem(STORES_TOUCHED_BY_DEMO, "1");
     for (const key of SHARED_STORES) localStorage.removeItem(key);
   } catch {
     /* storage unavailable */
   }
 }
 
-/** Drop the demo's writes and put back the stores as they were before the demo. */
+/** Put back the stores recorded in `raw`. False when there was nothing to put back. */
+function putBackStores(raw: string | null): boolean {
+  if (raw === null) return false;
+  const before = JSON.parse(raw) as Record<string, string | null>;
+  for (const key of SHARED_STORES) {
+    const value = before[key];
+    if (typeof value === "string") localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  }
+  return true;
+}
+
+/** Drop this tab's demo writes and put back the stores as they were before its demo. */
 export function restoreStoresAfterDemo(): void {
   if (!__PACEDAY_DEMO_BUILD__) return;
   try {
-    const raw = localStorage.getItem(STORES_BEFORE_DEMO);
-    if (raw === null) return;
-    const before = JSON.parse(raw) as Record<string, string | null>;
-    for (const key of SHARED_STORES) {
-      const value = before[key];
-      if (typeof value === "string") localStorage.setItem(key, value);
-      else localStorage.removeItem(key);
-    }
-    localStorage.removeItem(STORES_BEFORE_DEMO);
+    if (!putBackStores(sessionStorage.getItem(STORES_BEFORE_DEMO))) return;
+    sessionStorage.removeItem(STORES_BEFORE_DEMO);
+    localStorage.removeItem(STORES_TOUCHED_BY_DEMO);
   } catch {
     /* storage unavailable or a corrupt backup: leave the stores as they are */
   }
 }
 
-// A demo that ended without "Exit demo" (the tab was closed) leaves its writes
-// in the shared stores: restore them before anything reads the stores.
+/**
+ * A demo that ended without "Exit demo" (the tab was closed) leaves its writes
+ * in the shared stores, and its tab-scoped backup went with the tab. Drop the
+ * stores instead of restoring them: they only cache the server's last answer,
+ * so the next read asks the server again — and nothing a demo made is left for
+ * a real session (AC-15). A demo still running in another tab keeps the flag,
+ * so this tab shows none of its data and that tab's own exit still puts the
+ * real cache back from its own backup.
+ */
+function undoAbandonedDemo(): void {
+  try {
+    // Before PAC-92 the backup was in localStorage: honour one last time.
+    if (putBackStores(localStorage.getItem(STORES_BEFORE_DEMO))) {
+      localStorage.removeItem(STORES_BEFORE_DEMO);
+      localStorage.removeItem(STORES_TOUCHED_BY_DEMO);
+      return;
+    }
+    if (localStorage.getItem(STORES_TOUCHED_BY_DEMO) === null) return;
+    for (const key of SHARED_STORES) localStorage.removeItem(key);
+  } catch {
+    /* storage unavailable or a corrupt backup: leave the stores as they are */
+  }
+}
+
+// Undo before anything reads the stores.
 if (__PACEDAY_DEMO_BUILD__) {
-  if (!isDemoSession()) restoreStoresAfterDemo();
+  if (!isDemoSession()) undoAbandonedDemo();
 }
 
 /** The session-storage key of the removed automatic preview mode (PAC-83 AC-9). */

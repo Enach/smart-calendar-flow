@@ -16,6 +16,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 export const MARKERS = [
   "paceday-demo-bundle-v1",
   "paceday:demo",
+  // PAC-92: the demo's backup of the shared stores (src/api/demoGate.ts). Only
+  // the demo touches those stores, so the key has no business in production.
+  "stores-before-demo",
   "demo-entry",
   "demo-label",
   "intro-chat",

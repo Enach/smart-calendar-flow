@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 import { TodayAgenda } from "./TodayAgenda";
 import { TimeFormatValue } from "@/contexts/TimeFormatContext";
+import { ApiHttpError, ApiUnreachableError, apiErrorMessage } from "@/api/client";
 
 vi.mock("@/contexts/useAuth", () => ({
   useAuth: () => ({ user: { id: "1", email: "a@x.com", name: "A" } }),
@@ -19,6 +20,30 @@ describe("TodayAgenda", () => {
   it("still reports a real load failure", () => {
     render(<TodayAgenda events={[]} error errorMessage="The server had a problem. Try again shortly." />);
     expect(screen.getByText("Couldn't load today's agenda")).toBeInTheDocument();
+  });
+
+  // PAC-92 (PAC-83 contract §5.1): the agenda's load failure is an API error
+  // surface like any other, so the e2e suite's `assertNotDemo` guard can see it.
+  it.each([
+    ["network", new ApiUnreachableError("network"), "lost"],
+    ["budget 503", new ApiHttpError(503, { error: "request timed out" }), "budget"],
+    ["500", new ApiHttpError(500, { error: "internal error" }), "http"],
+  ])("%s: the load failure carries the api-error test id and its kind", (_label, failure, kind) => {
+    const onRetry = vi.fn();
+    render(<TodayAgenda events={[]} error failure={failure} errorMessage={apiErrorMessage(failure, "read")} onRetry={onRetry} />);
+
+    const notice = screen.getByTestId("api-error");
+    expect(notice).toHaveAttribute("data-error-kind", kind);
+    expect(notice).toHaveAttribute("data-effect", "read");
+    expect(notice.textContent ?? "").not.toMatch(/preview data|demo data/i);
+    // A read is retried by hand.
+    fireEvent.click(screen.getByTestId("api-error-retry"));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("without the failure itself nothing is tagged (a caller that has only a message)", () => {
+    render(<TodayAgenda events={[]} error errorMessage="The server had a problem. Try again shortly." />);
+    expect(screen.queryByTestId("api-error")).not.toBeInTheDocument();
   });
 });
 

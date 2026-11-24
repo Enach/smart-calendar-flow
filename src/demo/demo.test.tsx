@@ -130,7 +130,10 @@ describe("PAC-83 explicit demo (non-production build)", () => {
     });
     expect(localStorage.getItem("paceday:teams:v1")).toBe(realTeams);
     expect(localStorage.getItem("paceday:manager:v1")).toBe(realManager);
-    expect(localStorage.getItem("paceday:stores-before-demo")).toBeNull();
+    // PAC-92: the backup is this tab's own (sessionStorage), and the mark the
+    // other tabs read is gone with it.
+    expect(sessionStorage.getItem("paceday:stores-before-demo")).toBeNull();
+    expect(localStorage.getItem("paceday:demo-touched-stores")).toBeNull();
     localStorage.removeItem("paceday:teams:v1");
     localStorage.removeItem("paceday:manager:v1");
   });
