@@ -153,9 +153,9 @@ export class ApiRateLimitedError extends ApiHttpError {
     this.retryAfterMs = parsed ?? RATE_LIMIT_DEFAULT_RETRY_MS;
     if (!this.retryAfterFromServer && import.meta.env.DEV && !warnedAboutRetryAfter) {
       warnedAboutRetryAfter = true;
-      // Same-origin (production behind nginx, dev behind the vite proxy) this
-      // header is always readable, so seeing this in a same-origin build means
-      // the server stopped sending it, not that the fallback is working.
+      // PAC-163: the header is exposed cross-origin, so it is readable in
+      // every deployment. Seeing this at all therefore means the server
+      // stopped sending a usable value, not that the fallback is working.
       console.warn(
         `[rate limit] no readable Retry-After on a 429 (header: ${retryAfter ?? "absent"}); waiting ${RATE_LIMIT_DEFAULT_RETRY_MS} ms instead`,
       );
@@ -167,13 +167,16 @@ export class ApiRateLimitedError extends ApiHttpError {
  * The wait used when the answer carried no readable `Retry-After`.
  *
  * Why the branch exists at all: the server sets the header on every 429 path
- * (one shared helper, declared `required`), but it is deliberately NOT in
- * `Access-Control-Expose-Headers`, so only a same-origin caller can read it.
- * Same-origin is the normal deployment (production through nginx, development
- * through the vite proxy), but the API base is configurable to another origin
- * (`API_BASE_URL` / `VITE_API_BASE_URL`, a configuration the contract
- * supports and src/api/client.test.ts exercises); such a deployment sees the
- * 429 and cannot read the header. A malformed or absurd value lands here too.
+ * (one shared helper, declared `required`) and PAC-163 listed it in
+ * `Access-Control-Expose-Headers`, so every deployment can now read it —
+ * same-origin (production through nginx, development through the vite proxy)
+ * and an API base on another origin (`API_BASE_URL` / `VITE_API_BASE_URL`,
+ * which the contract supports and src/api/client.test.ts exercises) alike.
+ * Until PAC-163 the header was not exposed and a cross-origin page was blind
+ * to it; that blind spot is gone, so what is left for the fallback to cover is
+ * a header that is absent, malformed or absurd — a server or proxy that stopped
+ * sending a usable value. It earns its place because the 429 still has to be
+ * handled when that happens, and a wait is better than none.
  *
  * Why 60 s: the full width of the shared link-info/slots window, which is the
  * only budget that gates a control here (its `Retry-After` is 1..60 s). So the

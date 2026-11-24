@@ -238,8 +238,9 @@ describe("PublicBooking rate limits (NEW-booking-rate-limit)", () => {
   }, SLOW_TEST);
 
   it("a 429 with no readable Retry-After falls back to the client's own wait, never failing", async () => {
-    // The real case: a deployment whose API base is on another origin cannot
-    // read the header, which is not in Access-Control-Expose-Headers.
+    // Since PAC-163 the header is in Access-Control-Expose-Headers and every
+    // deployment can read it, so this covers a server or proxy that sent no
+    // usable value rather than a cross-origin page that could not read one.
     vi.spyOn(schedulingLinksApi, "getPublicLink").mockResolvedValue(introLink);
     vi.spyOn(schedulingLinksApi, "getPublicSlots").mockImplementation(async (_slug, params) => {
       if (params.date) throw limited();

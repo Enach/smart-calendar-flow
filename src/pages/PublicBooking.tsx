@@ -16,7 +16,12 @@ import { ApiErrorNotice } from "@/components/ApiErrorNotice";
 import { StillWorking } from "@/components/StillWorking";
 import { TimeZoneSwitcher } from "@/components/booking/TimeZoneSwitcher";
 import { downloadIcs } from "@/components/booking/ics";
-import { newBookingAttemptKey, schedulingLinksApi, type PublicSlotsAnswer } from "@/api/schedulingLinks";
+import {
+  BookingConfirmationUnreadableError,
+  newBookingAttemptKey,
+  schedulingLinksApi,
+  type PublicSlotsAnswer,
+} from "@/api/schedulingLinks";
 import type { BookingConfirmation, BookingSlot, PublicLinkInfo } from "@/api/types";
 import { toast } from "@/hooks/useToast";
 import { cn } from "@/lib/utils";
@@ -138,6 +143,16 @@ export default function PublicBooking() {
    * active" wording, offers no retry and never says it may have been saved.
    */
   const [linkInactiveOnSubmit, setLinkInactiveOnSubmit] = useState(false);
+  /**
+   * 2026-11-22 audit follow-up: the booking POST answered 201 but the body
+   * could not be read as the contract's confirmation
+   * (BookingConfirmationUnreadableError). The booking EXISTS, so this is not a
+   * failure: the visitor is told it was made and sent to their email, with no
+   * details invented from an answer that could not be read and no retry — the
+   * one "Try again" would re-send this attempt's key and receive the same
+   * unreadable answer, and the slot is taken.
+   */
+  const [confirmationUnreadable, setConfirmationUnreadable] = useState(false);
   /**
    * The time of a booking whose outcome is unknown. The booker is sent back
    * to the refreshed list and must pick a time again: nothing re-sends the
@@ -375,6 +390,17 @@ export default function PublicBooking() {
       const status = httpStatus(e);
       const kind = classifyApiFailure(e);
       if (kind === "cancelled") return;
+      // Before anything else, and on a retry too: a 201 whose body could not
+      // be read is a booking that was MADE. It must never reach a branch that
+      // says it failed or offers to re-send it.
+      if (e instanceof BookingConfirmationUnreadableError) {
+        setConfirmationUnreadable(true);
+        setSubmitError(null);
+        setSubmitFailure(null);
+        setRetryAttempt(null);
+        setUnconfirmedSlot(null);
+        return;
+      }
       if (send.isRetry) {
         onRetryError(e, status);
         return;
@@ -420,6 +446,34 @@ export default function PublicBooking() {
     },
   });
 
+
+  // ---------- Render: booked, but the 201 could not be read ----------
+  // Ahead of every failure state and of the confirmation itself: the booking
+  // was made, and there are no details to show for it.
+  if (confirmationUnreadable) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4">
+        <div className="max-w-md text-center" data-testid="booking-confirmation-unreadable">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary-muted">
+            <CheckCircle2 className="h-9 w-9 text-primary" strokeWidth={2.2} />
+          </div>
+          <h1 className="mt-6 font-serif text-3xl text-foreground">Your booking was made</h1>
+          <p role="status" className="mt-2 text-sm text-muted-foreground">
+            Paceday couldn't read the confirmation back, so there are no details to show here. Check your email for the
+            confirmation — there is no need to book again.
+          </p>
+          <a
+            data-testid="booking-error-home-link"
+            href="/"
+            target={TOP_LEVEL_LINK_TARGET}
+            className="mt-6 inline-block text-sm font-medium text-primary hover:underline"
+          >
+            ← Back to Paceday
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   // ---------- Render: not found / no longer available ----------
   if (linkInactiveOnSubmit) {
