@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -9,6 +9,7 @@ vi.hoisted(() => {
 
 
 import { OrganizationAISection } from "./OrganizationAISection";
+import { ORG_AI_QUERY_KEY } from "@/hooks/useOrganizationAI";
 import { SsoAdminStepupSection } from "./SsoAdminStepupSection";
 
 // PAC-73 Part 2 (spec §3.6; P2-AC-30, P2-AC-32): the organisation AI section
@@ -61,7 +62,7 @@ function serve(read: unknown, patch?: (body: unknown) => Response) {
 
 function renderAt(path = "/settings", inOrganization = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const view = render(
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={[path]}>
         <OrganizationAISection inOrganization={inOrganization} />
@@ -69,6 +70,7 @@ function renderAt(path = "/settings", inOrganization = true) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...view, qc };
 }
 
 describe("OrganizationAISection (PAC-73 Part 2)", () => {
@@ -378,5 +380,107 @@ describe("OrganizationAISection (PAC-148, a user who is not a member)", () => {
     expect(sent.every((c) => c.method === "GET")).toBe(true);
     expect(sent.some((c) => c.url.includes("purpose=llm_org_key_write"))).toBe(false);
     expect(assigned).toEqual([]);
+  });
+});
+
+// PAC-156: the membership ends while the section is on screen. The
+// organisation AI read answered 200 once, so React Query holds that
+// configuration (`staleTime` 30 s); the next answer is the membership 403,
+// which PAC-73 P2-AC-30 says shows no section. That must hold across the
+// 200 -> 403 transition, not only when the 403 is the first answer, and the
+// 200's configuration must not be kept for the next mount. A failure that is
+// not the membership 403 keeps today's behaviour: the section stays.
+describe("OrganizationAISection (PAC-156, a 200 then the membership 403)", () => {
+  const MEMBERSHIP_403 = { error: "org membership required" };
+  /** The answer the organisation AI read gives now; membership ends by changing it. */
+  let read: () => Response;
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    sent.length = 0;
+    assigned.length = 0;
+    read = () => json(configured);
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      sent.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === `${API}/organization/ai` && method === "GET") return read();
+      return json({ error: "unexpected " + method + " " + url }, 599);
+    });
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { origin: "https://app.paceday.test", href: "https://app.paceday.test/settings", search: "", assign: (v: string) => assigned.push(v) },
+    });
+  });
+  afterEach(() => Object.defineProperty(window, "location", { configurable: true, value: realLocation }));
+  afterAll(() => vi.unstubAllGlobals());
+
+  /** A client whose cache outlives a mount, as the application's does. */
+  function client() {
+    return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  }
+
+  function mount(qc: QueryClient) {
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/settings"]}>
+          <OrganizationAISection inOrganization />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  const refetch = async (qc: QueryClient) => {
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ORG_AI_QUERY_KEY });
+    });
+  };
+
+  it.each(["org membership required", "org not found"])(
+    "stops showing the section when a refetch answers the membership 403 (%s)",
+    async (error) => {
+      const qc = client();
+      const { container } = mount(qc);
+      expect(await screen.findByTestId("org-ai-read")).toHaveTextContent("gpt-4o-mini");
+
+      read = () => json({ error }, 403);
+      await refetch(qc);
+
+      await waitFor(() => expect(screen.queryByTestId("org-ai-section")).toBeNull());
+      expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+      expect(container).toBeEmptyDOMElement();
+      expect(sent.every((c) => c.method === "GET")).toBe(true);
+    },
+  );
+
+  it("keeps nothing of the 200 for its next mount: the membership 403 replaced it", async () => {
+    const qc = client();
+    const first = mount(qc);
+    expect(await screen.findByTestId("org-ai-read")).toHaveTextContent("gpt-4o-mini");
+
+    read = () => json(MEMBERSHIP_403, 403);
+    await refetch(qc);
+    first.unmount();
+
+    // Within `staleTime` the remount reads the cache and makes no request, so
+    // only a replaced answer keeps the stale configuration off the screen.
+    const { container } = mount(qc);
+    expect(container).toBeEmptyDOMElement();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("keeps the section when the refetch fails for another reason (500)", async () => {
+    const qc = client();
+    mount(qc);
+    expect(await screen.findByTestId("org-ai-read")).toHaveTextContent("gpt-4o-mini");
+
+    read = () => json({ error: "internal error" }, 500);
+    await refetch(qc);
+
+    // A transient failure does not blank a section the user still has rights to.
+    expect(screen.getByTestId("org-ai-section")).toBeInTheDocument();
+    expect(screen.getByTestId("org-ai-read")).toHaveTextContent("gpt-4o-mini");
   });
 });

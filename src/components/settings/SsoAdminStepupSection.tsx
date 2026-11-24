@@ -5,14 +5,13 @@ import { CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
 import {
   ApiRequestCancelledError,
   fetchSsoStepupOptions,
-  isApiHttpError,
   ssoStepupStartUrl,
   type SsoStepupOffer,
 } from "@/api/client";
 import { isDemoSession } from "@/api/demoGate";
 import { ApiErrorText } from "@/components/ApiErrorNotice";
-import { isSsoStepupLanding } from "@/lib/orgAI";
-import { SsoWriteMembershipRequired, type SsoStepupProvider } from "@/api/generated/schemas";
+import { isSsoStepupLanding, nullIfNoOrganisation } from "@/lib/orgAI";
+import type { SsoStepupProvider } from "@/api/generated/schemas";
 
 // PAC-50 AC-25 (owner, 2026-10-27; spec §9 D-11, D-13): the optional SSO
 // administrator step-up can be started from Settings at any time. The values
@@ -157,15 +156,6 @@ function StepupEntry({ offer }: { offer: SsoStepupOffer }) {
 }
 
 /**
- * The options request failed with the documented no-organisation answer: a
- * 403 whose body is SsoWriteMembershipRequired (`org membership required` or
- * `org not found`). That user is offered nothing (PAC-75 contract md 5.4).
- */
-function isNoOrganisation(error: unknown): boolean {
-  return isApiHttpError(error) && error.status === 403 && SsoWriteMembershipRequired.safeParse(error.data).success;
-}
-
-/**
  * The Settings section for the SSO administrator step-up. Rendered for every
  * signed-in user; it shows the step-up outcome on return from the callback,
  * and offers the entry point only when the options endpoint answers 200 (a
@@ -173,22 +163,28 @@ function isNoOrganisation(error: unknown): boolean {
  * failure of the options request is said in an error line, never hidden
  * (PAC-75 contract md 5.4); a demo session shows nothing and asks nothing
  * (md 5.5).
+ *
+ * PAC-156: the no-organisation 403 is `nullIfNoOrganisation`'s answer, so an
+ * offer read before the membership ended is replaced by "nothing to offer".
+ * Were it an error instead, React Query would keep that offer as `data` and
+ * the entry would stay on screen after the membership ended.
  */
 export function SsoAdminStepupSection() {
   const demo = isDemoSession();
   const options = useQuery({
     queryKey: ["sso-stepup-options"],
-    queryFn: () => fetchSsoStepupOptions(),
+    queryFn: () => nullIfNoOrganisation(() => fetchSsoStepupOptions()),
     retry: false,
     enabled: !demo,
   });
   const [params] = useSearchParams();
   const hasOutcome = isSsoStepupLanding(params);
   if (demo) return null;
+  const offer = options.data;
   const error = options.error;
   const cancelled = error instanceof ApiRequestCancelledError;
-  const showError = !!error && !cancelled && !isNoOrganisation(error);
-  if (!options.data && !hasOutcome && !showError) return null;
+  const showError = !!error && !cancelled;
+  if (!offer && !hasOutcome && !showError) return null;
 
   return (
     <section
@@ -203,7 +199,7 @@ export function SsoAdminStepupSection() {
         </h2>
       </div>
       <StepupOutcome />
-      {options.data && <StepupEntry offer={options.data} />}
+      {offer && <StepupEntry offer={offer} />}
       {showError && (
         <p data-testid="sso-stepup-options-error" className="text-sm text-destructive">
           Administrator confirmation options could not be loaded. <ApiErrorText error={error} effect="read" />

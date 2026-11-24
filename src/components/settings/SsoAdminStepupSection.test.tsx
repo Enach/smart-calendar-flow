@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
@@ -52,12 +52,20 @@ function renderAt(path = "/settings") {
 }
 
 /**
- * Waits until the options request has failed and React Query has settled on
- * it, so an assertion about what is shown is about the failure, not about the
- * loading state, which also renders nothing (PAC-75 review F2).
+ * Waits until the options request has answered the no-organisation 403 and
+ * React Query has settled on it, so an assertion about what is shown is about
+ * that answer, not about the loading state, which also renders nothing
+ * (PAC-75 review F2). Since PAC-156 the 403 is the query's answer (`null`,
+ * nothing to offer) rather than its error, so that it replaces an offer read
+ * before the membership ended. Every other failure is still the query's
+ * error, and is still stated in the error line.
  */
-async function optionsFailed(qc: QueryClient) {
-  await waitFor(() => expect(qc.getQueryState(["sso-stepup-options"])?.status).toBe("error"));
+async function noOrganisationAnswered(qc: QueryClient) {
+  await waitFor(() => {
+    const state = qc.getQueryState(["sso-stepup-options"]);
+    expect(state?.status).toBe("success");
+    expect(state?.data).toBeNull();
+  });
 }
 
 describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
@@ -133,7 +141,7 @@ describe("SsoAdminStepupSection (PAC-50 AC-25)", () => {
   it("offers no entry point to a user without an organisation (403)", async () => {
     serveOptions(403, { error: "org membership required" });
     const { container, qc } = renderAt();
-    await optionsFailed(qc);
+    await noOrganisationAnswered(qc);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
     expect(container).toBeEmptyDOMElement();
@@ -282,7 +290,7 @@ describe("SsoAdminStepupSection (PAC-75)", () => {
   it.each(["org membership required", "org not found"])("shows nothing for the no-organisation 403 (%s)", async (error) => {
     serveOptions(403, { error });
     const { container, qc } = renderAt();
-    await optionsFailed(qc);
+    await noOrganisationAnswered(qc);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
     expect(container).toBeEmptyDOMElement();
@@ -310,7 +318,7 @@ describe("SsoAdminStepupSection (PAC-75)", () => {
     serveOptions(403, { error: "org not found" });
     const { qc } = renderAt("/settings?stepup=denied&reason=not_admin");
     expect(await screen.findByText(`Administrator confirmation was denied: ${PAC75_REASONS.not_admin}`)).toBeInTheDocument();
-    await optionsFailed(qc);
+    await noOrganisationAnswered(qc);
     expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
   });
 
@@ -354,7 +362,7 @@ describe("SsoAdminStepupSection (PAC-148, a user who is not a member)", () => {
   it("decides from the options' membership 403 alone: nothing shown, one request, no navigation", async () => {
     serveOptions(403, { error: "org membership required" });
     const { container, qc } = renderAt();
-    await optionsFailed(qc);
+    await noOrganisationAnswered(qc);
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchMock.mock.calls.map(([url, init]) => [String(url), init?.method ?? "GET"])).toEqual([
       ["https://api.paceday.test/api/admin/sso/stepup/options", "GET"],
@@ -362,5 +370,104 @@ describe("SsoAdminStepupSection (PAC-148, a user who is not a member)", () => {
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole("button")).toBeNull();
     expect(assigned).toEqual([]);
+  });
+});
+
+// PAC-156: the membership ends while the section is on screen. The options
+// request answered 200 once, so React Query holds that offer; the next answer
+// is the membership 403. The section must then show nothing, and must not
+// keep the offer for its next mount either. A failure that is not the
+// membership 403 keeps today's behaviour: the section stays, with its error
+// line.
+describe("SsoAdminStepupSection (PAC-156, a 200 then the membership 403)", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+    sessionStorage.removeItem("paceday:demo");
+    assigned.length = 0;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { origin: "https://app.paceday.test", href: "https://app.paceday.test/settings", search: "", assign: (v: string) => assigned.push(v) },
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(window, "location", { configurable: true, value: realLocation });
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A client whose cache outlives a mount, as the application's does. */
+  function client() {
+    return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  }
+
+  function mount(qc: QueryClient, path = "/settings") {
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[path]}>
+          <SsoAdminStepupSection />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  const refetch = async (qc: QueryClient) => {
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ["sso-stepup-options"] });
+    });
+  };
+
+  it.each(["org membership required", "org not found"])(
+    "stops offering the entry when a refetch answers the membership 403 (%s)",
+    async (error) => {
+      serveOptions(200, options({ google: [GOOGLE_SCOPE] }));
+      const qc = client();
+      const { container } = mount(qc);
+      expect(await screen.findByRole("button", { name: "Confirm with Google Workspace" })).toBeInTheDocument();
+
+      serveOptions(403, { error });
+      await refetch(qc);
+
+      await waitFor(() => expect(container).toBeEmptyDOMElement());
+      expect(screen.queryByRole("button")).toBeNull();
+      // Nothing is said about it: the server refused the read, which is not a
+      // failure to report (PAC-75 contract md 5.4).
+      expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
+      expect(assigned).toEqual([]);
+    },
+  );
+
+  it("keeps nothing of the 200 for its next mount: the membership 403 replaced it", async () => {
+    serveOptions(200, options({ google: [GOOGLE_SCOPE] }));
+    const qc = client();
+    const first = mount(qc);
+    expect(await screen.findByRole("button", { name: "Confirm with Google Workspace" })).toBeInTheDocument();
+
+    serveOptions(403, { error: "org membership required" });
+    await refetch(qc);
+    first.unmount();
+
+    // The cached answer is gone, so the remount offers nothing even before
+    // its own request answers: no stale entry is shown in between.
+    const { container } = mount(qc);
+    expect(container).toBeEmptyDOMElement();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByTestId("sso-stepup-options-error")).toBeNull();
+  });
+
+  it("keeps the entry and says so when the refetch fails for another reason (500)", async () => {
+    serveOptions(200, options({ google: [GOOGLE_SCOPE] }));
+    const qc = client();
+    mount(qc);
+    expect(await screen.findByRole("button", { name: "Confirm with Google Workspace" })).toBeInTheDocument();
+
+    serveOptions(500, { error: "internal error" });
+    await refetch(qc);
+
+    // A transient failure does not blank a section the user still has rights to.
+    expect(screen.getByRole("button", { name: "Confirm with Google Workspace" })).toBeInTheDocument();
+    expect(await screen.findByTestId("sso-stepup-options-error")).toBeInTheDocument();
   });
 });

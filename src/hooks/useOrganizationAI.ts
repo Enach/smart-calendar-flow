@@ -8,15 +8,31 @@ import {
   type OrganizationAIConsentResult,
 } from "@/api/client";
 import type { OrganizationAIConfiguration, OrganizationAIConfigurationUpdate } from "@/api/types";
+import { nullIfNoOrganisation } from "@/lib/orgAI";
 
 // PAC-73 Part 2: the organisation's AI configuration (read by every member,
 // changed by a proven administrator, confirmed by each member).
 
 export const ORG_AI_QUERY_KEY = ["organization-ai"] as const;
 
-/** The organisation's AI configuration; only fetched for a member. */
+/**
+ * The organisation's AI configuration; only fetched for a member. A caller
+ * the server counts as a member of no organisation gets the membership 403,
+ * whose answer here is `null`: there is no configuration to show (P2-AC-30).
+ *
+ * PAC-156: `null` is an answer, so it replaces a configuration read before
+ * the membership ended, within this query's `staleTime` as well. Were the
+ * 403 left as the query's error, React Query would keep that configuration
+ * as `data` and the section would stay on screen.
+ */
 export function useOrganizationAI(enabled: boolean) {
-  return useQuery({ queryKey: ORG_AI_QUERY_KEY, queryFn: fetchOrganizationAI, enabled, retry: false, staleTime: 30_000 });
+  return useQuery({
+    queryKey: ORG_AI_QUERY_KEY,
+    queryFn: () => nullIfNoOrganisation(fetchOrganizationAI),
+    enabled,
+    retry: false,
+    staleTime: 30_000,
+  });
 }
 
 /**

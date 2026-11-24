@@ -184,6 +184,30 @@ describe("OrgAIConsentDialog via the not-configured notice", () => {
     expect(onResolved).not.toHaveBeenCalled();
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
+
+  // PAC-156: the organisation AI read answers the membership 403 with "no
+  // configuration" (`null`) instead of an error, so that a section cannot keep
+  // showing a configuration read before the membership ended. Here that means
+  // there is nothing to confirm, no claim that the read failed, and no way to
+  // send a confirmation the server would refuse.
+  it("a membership that has ended: nothing to confirm, nothing said about the refused read, no write", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      calls.push({ method, url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      if (url === `${API}/organization/ai` && method === "GET") return json({ error: "org membership required" }, 403);
+      return json({ error: "unexpected " + method + " " + url }, 599);
+    });
+    renderNotice(row5);
+    fireEvent.click(screen.getByTestId("ai-org-confirm"));
+    const dialog = await screen.findByTestId("org-ai-consent");
+    await waitFor(() => expect(calls.some((c) => c.url === `${API}/organization/ai`)).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("org-ai-consent-text")).not.toBeInTheDocument();
+    expect(dialog.querySelector('[data-testid="api-error"]')).toBeNull();
+    expect(screen.getByRole("button", { name: /confirm and turn ai on/i })).toBeDisabled();
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
 });
 
 // PAC-122 batch 6b, SF-090: the confirmation was recorded, then the choice
