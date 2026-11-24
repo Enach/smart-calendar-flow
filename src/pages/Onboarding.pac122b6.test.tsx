@@ -15,6 +15,7 @@ vi.mock("@/hooks/useToast", () => ({ toast }));
 vi.mock("@/contexts/useAuth", () => ({ useAuth: () => ({ isDemo: false, user: { id: "u1", email: "a@x.com", name: "A" } }) }));
 
 import Onboarding from "./Onboarding";
+import { API_MESSAGES } from "@/api/client";
 
 const fetchMock = vi.fn<typeof fetch>();
 const json = (body: unknown, status = 200) =>
@@ -49,8 +50,9 @@ describe("PAC-122 SF-091: onboarding on a failed status read", () => {
     // A longer wait: the availability read can be slow under a loaded full suite.
     fireEvent.click(await screen.findByRole("button", { name: /Google Calendar/ }, { timeout: 5000 }));
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+    // PAC-69: the 500's wording comes from its status, not the server's text.
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Could not check your calendar connection: internal error"),
+      expect(toast.error).toHaveBeenCalledWith(`Could not check your calendar connection: ${API_MESSAGES.serverProblem}`),
     );
     const writes = fetchMock.mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
     expect(writes).toEqual([]);

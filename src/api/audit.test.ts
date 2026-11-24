@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { api, ApiHttpError, ApiUnreachableError, apiErrorMessage, DEFAULT_AUDIT_LIMIT, formatAuditDetails, normalizeAuditEntries } from "./client";
+import { api, API_MESSAGES, ApiHttpError, ApiUnreachableError, apiErrorMessage, DEFAULT_AUDIT_LIMIT, formatAuditDetails, normalizeAuditEntries } from "./client";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -65,7 +65,9 @@ describe("audit log contract", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: "audit unavailable" }, status));
     const err = await api.getAudit().catch((e) => e);
     expect(err).toBeInstanceOf(ApiHttpError);
-    expect(apiErrorMessage(err)).toBe("audit unavailable");
+    // PAC-69: a 4xx shows the server's own string; a >= 500 is worded from the
+    // status alone. Either way the read fails loudly instead of showing no rows.
+    expect(apiErrorMessage(err)).toBe(status >= 500 ? API_MESSAGES.serverProblem : "audit unavailable");
   });
 
   // Inverted (PAC-83 spec §2.5): an unreachable backend is an error, never preview entries.

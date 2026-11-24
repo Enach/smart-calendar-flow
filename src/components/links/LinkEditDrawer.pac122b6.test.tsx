@@ -10,7 +10,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { LinkEditDrawer } from "./LinkEditDrawer";
-import { ApiHttpError, api } from "@/api/client";
+import { API_MESSAGES, ApiHttpError, api } from "@/api/client";
 import { clearFreebusyCache } from "@/api/coverageCache";
 
 function renderDrawer() {
@@ -41,7 +41,10 @@ describe("PAC-122 SF-086: co-host availability chips on a failed free/busy read"
     // text assistive technology reads, and shown in a tooltip.
     const describedBy = badge.getAttribute("aria-describedby");
     expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy!)).toHaveTextContent("Paceday could not read free/busy for this person: internal error");
+    // PAC-69: the 500's detail is its status wording, not the server's text.
+    expect(document.getElementById(describedBy!)).toHaveTextContent(
+      `Paceday could not read free/busy for this person: ${API_MESSAGES.serverProblem}`,
+    );
     expect(screen.queryByText("Checking…")).not.toBeInTheDocument();
   });
 

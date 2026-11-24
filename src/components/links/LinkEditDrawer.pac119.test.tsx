@@ -272,7 +272,8 @@ describe("outcome unknown (contract §7.4, AC-19, AC-22)", () => {
     pressSave();
     await waitFor(() => expect(alertText()).toBe(API_MESSAGES.budgetRead + API_MESSAGES.budgetWriteSuffix));
     pressSave();
-    await waitFor(() => expect(alertText()).toBe("internal error"));
+    // PAC-69: the 500 is worded from its status, never with the server's text.
+    await waitFor(() => expect(alertText()).toBe(API_MESSAGES.serverProblem));
   });
 
   it("AC-22: closing after an unknown outcome invalidates the links list", async () => {

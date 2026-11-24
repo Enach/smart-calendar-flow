@@ -585,6 +585,16 @@ export const API_MESSAGES = {
   rateLimitedRead: "This isn't ready yet — give it a moment, then try again.",
   rateLimitedWrite: "This wasn't sent — give it a moment, then try again.",
   rateLimitedBooking: "Your booking wasn't sent — give it a moment, then confirm again. Your details are kept.",
+  /**
+   * PAC-69: every answer with a status >= 500, whatever its body. The backend
+   * now wraps 5xx in the `{ error }` envelope with a fixed developer-facing
+   * text (`internal error`), which says nothing a user can act on; a 5xx body
+   * is server or proxy text and is never shown word for word — the same
+   * principle NEW-booking-rate-limit applied to 429s and PAC-83's taxonomy
+   * applies throughout. The sentence is the one a 5xx with no readable body
+   * has always had, so nothing about those answers changes.
+   */
+  serverProblem: "The server had a problem. Try again shortly.",
 } as const;
 
 /** In precedence order: cancelled, budget, too-large, rate-limited, lost, http. */
@@ -636,6 +646,13 @@ function httpErrorMessage(e: unknown): string {
     return "This change needs a confirmation from an administrator account of your organisation (Google Workspace or Microsoft 365).";
   }
   if (isApiHttpError(e)) {
+    // PAC-69: a status >= 500 is worded from the status alone, before the body
+    // is looked at. Nothing a server failure puts in `error`/`message`/`detail`
+    // is for a user to read, and the generic sentence is the only one that
+    // tells them what to do next. (A 5xx whose body is not JSON never gets
+    // here at all — interpretResponse raises ApiGatewayError, classified
+    // "lost" — so this covers the JSON-enveloped 5xx the backend now sends.)
+    if (e.status >= 500) return API_MESSAGES.serverProblem;
     const data = e.data as { error?: string; message?: string; detail?: string } | undefined;
     const detail = data?.error ?? data?.message ?? data?.detail;
     const teams = e.status === 400 && detail ? TEAMS_CONNECT_TEXT.get(detail) : undefined;
@@ -653,7 +670,7 @@ function httpErrorMessage(e: unknown): string {
       case 422:
         return "Some of the submitted data is invalid.";
       default:
-        return e.status >= 500 ? "The server had a problem. Try again shortly." : `Request failed (${e.status}).`;
+        return `Request failed (${e.status}).`;
     }
   }
   return e instanceof Error ? e.message : "Unexpected error.";

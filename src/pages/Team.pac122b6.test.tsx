@@ -28,7 +28,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { managerApi, managerKeys } from "@/api/manager";
-import { ApiHttpError } from "@/api/client";
+import { API_MESSAGES, ApiHttpError } from "@/api/client";
 import type { MemberAnalytics, TeamMember } from "@/api/manager";
 import type { FormalTeam } from "@/api/teams";
 import { AddPersonDialog, CreateTeamDialog, MemberRow, TeamTab } from "./Team";
@@ -132,7 +132,8 @@ describe("PAC-122 batch 6, manager tab", () => {
     analytics.mockRejectedValueOnce(new ApiHttpError(500, { error: "internal error" }, "internal error")).mockResolvedValue([]);
     renderTab();
     const banner = await screen.findByTestId("manager-analytics-error");
-    expect(banner).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not the server's text.
+    expect(banner).toHaveTextContent(API_MESSAGES.serverProblem);
     expect(screen.queryByText("Data unavailable")).not.toBeInTheDocument();
     expect(screen.getByText("Figures not loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));

@@ -94,12 +94,24 @@ describe.each(surfaces)("calendar disconnect on the %s (PAC-35)", (_name, render
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("shows the server's own message for any other HTTP failure (PAC-83: never a bare 'Failed')", async () => {
+  it("shows the server's own message for another 4xx failure (PAC-83: never a bare 'Failed')", async () => {
+    serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "this calendar is read-only" }, 422));
+    render(<Shell>{renderSurface()}</Shell>);
+
+    fireEvent.click(await findButton("Disconnect"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("this calendar is read-only"));
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  // PAC-69: the backend's fixed 5xx text says nothing a user can act on, so a
+  // >= 500 is worded from the status alone — still never a bare 'Failed'.
+  it("PAC-69: a 500 says the server had a problem, not the server's fixed text", async () => {
     serve({ connected: true, provider: "google", email: "a@x.com" }, () => jsonResponse({ error: "internal error" }, 500));
     render(<Shell>{renderSurface()}</Shell>);
 
     fireEvent.click(await findButton("Disconnect"));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("internal error"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(API_MESSAGES.serverProblem));
+    expect(toast.error).not.toHaveBeenCalledWith("internal error");
     expect(toast.success).not.toHaveBeenCalled();
   });
 

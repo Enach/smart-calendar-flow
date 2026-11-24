@@ -1,10 +1,14 @@
 /** SF-004: the wording of a sign-out the server did not confirm. */
-import { apiFailureMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
+import { API_MESSAGES, apiFailureMessage, classifyApiFailure, isApiHttpError } from "@/api/client";
 
 export const SIGN_OUT_NOT_CONFIRMED_TITLE = "Sign-out not confirmed";
 export const SIGN_OUT_NOT_CONFIRMED_TEXT =
   "Paceday didn't confirm that you're signed out, so you are still signed in on this device. If this is a shared computer, don't leave it until sign-out is confirmed.";
-const SERVER_PROBLEM = "The server had a problem. Try again shortly.";
+/**
+ * PAC-69 gave the same sentence one home in API_MESSAGES; SF-004 now reads it
+ * from there rather than keeping its own copy of the wording.
+ */
+const SERVER_PROBLEM = API_MESSAGES.serverProblem;
 
 /**
  * Why the sign-out was not confirmed, in the PAC-83 wording. Retrying a
