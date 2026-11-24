@@ -313,13 +313,13 @@ describe("PAC-69: a >= 500 answer is worded from its status, never from its body
   // interpretResponse raises ApiGatewayError, classified "lost". Asserted here
   // so the matrix is complete and the two paths stay distinct.
   it.each([
-    [500, "text"],
-    [500, "empty"],
-    [502, "text"],
-    [502, "empty"],
-    [503, "text"],
-    [503, "empty"],
-  ] as const)("a %i with a %s body is a gateway error, and its wording is still not the server's text", async (status, shape) => {
+    [500, "a non-JSON body", "text"],
+    [500, "an empty body", "empty"],
+    [502, "a non-JSON body", "text"],
+    [502, "an empty body", "empty"],
+    [503, "a non-JSON body", "text"],
+    [503, "an empty body", "empty"],
+  ] as const)("a %i with %s is a gateway error, and its wording is still not the server's text", async (status, _label, shape) => {
     fetchMock.mockResolvedValueOnce(BODIES[shape](status));
     const err = await requestApi("GET", "/calendar/events").catch((e) => e);
     expect(err).toBeInstanceOf(ApiGatewayError);
