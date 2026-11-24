@@ -19,31 +19,51 @@ const REAL_TEAMS = JSON.stringify({ teams: [{ id: "real", name: "Real team" }] }
 const REAL_MANAGER = JSON.stringify({ profile: { is_manager: true } });
 const DEMO_TEAMS = JSON.stringify({ teams: [{ id: "demo", name: "Demo squad" }] });
 
-type Tab = Record<string, string>;
-
-/** What this tab's sessionStorage holds (a tab keeps it across reloads). */
-function tabState(): Tab {
-  const out: Tab = {};
-  for (let i = 0; i < sessionStorage.length; i += 1) {
-    const key = sessionStorage.key(i);
-    if (key !== null) out[key] = sessionStorage.getItem(key) ?? "";
+/**
+ * A tab's own sessionStorage. Each tab gets its own object, kept for as long as
+ * the tab is open: switching tabs moves no data and clears nothing, so a tab
+ * cannot reach another tab's keys even by name — which is the whole property
+ * under test. `localStorage` stays the one shared store, as in a browser.
+ */
+class TabStorage implements Storage {
+  private readonly map = new Map<string, string>();
+  get length(): number {
+    return this.map.size;
   }
-  return out;
+  key(i: number): string | null {
+    return [...this.map.keys()][i] ?? null;
+  }
+  getItem(key: string): string | null {
+    return this.map.get(key) ?? null;
+  }
+  setItem(key: string, value: string): void {
+    this.map.set(key, String(value));
+  }
+  removeItem(key: string): void {
+    this.map.delete(key);
+  }
+  clear(): void {
+    this.map.clear();
+  }
 }
 
-/** Switch to a tab: sessionStorage is per tab, localStorage is shared. */
-function switchTo(tab: Tab): void {
-  sessionStorage.clear();
-  for (const [key, value] of Object.entries(tab)) sessionStorage.setItem(key, value);
+/** Open a tab (nothing is loaded in it yet). */
+function openTab(): TabStorage {
+  return new TabStorage();
 }
 
-/** Load the page in the current tab: the start-up of the demo gate runs. */
+/** Bring a tab to the front: from here on, `sessionStorage` is that tab's own. */
+function switchTo(tab: TabStorage): void {
+  vi.stubGlobal("sessionStorage", tab);
+}
+
+/** Load the page in the front tab: the start-up of the demo gate runs. */
 async function startUp(): Promise<void> {
   vi.resetModules();
   await import("@/api/demoGate");
 }
 
-/** Enter the demo in the current tab (what the demo entry does, see src/demo/session.ts). */
+/** Enter the demo in the front tab (what the demo entry does, see src/demo/session.ts). */
 function enterDemo(): void {
   sessionStorage.setItem(DEMO_SESSION, "1");
   backupStoresForDemo();
@@ -51,15 +71,15 @@ function enterDemo(): void {
 
 beforeEach(() => {
   localStorage.clear();
-  sessionStorage.clear();
 });
 afterEach(() => {
   localStorage.clear();
-  sessionStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("PAC-92: the demo store backup is scoped to its tab", () => {
   it("keeps the backup out of the shared storage every tab can see", () => {
+    switchTo(openTab());
     localStorage.setItem(TEAMS, REAL_TEAMS);
     enterDemo();
 
@@ -71,21 +91,26 @@ describe("PAC-92: the demo store backup is scoped to its tab", () => {
   });
 
   it("a second tab opened during a demo neither restores nor drops the demo tab's backup", async () => {
+    const demoTab = openTab();
+    const secondTab = openTab();
+
+    switchTo(demoTab);
     localStorage.setItem(TEAMS, REAL_TEAMS);
     localStorage.setItem(MANAGER, REAL_MANAGER);
     enterDemo();
     localStorage.setItem(TEAMS, DEMO_TEAMS); // the demo writes through the shared store
-    const demoTab = tabState();
 
-    // A second tab opens: its own empty sessionStorage, no demo session.
-    switchTo({});
+    // The second tab loads the page: its own sessionStorage, no demo session.
+    switchTo(secondTab);
     await startUp();
     expect(sessionStorage.getItem(BACKUP)).toBeNull(); // it cannot see the other tab's backup
     expect(localStorage.getItem(TEAMS)).toBeNull(); // and shows none of the demo's writes
     expect(localStorage.getItem(TOUCHED)).toBe("1"); // the demo over there is still marked
 
-    // Back in the demo tab: "Exit demo" still puts the real cache back.
+    // Back in the demo tab, with its backup untouched: "Exit demo" still puts
+    // the real cache back.
     switchTo(demoTab);
+    expect(sessionStorage.getItem(BACKUP)).not.toBeNull();
     restoreStoresAfterDemo();
     expect(localStorage.getItem(TEAMS)).toBe(REAL_TEAMS);
     expect(localStorage.getItem(MANAGER)).toBe(REAL_MANAGER);
@@ -94,6 +119,7 @@ describe("PAC-92: the demo store backup is scoped to its tab", () => {
   });
 
   it("a reload of the demo tab keeps its backup and its demo data", async () => {
+    switchTo(openTab());
     localStorage.setItem(TEAMS, REAL_TEAMS);
     enterDemo();
     localStorage.setItem(TEAMS, DEMO_TEAMS);
@@ -107,18 +133,20 @@ describe("PAC-92: the demo store backup is scoped to its tab", () => {
   });
 
   it("a demo tab closed without Exit leaves no demo data for the next tab", async () => {
+    switchTo(openTab());
     localStorage.setItem(TEAMS, REAL_TEAMS);
     enterDemo();
     localStorage.setItem(TEAMS, DEMO_TEAMS);
 
-    // The tab is gone, and its backup with it; the mark it left is not.
-    switchTo({});
+    // That tab is gone, and its sessionStorage with it; the mark it left is not.
+    switchTo(openTab());
     await startUp();
     expect(localStorage.getItem(TEAMS)).toBeNull();
     expect(localStorage.getItem(MANAGER)).toBeNull();
   });
 
   it("still honours a backup left in localStorage by a build from before PAC-92", async () => {
+    switchTo(openTab());
     localStorage.setItem(BACKUP, JSON.stringify({ [TEAMS]: REAL_TEAMS, [MANAGER]: null }));
     localStorage.setItem(TEAMS, DEMO_TEAMS);
 
