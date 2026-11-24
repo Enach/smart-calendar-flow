@@ -13,6 +13,7 @@ import type { ReactElement, ReactNode } from "react";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
+import { API_MESSAGES } from "@/api/client";
 import { ConnectionStatus } from "./ConnectionStatus";
 import { WorkCalendarConnection } from "./WorkCalendarConnection";
 import type { Settings } from "@/api/types";
@@ -64,7 +65,9 @@ describe.each(surfaces)("PAC-122 SF-055: a failed status read on the %s", (_name
     render(<Shell>{renderSurface()}</Shell>);
     const alert = await screen.findByTestId("calendar-status-error");
     expect(alert).toHaveTextContent(/could not check your calendar connection/i);
-    expect(within(alert).getByTestId("api-error")).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not from the server's
+    // fixed `internal error`; the point here is that the failure is shown.
+    expect(within(alert).getByTestId("api-error")).toHaveTextContent(API_MESSAGES.serverProblem);
     expect(screen.queryByText("Not connected")).not.toBeInTheDocument();
     // No connect is offered for a state that is not known (the card's
     // Connect, the settings section's "Connect <provider>").

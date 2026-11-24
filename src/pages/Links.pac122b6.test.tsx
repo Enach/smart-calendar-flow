@@ -9,7 +9,7 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 
-import { ApiHttpError } from "@/api/client";
+import { API_MESSAGES, ApiHttpError } from "@/api/client";
 import { schedulingLinkKeys, schedulingLinksApi } from "@/api/schedulingLinks";
 import { InviteBanner } from "./Links";
 
@@ -32,7 +32,8 @@ describe("PAC-122 SF-088: an invites refresh error with cached invites", () => {
       </QueryClientProvider>,
     );
     const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not the server's text.
+    expect(alert).toHaveTextContent(API_MESSAGES.serverProblem);
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
     // The cached invite stays visible below the error.
     expect(screen.getByText(/added you to the scheduling link/)).toBeInTheDocument();

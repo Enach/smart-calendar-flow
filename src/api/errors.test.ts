@@ -179,12 +179,13 @@ describe("API error boundary (PAC-83: no invented data after a failure)", () => 
     },
   );
 
-  it("health reports the failure message", async () => {
+  it("health reports the failure message, worded from the status (PAC-69), not from the server's string", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ error: "database unavailable" }, 503));
     const err = await api.health().catch((e) => e);
     expect(err).toBeInstanceOf(ApiHttpError);
     expect((err as ApiHttpError).status).toBe(503);
-    expect(apiErrorMessage(err)).toBe("database unavailable");
+    expect(apiErrorMessage(err)).toBe(API_MESSAGES.serverProblem);
+    expect(apiErrorMessage(err)).not.toMatch(/database/i);
   });
 });
 
@@ -270,6 +271,89 @@ describe("PAC-83 error taxonomy (contract §2, §3)", () => {
       expect(apiFailureMessage(e, "booking").message).toBe(API_MESSAGES.lostBooking);
     }
     expect(apiFailureMessage(new ApiRequestCancelledError(), "read")).toEqual({ message: "", retry: false });
+  });
+});
+
+/**
+ * PAC-69: the backend wraps every 5xx in the `{ error }` envelope with a fixed
+ * developer-facing text (`internal error`). A user can do nothing with it, so
+ * any status >= 500 is worded from the status alone — the same principle
+ * NEW-booking-rate-limit applied to 429s.
+ */
+describe("PAC-69: a >= 500 answer is worded from its status, never from its body", () => {
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The server's fixed 5xx envelope, the dev proxy's text/plain 5xx, and a bodiless 5xx. */
+  const BODIES = {
+    json: (status: number) => jsonResponse({ error: "internal error" }, status),
+    text: (status: number) => new Response("internal error", { status, headers: { "content-type": "text/plain" } }),
+    empty: (status: number) => new Response(null, { status }),
+  } as const;
+
+  it.each([500, 502, 503])(
+    "a %i with a JSON {error} envelope says the generic sentence, not the server's text",
+    async (status) => {
+      fetchMock.mockResolvedValueOnce(BODIES.json(status));
+      const err = await requestApi("GET", "/calendar/events").catch((e) => e);
+      expect(err).toBeInstanceOf(ApiHttpError);
+      expect(classifyApiFailure(err)).toBe("http");
+      expect(apiErrorMessage(err)).toBe(API_MESSAGES.serverProblem);
+      expect(apiErrorMessage(err, "write")).toBe(API_MESSAGES.serverProblem);
+      expect(apiErrorMessage(err)).not.toMatch(/internal error/i);
+    },
+  );
+
+  // A non-JSON or empty 5xx never reaches apiErrorMessage's HTTP branch at all:
+  // interpretResponse raises ApiGatewayError, classified "lost". Asserted here
+  // so the matrix is complete and the two paths stay distinct.
+  it.each([
+    [500, "text"],
+    [500, "empty"],
+    [502, "text"],
+    [502, "empty"],
+    [503, "text"],
+    [503, "empty"],
+  ] as const)("a %i with a %s body is a gateway error, and its wording is still not the server's text", async (status, shape) => {
+    fetchMock.mockResolvedValueOnce(BODIES[shape](status));
+    const err = await requestApi("GET", "/calendar/events").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiGatewayError);
+    expect(classifyApiFailure(err)).toBe("lost");
+    expect(apiErrorMessage(err)).toBe(API_MESSAGES.lostRead);
+    expect(apiErrorMessage(err)).not.toMatch(/internal error/i);
+  });
+
+  // Raised without going through interpretResponse (a 5xx ApiHttpError built
+  // directly, as callers and other modules do), with every body shape.
+  it.each([500, 502, 503])("an ApiHttpError(%i) is worded from the status whatever its data", (status) => {
+    for (const data of [{ error: "internal error" }, { message: "upstream" }, { detail: "boom" }, "internal error", undefined]) {
+      expect(apiErrorMessage(new ApiHttpError(status, data))).toBe(API_MESSAGES.serverProblem);
+    }
+  });
+
+  it("the budget 503 keeps its own wording (classified before the HTTP branch)", () => {
+    const budget = new ApiHttpError(503, { error: "request timed out" });
+    expect(classifyApiFailure(budget)).toBe("budget");
+    expect(apiErrorMessage(budget)).toBe(API_MESSAGES.budgetRead);
+  });
+
+  it("4xx handling is unchanged: a {error} body is still shown word for word", () => {
+    expect(apiErrorMessage(new ApiHttpError(422, { error: "email is invalid" }))).toBe("email is invalid");
+    expect(apiErrorMessage(new ApiHttpError(400, { error: "slug is taken" }))).toBe("slug is taken");
+    expect(apiErrorMessage(new ApiHttpError(409, { message: "already booked" }))).toBe("already booked");
+    expect(apiErrorMessage(new ApiHttpError(404, { detail: "no such link" }))).toBe("no such link");
+    // And a 4xx with no body keeps its status wording.
+    expect(apiErrorMessage(new ApiHttpError(401))).toMatch(/sign in/i);
+    expect(apiErrorMessage(new ApiHttpError(403))).toBe("You don't have permission to do this.");
+    expect(apiErrorMessage(new ApiHttpError(418))).toBe("Request failed (418).");
+    // The boundary itself: 499 reads its body, 500 does not.
+    expect(apiErrorMessage(new ApiHttpError(499, { error: "client closed request" }))).toBe("client closed request");
+    expect(apiErrorMessage(new ApiHttpError(500, { error: "client closed request" }))).toBe(API_MESSAGES.serverProblem);
   });
 });
 

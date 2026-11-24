@@ -14,6 +14,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(
 vi.mock("@/hooks/useToast", () => ({ toast }));
 
 import { MeetingLinkRow } from "./MeetingLinkRow";
+import { API_MESSAGES } from "@/api/client";
 
 const fetchMock = vi.fn<typeof fetch>();
 
@@ -54,7 +55,8 @@ describe("PAC-122 SF-056: a failed provider list in the meeting-link menu", () =
     fireEvent.click(screen.getByRole("button", { name: /add meeting link/i }));
     const alert = await screen.findByTestId("conference-providers-error");
     expect(alert).toHaveTextContent(/could not load your meeting providers/i);
-    expect(within(alert).getByTestId("api-error")).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not the server's text.
+    expect(within(alert).getByTestId("api-error")).toHaveTextContent(API_MESSAGES.serverProblem);
   });
 
   it("retries the read and then lists the providers", async () => {

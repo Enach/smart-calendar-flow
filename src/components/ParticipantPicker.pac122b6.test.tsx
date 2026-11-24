@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
-import { ApiHttpError, api } from "@/api/client";
+import { API_MESSAGES, ApiHttpError, api } from "@/api/client";
 import { ParticipantPicker } from "./ParticipantPicker";
 
 afterEach(() => {
@@ -40,7 +40,8 @@ describe("PAC-122 SF-087: a failed attendee suggestions read", () => {
     expect(suggest).toHaveBeenCalledTimes(2);
     const failure = screen.getByTestId("attendee-suggestions-error");
     expect(failure).toHaveTextContent(/could not load suggestions/i);
-    expect(failure).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not the server's text.
+    expect(failure).toHaveTextContent(API_MESSAGES.serverProblem);
     expect(screen.queryByText("Old Match")).not.toBeInTheDocument();
   });
 });

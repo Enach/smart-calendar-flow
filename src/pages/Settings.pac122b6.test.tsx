@@ -41,7 +41,7 @@ vi.mock("@/hooks/useSettings", () => ({
 vi.mock("@/hooks/useOrganizationAI", () => ({ useOrganizationAI: () => ({ data: undefined }) }));
 
 import SettingsPage from "./Settings";
-import { ApiHttpError, normalizeSettings } from "@/api/client";
+import { API_MESSAGES, ApiHttpError, normalizeSettings } from "@/api/client";
 
 function saved() {
   return normalizeSettings({
@@ -86,7 +86,8 @@ describe("PAC-122 batch 6, Settings", () => {
       </MemoryRouter>,
     );
     const alert = await screen.findByTestId("api-error");
-    expect(alert).toHaveTextContent("internal error");
+    // PAC-69: the 500's wording comes from its status, not the server's text.
+    expect(alert).toHaveTextContent(API_MESSAGES.serverProblem);
     expect(alert).toHaveAttribute("data-effect", "read");
     fireEvent.click(screen.getByTestId("api-error-retry"));
     expect(refetch).toHaveBeenCalledOnce();
