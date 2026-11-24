@@ -264,33 +264,20 @@ export class BookingsUnreadableError extends Error {
 const BookingRecordList = SchedulingLinkBookingRecordSchema.array();
 
 /**
- * PAC-134 (contract md 5) / PAC-40 (contract section 2.2): the one erasure
- * invariant both booking reads hold to. The erasure marker is `booker_erased_at`
- * — absent on a live record, null on an archived one — and it is set exactly
- * when the booker's name and email are both null; an erased booking's notes are
- * blank. Any other combination is a contract violation.
- *
- * Returns what the record says about its booker, or null when it says something
- * the contract does not allow. The two call sites then answer with their own
- * error (BookingsUnreadableError for the live read, ArchiveUnavailableError for
- * the archive), so the rule itself lives in one place and the two paths cannot
- * drift apart again.
- *
- * The notes half carries the weight: free text routinely names the booker, so a
- * record that claims erasure and still carries notes is unreadable whatever the
- * server did to that column, and no erased booker's notes are ever rendered.
+ * PAC-40 §2.2 and PAC-134 §1.1 share the identity rule: the erasure timestamp
+ * is set exactly when both the name and email are null. Returns null for an
+ * inconsistent identity. Each read applies its own contract's notes rule.
  */
 export function bookerErasure(b: {
   booker_name?: string | null;
   booker_email?: string | null;
   booker_erased_at?: string | null;
-  notes: string;
 }): { erased_at: string } | { booker_name: string; booker_email: string } | null {
   // The marker is absent on a live record and null on an archived one, and the
   // two reads' generated types differ accordingly, so each field is read as
   // "has a value or not" rather than against one of the two spellings.
   if (b.booker_erased_at != null) {
-    return b.booker_name == null && b.booker_email == null && b.notes === ""
+    return b.booker_name == null && b.booker_email == null
       ? { erased_at: b.booker_erased_at }
       : null;
   }
@@ -570,12 +557,11 @@ export const schedulingLinksApi = {
             end: b.end_time,
             duration_minutes: Math.round((new Date(b.end_time).getTime() - new Date(b.start_time).getTime()) / 60_000),
           };
-          // PAC-134 (contract md 5): the shared erasure invariant. A booking
-          // that breaks it makes the whole answer unreadable, like any other
-          // contract violation.
           const booker = bookerErasure(b);
           if (!booker) throw new BookingsUnreadableError();
           if ("erased_at" in booker) {
+            // PAC-134 §1.1: operator erasure blanks live booking notes.
+            if (b.notes !== "") throw new BookingsUnreadableError();
             return { ...base, booker_name: null, booker_email: null, erased_at: booker.erased_at };
           }
           return { ...base, ...booker, ...(b.notes ? { notes: b.notes } : {}) };
@@ -605,19 +591,20 @@ export const schedulingLinksApi = {
    * caller as an ApiHttpError; a body that fails the schema is
    * ArchiveUnavailableError.
    *
-   * The schema alone does not say what erasure means, so the same
-   * `bookerErasure` invariant the live read applies (PAC-134) runs here too: an
-   * archived booking that says erased and still carries notes makes the archive
-   * unavailable rather than showing the owner the booker's free text, which is
-   * exactly the data the erasure removes.
+   * PAC-40 automatic erasure retains notes in the response. Strip them from
+   * erased bookings before returning the detail to React Query and the UI.
    */
   getArchivedLink: (id: string) =>
     demoOrReal<ArchivedSchedulingLinkDetail>("schedulingLinksApi.getArchivedLink", [id], async () => {
         const raw = await requestApi<unknown>("GET", `/scheduling-links/archive/${encodeURIComponent(id)}`);
         const parsed = ArchivedSchedulingLinkDetailSchema.safeParse(raw);
         if (!parsed.success) throw new ArchiveUnavailableError();
-        if (parsed.data.bookings.some((b) => bookerErasure(b) === null)) throw new ArchiveUnavailableError();
-        return parsed.data as ArchivedSchedulingLinkDetail;
+        const bookings = parsed.data.bookings.map((b) => {
+          const booker = bookerErasure(b);
+          if (!booker) throw new ArchiveUnavailableError();
+          return "erased_at" in booker ? { ...b, notes: "" } : b;
+        });
+        return { ...parsed.data, bookings } as ArchivedSchedulingLinkDetail;
       }),
 
 

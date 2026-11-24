@@ -51,13 +51,7 @@ function ArchivedBookingItem({ booking, tf }: { booking: ArchivedSchedulingLinkB
           <span data-testid="archive-booker-email">{booking.booker_email}</span>
         </p>
       )}
-      {/*
-        An erased booking carries no notes (contract section 2.2), and
-        getArchivedLink refuses an answer that says otherwise. This gate is the
-        second lock: notes are free text that routinely names the booker, their
-        employer and their phone number, so nothing renders them on a record
-        that says erased, whatever reaches this component.
-      */}
+      {/* PAC-40 can retain identifying free text. Keep it hidden even if it reaches this component. */}
       {!erased && booking.notes && <p className="mt-1 text-xs text-muted-foreground">{booking.notes}</p>}
       <p className="mt-1 text-xs text-muted-foreground">Booked {formatArchiveDate(booking.created_at)}</p>
     </li>

@@ -96,16 +96,7 @@ describe("PAC-40 archive reads", () => {
   });
 });
 
-/**
- * PAC-40 / PAC-134: the archive read holds the live read's erasure invariant,
- * from the one `bookerErasure` helper both call. An erased booking's notes are
- * the booker's own free text — their name, their employer, their phone number —
- * which is exactly what the erasure removes, so a record that says erased and
- * still carries notes makes the archive unavailable rather than showing that
- * text to the link's owner. Whether the server blanks the column is not
- * something the client can check, so the client's rule stands on its own.
- */
-describe("PAC-134 erasure invariant: one rule, both booking reads", () => {
+describe("PAC-40 and PAC-134 booking erasure", () => {
   beforeEach(() => {
     fetchMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
@@ -114,11 +105,14 @@ describe("PAC-134 erasure invariant: one rule, both booking reads", () => {
 
   const NOTES = "Jane Roe, Acme Ltd, +33 6 12 34 56 78";
 
-  it("an archived booking that says erased and still carries notes is ArchiveUnavailableError", async () => {
+  it("reads an erased archived booking and strips retained notes from the result", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ link: ARCHIVED_A, bookings: [{ ...ERASED_BOOKING, notes: NOTES }] }),
     );
-    await expect(schedulingLinksApi.getArchivedLink(LINK_ID)).rejects.toBeInstanceOf(ArchiveUnavailableError);
+    await expect(schedulingLinksApi.getArchivedLink(LINK_ID)).resolves.toEqual({
+      link: ARCHIVED_A,
+      bookings: [ERASED_BOOKING],
+    });
   });
 
   it("the live read refuses the very same record, with its own error", async () => {
