@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Calendar, CircleHelp, Clock, Loader2, Search, Sparkles, Users, X } from "lucide-react";
 import { api, apiErrorMessage } from "@/api/client";
+import { ApiErrorText } from "@/components/ApiErrorNotice";
 import { toast } from "@/hooks/useToast";
 import { useAuth } from "@/contexts/useAuth";
 import { SlotCoverageNote } from "@/components/SlotCoverageNote";
@@ -68,6 +69,13 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
   const [selected, setSelected] = useState<number>(0);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * PAC-92: the failure of the slot search, kept as the error itself rather
+   * than as a message, so it is shown through ApiErrorText with the e2e
+   * contract's `api-error` test id and kind (PAC-83 contract §5.1). The
+   * `error` above stays what it was: this form's own validation.
+   */
+  const [suggestError, setSuggestError] = useState<unknown>(null);
 
   const attendees = useMemo(
     () =>
@@ -89,6 +97,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
 
   const findSlots = useCallback(async () => {
     setError(null);
+    setSuggestError(null);
     if (!title.trim()) {
       setError("Add a meeting title.");
       return;
@@ -115,7 +124,7 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
       setSelected(0);
       setSearched(true);
     } catch (e) {
-      setError(apiErrorMessage(e));
+      setSuggestError(e);
     } finally {
       setSearching(false);
     }
@@ -256,6 +265,14 @@ export function ScheduleSuggestModal({ defaultRangeStart, defaultRangeEnd, onClo
             <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive">
               {error}
             </p>
+          )}
+
+          {suggestError !== null && (
+            <ApiErrorText
+              error={suggestError}
+              effect={effectOf("api.scheduleSuggest")}
+              className="block rounded-md bg-destructive/10 px-3 py-2 text-xs font-medium text-destructive"
+            />
           )}
 
           <div>

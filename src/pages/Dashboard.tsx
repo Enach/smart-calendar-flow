@@ -618,6 +618,7 @@ export default function Dashboard() {
               error={eventsError && !calendarNotConnected}
               notConnected={calendarNotConnected}
               errorMessage={apiErrorMessage(eventsErrorObj)}
+              failure={eventsErrorObj}
               onRetry={() => refetchEvents()}
               retrying={eventsFetching}
               todayShown={todayInRange}

@@ -2,6 +2,7 @@ import type { CalendarEvent } from "@/api/types";
 import { CalendarCheck2, Sparkles, Users } from "lucide-react";
 import { SkeletonLine } from "@/components/ui/spinner";
 import { InlineError } from "@/components/ui/inline-error";
+import { effectOf } from "@/api/effects";
 import { useDebouncedFlag } from "@/hooks/useDebouncedFlag";
 import { useAuth } from "@/contexts/useAuth";
 import { getEventOwnership } from "@/lib/eventOwnership";
@@ -16,6 +17,12 @@ interface TodayAgendaProps {
   /** No calendar is connected yet: show a setup prompt, not an error. */
   notConnected?: boolean;
   errorMessage?: string;
+  /**
+   * PAC-92: the failure behind `error`. With it the notice carries the e2e
+   * contract's `api-error` test id and kind (PAC-83 contract §5.1), and the
+   * retry control is offered only when the failure allows a manual retry.
+   */
+  failure?: unknown;
   onRetry?: () => void;
   retrying?: boolean;
   /**
@@ -36,6 +43,7 @@ export function TodayAgenda({
   error,
   notConnected,
   errorMessage,
+  failure,
   onRetry,
   retrying,
   todayShown = true,
@@ -96,6 +104,8 @@ export function TodayAgenda({
           compact
           title="Couldn't load today's agenda"
           message={errorMessage ?? "Check your connection and try again."}
+          error={failure}
+          effect={failure === undefined ? undefined : effectOf("api.getEvents")}
           onRetry={onRetry}
           retrying={retrying}
         />
