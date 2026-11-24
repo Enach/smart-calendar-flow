@@ -348,6 +348,13 @@ function EditForm({ shown, onDone }: { shown: OrganizationAIConfiguration; onDon
  * sees nothing). Edit first explains the administrator confirmation for this
  * purpose and offers it; the form is available on a granted return, and to a
  * deployment operator who saves directly.
+ *
+ * PAC-156: "no organisation" covers a membership that ended while the section
+ * was on screen, not only one that never was. `useOrganizationAI` answers the
+ * membership 403 with `null`, which replaces the configuration a 200 cached
+ * before, so `shown` is empty and nothing is rendered; `inOrganization` comes
+ * from the Settings read, which is cached for longer and cannot be relied on
+ * to turn false first.
  */
 export function OrganizationAISection({ inOrganization }: { inOrganization: boolean }) {
   const org = useOrganizationAI(inOrganization);

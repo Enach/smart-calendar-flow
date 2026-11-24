@@ -1,8 +1,45 @@
 import type { KeyProvider, OrganizationAIConfiguration, OrganizationAIConfigurationUpdate } from "@/api/types";
-import { ORG_AI_STEPUP_PURPOSE } from "@/api/client";
+import { ORG_AI_STEPUP_PURPOSE, isApiHttpError } from "@/api/client";
+import { SsoWriteMembershipRequired } from "@/api/generated/schemas";
 
 // PAC-73 Part 2: pure helpers of the organisation AI section and the SSO
-// section's landing (spec §3.6, P2-AC-30, P2-AC-32).
+// section's landing (spec §3.6, P2-AC-30, P2-AC-32), and the membership 403
+// both sections' reads share (PAC-156).
+
+/**
+ * The read was refused because the caller is in no organisation: the
+ * documented membership 403, whose body is SsoWriteMembershipRequired (`org
+ * membership required` or `org not found`), the schema of every membership
+ * 403 (PAC-50). Such a user is offered nothing: no step-up entry (PAC-75
+ * contract md 5.4) and no organisation AI section (PAC-73 spec P2-AC-30).
+ * A Zod parse, so a 403 with any other body is another failure, stated as
+ * one.
+ */
+export function isNoOrganisation(error: unknown): boolean {
+  return isApiHttpError(error) && error.status === 403 && SsoWriteMembershipRequired.safeParse(error.data).success;
+}
+
+/**
+ * `read()`, with the membership 403 as the answer `null` rather than an
+ * error: there is nothing for this caller to be shown, and the server
+ * refusing a read it documents as refused is not a failure to tell them
+ * about.
+ *
+ * PAC-156: as an answer it replaces what a 200 cached before the membership
+ * ended, so a section that was on screen is gone on the next answer and
+ * stays gone on its next mount. Swallowing the 403 as an error would leave
+ * React Query's previous `data` in place and the section visible, offering an
+ * action the server now refuses. Every other failure is thrown on, unchanged:
+ * a transient one must not blank a section the user still has rights to.
+ */
+export async function nullIfNoOrganisation<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (e) {
+    if (isNoOrganisation(e)) return null;
+    throw e;
+  }
+}
 
 /**
  * Whether the landing is an SSO step-up outcome. A step-up started for
