@@ -6,12 +6,15 @@
  * only in an explicit demo session of a non-production build.
  */
 
+import { z } from "zod";
+
 import { isApiHttpError, requestApi } from "./client";
 import { demoOrReal } from "./demoGate";
 import type { components, operations } from "./generated/types";
 import {
   ArchivedSchedulingLinkDetail as ArchivedSchedulingLinkDetailSchema,
   ArchivedSchedulingLinkListResponse as ArchivedSchedulingLinkListResponseSchema,
+  PublicBookingConfirmation as PublicBookingConfirmationSchema,
   SchedulingLinkCoHostChanges as SchedulingLinkCoHostChangesSchema,
   SchedulingLinkBookingRecord as SchedulingLinkBookingRecordSchema,
   SchedulingLinkCreateConflict as SchedulingLinkCreateConflictSchema,
@@ -136,18 +139,6 @@ export type PublicSlotsParams = {
   to?: string;
   duration?: number;
   displayTimeZone?: string;
-};
-/**
- * GET /scheduling-links/:id/bookings returns the contract's
- * SchedulingLinkBookingRecord: `start_time`/`end_time`, no title or slug.
- * `start`/`end` are kept for the mock and older payloads.
- */
-/** The public booking answer (bookSlot). */
-type BackendBooking = {
-  id: string; link_slug?: string; title?: string; start?: string; end?: string;
-  start_time?: string; end_time?: string;
-  duration_minutes?: number; hosts?: Array<{ email: string; name?: string; avatar_url?: string }>;
-  booker_name: string; booker_email: string; notes?: string;
 };
 type BackendHostInvite = { link_id: string; link_title: string; owner_name: string; owner_email: string; invited_at: string };
 
@@ -297,6 +288,73 @@ export class ArchiveUnavailableError extends Error {
     super("archive unavailable");
     this.name = "ArchiveUnavailableError";
   }
+}
+
+/**
+ * 2026-11-22 audit follow-up: the 201 of `POST /book/{slug}` could not be read
+ * as the contract's PublicBookingConfirmation.
+ *
+ * Unlike every other …Unreadable / …Unavailable error here, this one does NOT
+ * mean the operation failed. The POST answered 201: the booking exists in the
+ * backend. Only the echo of it is unreadable. So the message says the booking
+ * was made, and the page renders it as a booking that was made with no retry
+ * (src/pages/PublicBooking.tsx). Telling a visitor "something went wrong"
+ * after their slot was booked is worse than showing them no details: it
+ * invites them to book a second time.
+ */
+export class BookingConfirmationUnreadableError extends Error {
+  constructor() {
+    super("Your booking was made, but Paceday could not read the confirmation back.");
+    this.name = "BookingConfirmationUnreadableError";
+  }
+}
+
+/**
+ * 2026-11-22 audit follow-up: the public booking 201, parsed rather than cast.
+ *
+ * The archive and the owner's bookings list parse their whole body against the
+ * generated schema and refuse everything on any mismatch (K4-7). This boundary
+ * cannot do that, for two reasons:
+ *
+ *  - A refusal here is a user-visible failure on a booking that SUCCEEDED (see
+ *    BookingConfirmationUnreadableError). The blast radius of all-or-nothing is
+ *    "every booking looks broken", which is not a trade the archive had to make.
+ *  - `hosts` is required by the contract today, but the api repo's in-flight
+ *    spec proposes removing host addresses from the public DTOs. A whole-body
+ *    strictObject parse would turn the window between the server deploying that
+ *    and this repo regenerating its types into an outage. Degrading `hosts` to
+ *    an empty list makes that window harmless instead — and emits no address,
+ *    which is the point of the removal.
+ *
+ * So the 201 is parsed field by field, with the generated field schemas (never
+ * a shape invented here), split by what a fallback would cost:
+ *
+ *  - FACTS: the fields the confirmation screen states as the server's own and
+ *    for which there is no honest local substitute. Unreadable means there is
+ *    nothing truthful to show, so the whole answer is refused.
+ *  - `hosts`: required by contract, so a compliant server always sends it.
+ *    Unreadable means an EMPTY list — never another answer's hosts. This is the
+ *    defect the follow-up closes: it used to fall back to
+ *    `publicLinkCache.get(slug)`, whose addresses the ICS builder writes into
+ *    ORGANIZER and ATTENDEE, so a one-sided removal of `hosts` from the DTO
+ *    would have looked like it worked while still emitting addresses.
+ *  - COSMETIC (`link_slug`, `title`, `duration_minutes`): a fallback is both
+ *    local and harmless — the slug the visitor is on, the title the page is
+ *    already showing, and the length of the slot they booked. None of them is
+ *    another party's data and none of them can be wrong about the booking.
+ */
+const ConfirmationField = PublicBookingConfirmationSchema.shape;
+const ConfirmationFacts = z.object({
+  id: ConfirmationField.id,
+  start: ConfirmationField.start,
+  end: ConfirmationField.end,
+  booker_name: ConfirmationField.booker_name,
+  booker_email: ConfirmationField.booker_email,
+});
+/** `raw.<field>` against its generated schema, or `fallback` when it does not parse. */
+function readField<T>(schema: z.ZodType<T>, value: unknown, fallback: T): T {
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : fallback;
 }
 
 /**
@@ -683,7 +741,7 @@ export const schedulingLinksApi = {
     if (!isPublicSlug(slug)) throw new InvalidLinkSlugError();
     return demoOrReal<BookingConfirmation>("schedulingLinksApi.bookSlot", [slug, input], async () => {
         const end = new Date(new Date(input.start).getTime() + input.duration_minutes * 60_000).toISOString();
-        const raw = await requestApi<BackendBooking>(
+        const raw: unknown = await requestApi<unknown>(
           "POST",
           `/book/${encodeURIComponent(slug)}`,
           { name: input.name, email: input.email, start: input.start, end, duration: input.duration_minutes, notes: input.notes },
@@ -691,12 +749,26 @@ export const schedulingLinksApi = {
           undefined,
           idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
         );
+        // See ConfirmationFacts for why this boundary parses by field rather
+        // than refusing the whole body as the archive reads do.
+        const facts = ConfirmationFacts.safeParse(raw);
+        if (!facts.success) throw new BookingConfirmationUnreadableError();
+        const body = (raw ?? {}) as Record<string, unknown>;
         const link = publicLinkCache.get(slug);
         return {
-          id: raw.id, link_slug: raw.link_slug ?? slug, title: raw.title ?? link?.title ?? slug,
-          start: raw.start, end: raw.end,
-          duration_minutes: raw.duration_minutes ?? Math.round((new Date(raw.end).getTime() - new Date(raw.start).getTime()) / 60_000),
-          hosts: raw.hosts ?? link?.hosts ?? [], booker_name: raw.booker_name, booker_email: raw.booker_email, notes: raw.notes,
+          ...facts.data,
+          link_slug: readField(ConfirmationField.link_slug, body.link_slug, slug),
+          title: readField(ConfirmationField.title, body.title, link?.title ?? slug),
+          duration_minutes: readField(
+            ConfirmationField.duration_minutes,
+            body.duration_minutes,
+            Math.round((new Date(facts.data.end).getTime() - new Date(facts.data.start).getTime()) / 60_000),
+          ),
+          // Never `link?.hosts`: the cached lookup's addresses are another
+          // answer's data, and the ICS builder writes them into ORGANIZER and
+          // ATTENDEE. An unreadable required field is an empty list.
+          hosts: readField(ConfirmationField.hosts, body.hosts, []),
+          notes: readField(ConfirmationField.notes, body.notes, undefined),
         };
       });
   },

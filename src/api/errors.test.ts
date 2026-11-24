@@ -325,10 +325,10 @@ describe("NEW-booking-rate-limit: the 429 and its Retry-After", () => {
   });
 
   it("no Retry-After at all falls back to the client's default, and says so", async () => {
-    // The real case: `Retry-After` is deliberately not in
-    // Access-Control-Expose-Headers, so a deployment whose API base is on
-    // another origin (API_BASE_URL / VITE_API_BASE_URL) sees the 429 and
-    // cannot read the header. Same-origin always can.
+    // PAC-163 listed `Retry-After` in Access-Control-Expose-Headers, so every
+    // deployment can read it, cross-origin ones (API_BASE_URL /
+    // VITE_API_BASE_URL) included. What is left for the fallback to cover is a
+    // server or proxy that sent no usable value at all.
     fetchMock.mockResolvedValueOnce(rateLimited());
     const err = await requestApi("GET", "/book/intro/slots").catch((e) => e);
     expect(err).toBeInstanceOf(ApiRateLimitedError);

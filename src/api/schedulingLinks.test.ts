@@ -1,6 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { isApiHttpError, isApiUnreachableError } from "./client";
-import { BookingsUnreadableError, InvalidLinkSlugError, publicBookingDisplayUrl, publicBookingUrl, schedulingLinksApi, validateLinkForm } from "./schedulingLinks";
+import {
+  BookingConfirmationUnreadableError,
+  BookingsUnreadableError,
+  InvalidLinkSlugError,
+  publicBookingDisplayUrl,
+  publicBookingUrl,
+  schedulingLinksApi,
+  validateLinkForm,
+} from "./schedulingLinks";
 import type { LinkUsageType, Weekday } from "./types";
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -615,8 +623,11 @@ describe("public booking contract", () => {
     fetchMock.mockImplementation(async (input, init) => {
       expect(requestPath(input)).toBe("/api/book/intro");
       body = JSON.parse(String(init?.body));
+      // `id` is the contract's uuid: the 201 is parsed, not cast (see "the
+      // booking 201 is parsed, not cast" below). The rest is deliberately a
+      // 201 with no `duration_minutes`, to pin the computed fallback.
       return jsonResponse({
-        id: "b1",
+        id: "7f1f2a52-8a0e-4e3a-9a2b-7c6d5e4f3a21",
         link_slug: "intro",
         title: "Intro",
         start: "2026-03-02T09:00:00Z",
@@ -682,6 +693,125 @@ describe("public booking contract", () => {
     await expect(schedulingLinksApi.getPublicLink("intro-chat")).rejects.toSatisfy(isApiUnreachableError);
     await expect(schedulingLinksApi.getPublicSlots("intro-chat", { date: "2030-03-04", duration: 30 })).rejects.toSatisfy(isApiUnreachableError);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * 2026-11-22 audit follow-up: the 201 of `POST /book/{slug}` is the one
+   * public boundary that used to be a cast rather than a parse, and its
+   * `hosts` fell back to `publicLinkCache.get(slug)`. The contract makes
+   * `hosts` required ("Accepted hosts. Always an array, never null."), so the
+   * fallback was dead against a compliant server and silently substituted
+   * ANOTHER answer's hosts against any other one — whose addresses the ICS
+   * builder then writes into ORGANIZER and ATTENDEE.
+   */
+  describe("the booking 201 is parsed, not cast", () => {
+    const HOST_ADDRESS = "cached.owner@private.example";
+    const BOOKED = { start: "2026-03-02T09:00:00Z", duration_minutes: 30, name: "Zoe", email: "zoe@co.com" };
+    /** The 201 as the contract declares it (PublicBookingConfirmation). */
+    const CONFIRMATION = {
+      id: "7f1f2a52-8a0e-4e3a-9a2b-7c6d5e4f3a21",
+      link_slug: "intro",
+      title: "Intro",
+      start: "2026-03-02T09:00:00Z",
+      end: "2026-03-02T09:30:00Z",
+      duration_minutes: 30,
+      hosts: [{ email: "host@co.com", name: "Host" }],
+      booker_name: "Zoe",
+      booker_email: "zoe@co.com",
+    };
+    /** The link whose hosts carry an address, cached by `getPublicLink`. */
+    const CACHED_LINK = {
+      slug: "intro",
+      title: "Intro",
+      duration_options: [30],
+      hosts: [{ email: HOST_ADDRESS, name: "Cached Owner" }],
+      min_notice_minutes: 0,
+      usage_type: "reusable",
+    };
+
+    /** Caches that link, then answers the booking POST with `booking`. */
+    async function bookAfterCachingLink(booking: unknown) {
+      fetchMock.mockReset();
+      fetchMock.mockImplementation(async (input) =>
+        requestPath(input) === "/api/book/intro" ? jsonResponse(booking, 201) : jsonResponse({ error: "unexpected" }, 500),
+      );
+      fetchMock.mockImplementationOnce(async () => jsonResponse(CACHED_LINK));
+      await schedulingLinksApi.getPublicLink("intro");
+      return schedulingLinksApi.bookSlot("intro", BOOKED);
+    }
+
+    it("takes the hosts of the answer itself when the answer carries them", async () => {
+      const conf = await bookAfterCachingLink(CONFIRMATION);
+      expect(conf.hosts).toEqual([{ email: "host@co.com", name: "Host" }]);
+    });
+
+    it("a 201 with no hosts is an empty list, never the cached link's hosts", async () => {
+      const { hosts: _omitted, ...noHosts } = CONFIRMATION;
+      const conf = await bookAfterCachingLink(noHosts);
+      expect(conf.hosts).toEqual([]);
+      // The address of the cached lookup never reaches the ICS builder.
+      expect(JSON.stringify(conf)).not.toContain(HOST_ADDRESS);
+    });
+
+    it("a hosts array that is not the contract's is an empty list too, never the cached one", async () => {
+      for (const hosts of [null, "owner@co.com", [{ name: "No address" }], [{ email: "host@co.com", role: "owner" }]]) {
+        const conf = await bookAfterCachingLink({ ...CONFIRMATION, hosts });
+        expect(conf.hosts, JSON.stringify(hosts)).toEqual([]);
+        expect(JSON.stringify(conf)).not.toContain(HOST_ADDRESS);
+      }
+    });
+
+    it("a malformed hosts list still confirms the booking: the POST succeeded", async () => {
+      const conf = await bookAfterCachingLink({ ...CONFIRMATION, hosts: null });
+      expect(conf).toMatchObject({
+        id: CONFIRMATION.id,
+        start: CONFIRMATION.start,
+        end: CONFIRMATION.end,
+        booker_email: "zoe@co.com",
+        hosts: [],
+      });
+    });
+
+    it("keeps the harmless local fallback for the cosmetic fields", async () => {
+      const conf = await bookAfterCachingLink({
+        id: CONFIRMATION.id,
+        start: CONFIRMATION.start,
+        end: CONFIRMATION.end,
+        booker_name: "Zoe",
+        booker_email: "zoe@co.com",
+      });
+      // The slug asked for, the cached link's own title, the length of the booked slot.
+      expect(conf.link_slug).toBe("intro");
+      expect(conf.title).toBe("Intro");
+      expect(conf.duration_minutes).toBe(30);
+    });
+
+    it.each([
+      ["no id", { id: undefined }],
+      ["an id that is not the contract's uuid", { id: "b1" }],
+      ["no start", { start: undefined }],
+      ["an unparseable start", { start: "whenever" }],
+      ["no end", { end: undefined }],
+      ["no booker_email", { booker_email: undefined }],
+      ["no booker_name", { booker_name: undefined }],
+    ])("refuses to read a 201 with %s", async (_what, patch) => {
+      const err = await bookAfterCachingLink({ ...CONFIRMATION, ...patch }).catch((e) => e);
+      expect(err).toBeInstanceOf(BookingConfirmationUnreadableError);
+    });
+
+    /**
+     * The sharp edge of parsing this boundary strictly: the POST already
+     * succeeded, so the booking exists. The error says so in its own name and
+     * message, and the page renders it as a booking that was made
+     * (src/pages/PublicBooking.confirmationParse.test.tsx).
+     */
+    it("names the unreadable answer as a booking that was made, not a failure", async () => {
+      const err: unknown = await bookAfterCachingLink({ ...CONFIRMATION, start: "whenever" }).catch((e) => e);
+      expect((err as Error).name).toBe("BookingConfirmationUnreadableError");
+      // Not an HTTP answer and not a lost one: nothing about this outcome is unknown.
+      expect(isApiHttpError(err)).toBe(false);
+      expect(isApiUnreachableError(err)).toBe(false);
+    });
   });
 });
 
